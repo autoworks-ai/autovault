@@ -23,6 +23,19 @@ describe("loadConfig", () => {
     }
   });
 
+  it("fails fast on typo'd AUTOVAULT_SECURITY_STRICT instead of silently coercing to false", () => {
+    const previous = process.env.AUTOVAULT_SECURITY_STRICT;
+    process.env.AUTOVAULT_SECURITY_STRICT = "treu";
+    resetConfigCache();
+    try {
+      expect(() => loadConfig()).toThrow(/Invalid AutoVault configuration/);
+    } finally {
+      if (previous === undefined) delete process.env.AUTOVAULT_SECURITY_STRICT;
+      else process.env.AUTOVAULT_SECURITY_STRICT = previous;
+      resetConfigCache();
+    }
+  });
+
   it("coerces booleanish values for AUTOVAULT_SECURITY_STRICT", () => {
     const previous = process.env.AUTOVAULT_SECURITY_STRICT;
     for (const [value, expected] of [

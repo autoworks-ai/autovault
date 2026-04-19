@@ -5,12 +5,18 @@ import { z } from "zod";
 
 dotenv.config();
 
-const booleanish = z
-  .union([z.boolean(), z.string()])
-  .transform((value) => {
-    if (typeof value === "boolean") return value;
-    return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+const booleanish = z.union([z.boolean(), z.string()]).transform((value, ctx) => {
+  if (typeof value === "boolean") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message:
+      'Expected a boolean value: use one of "true", "false", "1", "0", "yes", "no", "on", or "off"'
   });
+  return z.NEVER;
+});
 
 const schema = z.object({
   AUTOVAULT_MODE: z.enum(["local"]).default("local"),

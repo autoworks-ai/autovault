@@ -1,6 +1,7 @@
 import {
   listInstalledSkillNames,
   readSkill,
+  validateResourcePath,
   writeSkill,
   writeSkillResources,
   writeSkillSource
@@ -51,17 +52,23 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     }
   }
 
+  if (input.resources && input.resources.length > 0) {
+    for (const resource of input.resources) {
+      try {
+        validateResourcePath(nextName, resource.path);
+      } catch (error) {
+        log.warn("propose_skill.resource_rejected", { name: nextName, error: String(error) });
+        return {
+          outcome: "invalid",
+          errors: [`Resource path rejected: ${String(error)}`]
+        };
+      }
+    }
+  }
+
   await writeSkill(nextName, input.skill_md);
   if (input.resources && input.resources.length > 0) {
-    try {
-      await writeSkillResources(nextName, input.resources);
-    } catch (error) {
-      log.warn("propose_skill.resource_rejected", { name: nextName, error: String(error) });
-      return {
-        outcome: "invalid",
-        errors: [`Resource write rejected: ${String(error)}`]
-      };
-    }
+    await writeSkillResources(nextName, input.resources);
   }
 
   await writeSkillSource(nextName, {

@@ -129,22 +129,33 @@ export async function writeSkill(name: string, skillMd: string): Promise<void> {
   await fs.writeFile(path.join(dir, "SKILL.md"), skillMd, "utf-8");
 }
 
+export function validateResourcePath(name: string, resourcePath: string): string {
+  if (typeof resourcePath !== "string" || resourcePath.length === 0) {
+    throw new Error(`Invalid resource path: ${resourcePath}`);
+  }
+  if (resourcePath.includes("..") || path.isAbsolute(resourcePath)) {
+    throw new Error(`Invalid resource path: ${resourcePath}`);
+  }
+  const root = path.resolve(skillDir(name));
+  const target = path.resolve(root, resourcePath);
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    throw new Error(`Resource escapes skill directory: ${resourcePath}`);
+  }
+  return target;
+}
+
 export async function writeSkillResources(
   name: string,
   resources: Array<{ path: string; content: string }>
 ): Promise<void> {
   if (resources.length === 0) return;
-  const root = skillDir(name);
-  for (const resource of resources) {
-    if (resource.path.includes("..") || path.isAbsolute(resource.path)) {
-      throw new Error(`Invalid resource path: ${resource.path}`);
-    }
-    const target = path.resolve(root, resource.path);
-    if (!target.startsWith(root + path.sep) && target !== root) {
-      throw new Error(`Resource escapes skill directory: ${resource.path}`);
-    }
+  const targets = resources.map((resource) => ({
+    target: validateResourcePath(name, resource.path),
+    content: resource.content
+  }));
+  for (const { target, content } of targets) {
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.writeFile(target, resource.content, "utf-8");
+    await fs.writeFile(target, content, "utf-8");
   }
 }
 

@@ -60,13 +60,13 @@ description: too short
     expect(result.outcome).toBe("duplicate");
   });
 
-  it("rejects resources that escape the skill directory", async () => {
+  it("rejects resources that escape the skill directory and does not persist the skill", async () => {
     const result = await proposeSkill({
       skill_md: baseSkill("evil-resource"),
       resources: [{ path: "../escape.txt", content: "x" }]
     });
     expect(result.outcome).toBe("invalid");
     const installed = await listInstalledSkillNames();
-    expect(installed).toContain("evil-resource");
+    expect(installed).not.toContain("evil-resource");
   });
 });

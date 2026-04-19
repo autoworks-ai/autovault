@@ -9,6 +9,7 @@ import { fetchSkillFromGitHub } from "../sources/github.js";
 import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
 import { sha256 } from "../util/hash.js";
+import { assertSafeSkillName } from "../util/skill-name.js";
 
 type DriftEntry = {
   name: string;
@@ -50,6 +51,7 @@ export async function checkUpdates(
   up_to_date: string[];
   errors: Array<{ name: string; error: string }>;
 }> {
+  if (skill !== undefined) assertSafeSkillName(skill);
   const names = skill ? [skill] : await listInstalledSkillNames();
   const drifted: DriftEntry[] = [];
   const upToDate: string[] = [];

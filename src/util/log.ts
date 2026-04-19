@@ -1,8 +1,26 @@
+import { loadConfig } from "../config.js";
+
 type LogLevel = "debug" | "info" | "warn" | "error";
 
 type LogFields = Record<string, unknown>;
 
+const SEVERITY: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40
+};
+
+function currentThreshold(): number {
+  try {
+    return SEVERITY[loadConfig().logLevel];
+  } catch {
+    return SEVERITY.info;
+  }
+}
+
 function emit(level: LogLevel, message: string, fields?: LogFields): void {
+  if (SEVERITY[level] < currentThreshold()) return;
   const record = {
     ts: new Date().toISOString(),
     level,
@@ -14,7 +32,7 @@ function emit(level: LogLevel, message: string, fields?: LogFields): void {
 
 export const log = {
   debug(message: string, fields?: LogFields): void {
-    if (process.env.AUTOVAULT_LOG_LEVEL === "debug") emit("debug", message, fields);
+    emit("debug", message, fields);
   },
   info(message: string, fields?: LogFields): void {
     emit("info", message, fields);

@@ -1,6 +1,8 @@
 import { readSkill, readSkillSource } from "../storage/index.js";
+import { assertSafeSkillName } from "../util/skill-name.js";
 
 export async function getSkill(name: string): Promise<Record<string, unknown>> {
+  assertSafeSkillName(name);
   const skill = await readSkill(name);
   if (!skill) {
     throw new Error(`Skill not found: ${name}`);
