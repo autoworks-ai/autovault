@@ -84,6 +84,8 @@ place; AutoVault re-reads metadata on each request.
 tar -czf autovault-backup-$(date +%F).tgz -C "$HOME" .autovault
 ```
 
+For a release/rollback checklist, see [`docs/RELEASE.md`](docs/RELEASE.md).
+
 ## Docker
 
 Docker is provided for build/distribution; AutoVault is still stdio-only.
@@ -97,6 +99,8 @@ The image does not expose any port and does not run as a detached daemon.
 
 ## Status
 
-This is a working v1. Roadmap items: signed skill bundles
+Current release target: `0.2.0`.
+
+This is a working v1 branch. Roadmap items: signed skill bundles
 (`tweetnacl`-backed), richer remote source ranking, optional semantic
 search.
