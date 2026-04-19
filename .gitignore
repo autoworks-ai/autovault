@@ -1,0 +1,4 @@
+node_modules/
+UPDATES.md
+*.log
+.env

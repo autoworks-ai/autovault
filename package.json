@@ -1,0 +1,13 @@
+{
+  "name": "skills",
+  "version": "1.0.0",
+  "description": "LLM skill files with upstream tracking, import/update tooling, and automated drift detection",
+  "type": "module",
+  "scripts": {
+    "check-updates": "node scripts/check-updates.js",
+    "check-updates:report": "node scripts/check-updates.js --write-report"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
