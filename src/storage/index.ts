@@ -129,11 +129,19 @@ export async function writeSkill(name: string, skillMd: string): Promise<void> {
   await fs.writeFile(path.join(dir, "SKILL.md"), skillMd, "utf-8");
 }
 
+function isAbsoluteLikePath(input: string): boolean {
+  return path.isAbsolute(input) || /^[a-zA-Z]:[\\/]/.test(input) || input.startsWith("\\\\");
+}
+
+function hasTraversalSegment(input: string): boolean {
+  return input.split(/[\\/]+/).some((segment) => segment === "..");
+}
+
 export function validateResourcePath(name: string, resourcePath: string): string {
   if (typeof resourcePath !== "string" || resourcePath.length === 0) {
     throw new Error(`Invalid resource path: ${resourcePath}`);
   }
-  if (resourcePath.includes("..") || path.isAbsolute(resourcePath)) {
+  if (isAbsoluteLikePath(resourcePath) || hasTraversalSegment(resourcePath)) {
     throw new Error(`Invalid resource path: ${resourcePath}`);
   }
   const root = path.resolve(skillDir(name));

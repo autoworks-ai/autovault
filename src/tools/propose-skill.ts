@@ -6,7 +6,7 @@ import {
   writeSkillResources,
   writeSkillSource
 } from "../storage/index.js";
-import { parseFrontmatter } from "../validation/frontmatter.js";
+import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { scoreSimilarity } from "../validation/dedup.js";
 import { validateSkillInput } from "../validation/index.js";
 import { sha256 } from "../util/hash.js";
@@ -19,6 +19,7 @@ export type ProposeSkillInput = {
 };
 
 export async function proposeSkill(input: ProposeSkillInput): Promise<Record<string, unknown>> {
+  const { output: normalizedSkillMd } = attemptRepair(input.skill_md);
   const validation = validateSkillInput(input.skill_md);
   if (validation.securityFlags.length > 0 && !validation.valid) {
     log.info("propose_skill.security_blocked", { flags: validation.securityFlags });
@@ -30,7 +31,7 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     return { outcome: "invalid", errors: validation.errors };
   }
 
-  const { data } = parseFrontmatter(input.skill_md);
+  const { data } = parseFrontmatter(normalizedSkillMd);
   const nextName = typeof data.name === "string" ? data.name : "proposed-skill";
 
   const installed = await listInstalledSkillNames();
@@ -38,7 +39,7 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     const existing = await readSkill(existingName);
     if (!existing) continue;
 
-    const similarity = scoreSimilarity(existing.skillMd, input.skill_md);
+    const similarity = scoreSimilarity(existing.skillMd, normalizedSkillMd);
     if (similarity > 0.9) {
       log.info("propose_skill.duplicate", { existing: existing.name, similarity });
       return {
@@ -66,7 +67,7 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     }
   }
 
-  await writeSkill(nextName, input.skill_md);
+  await writeSkill(nextName, normalizedSkillMd);
   if (input.resources && input.resources.length > 0) {
     await writeSkillResources(nextName, input.resources);
   }
@@ -75,7 +76,7 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     source: "inline",
     identifier: input.source_session ?? "proposed",
     fetchedAt: new Date().toISOString(),
-    contentHash: sha256(input.skill_md)
+    contentHash: sha256(normalizedSkillMd)
   });
 
   log.info("propose_skill.accepted", { name: nextName });

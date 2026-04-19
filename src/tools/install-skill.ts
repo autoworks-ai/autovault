@@ -1,4 +1,4 @@
-import { parseFrontmatter } from "../validation/frontmatter.js";
+import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { validateSkillInput } from "../validation/index.js";
 import {
   type SkillSource,
@@ -67,6 +67,7 @@ export async function installSkill(
     }
   }
 
+  const { output: normalizedSkillMd } = attemptRepair(skillMd);
   const validation = validateSkillInput(skillMd);
   if (!validation.valid) {
     log.info("install_skill.rejected", {
@@ -82,10 +83,10 @@ export async function installSkill(
     };
   }
 
-  const { data } = parseFrontmatter(skillMd);
+  const { data } = parseFrontmatter(normalizedSkillMd);
   const name = typeof data.name === "string" ? data.name : "unnamed-skill";
 
-  await writeSkill(name, skillMd);
+  await writeSkill(name, normalizedSkillMd);
 
   const sourceMeta: SkillSource = {
     source: input.skill_md ? "inline" : input.source,
@@ -93,7 +94,7 @@ export async function installSkill(
     version: input.version,
     upstreamSha: fetched?.upstreamSha,
     fetchedAt: new Date().toISOString(),
-    contentHash: sha256(skillMd)
+    contentHash: sha256(normalizedSkillMd)
   };
   await writeSkillSource(name, sourceMeta);
 

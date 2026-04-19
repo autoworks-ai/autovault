@@ -29,11 +29,21 @@ describe("readSkillResource", () => {
   it("rejects path traversal in resource path", async () => {
     await writeSkill("rsr", skillMd);
     await expect(readSkillResource("rsr", "../../etc/passwd")).rejects.toThrow(/Invalid/);
+    await expect(readSkillResource("rsr", "..\\..\\etc\\passwd")).rejects.toThrow(/Invalid/);
     await expect(readSkillResource("rsr", "/etc/passwd")).rejects.toThrow(/Invalid/);
   });
 
   it("rejects unsafe skill names", async () => {
     await expect(readSkillResource("../escape", "x")).rejects.toThrow(/Invalid skill name/);
     await expect(readSkillResource("foo/bar", "x")).rejects.toThrow(/Invalid skill name/);
+    await expect(readSkillResource("foo\\bar", "x")).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("allows non-traversal filenames that contain double dots", async () => {
+    await writeSkill("rsr", skillMd);
+    await writeSkillResources("rsr", [{ path: "examples/v1..json", content: "{\"ok\":true}" }]);
+    const result = await readSkillResource("rsr", "examples/v1..json");
+    expect(result.content).toBe("{\"ok\":true}");
+    expect(result.mime_type).toBe("application/json");
   });
 });

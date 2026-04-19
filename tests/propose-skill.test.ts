@@ -69,4 +69,16 @@ description: too short
     const installed = await listInstalledSkillNames();
     expect(installed).not.toContain("evil-resource");
   });
+
+  it("persists the repaired content that was validated", async () => {
+    const result = await proposeSkill({
+      skill_md: `---\nname: repaired-skill\ndescription: A description that is intentionally long enough to satisfy the schema check threshold.   \nmetadata:\n\tversion: "1.0.0"\n---\n\n# Body\t`
+    });
+    expect(result.outcome).toBe("accepted");
+
+    const storedPath = path.join(currentStorageRoot(), "skills", "repaired-skill", "SKILL.md");
+    const stored = await fs.readFile(storedPath, "utf-8");
+    expect(stored).not.toContain("\t");
+    expect(stored).not.toMatch(/[ \t]+$/m);
+  });
 });
