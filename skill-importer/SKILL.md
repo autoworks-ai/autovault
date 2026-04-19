@@ -29,19 +29,36 @@ If the user named a skill (or asked what's available), read `CATALOG.md` at the 
 
 ---
 
-## Step 2 — Fetch the upstream skill
+## Step 2 — Resolve + fetch the upstream skill
 
-Convert any GitHub blob URL to a raw URL before fetching:
+### 2a. Validate the URL
+
+Only GitHub blob URLs are accepted. Reject anything else.
+
 ```
-https://github.com/org/repo/blob/main/path/SKILL.md
-→ https://raw.githubusercontent.com/org/repo/main/path/SKILL.md
+✅ https://github.com/<owner>/<repo>/blob/<ref>/<path>/SKILL.md
+❌ any other host or URL shape
 ```
 
-Also resolve the current HEAD commit SHA for this file path:
+Reject if the `<path>` contains `..` or absolute segments after normalization. This is an SSRF + path-traversal guard.
+
+### 2b. Resolve the commit SHA
+
 ```
 GET https://api.github.com/repos/{owner}/{repo}/commits?path={file_path}&per_page=1
 ```
-Store the SHA from the first result as `upstream_sha`.
+
+Store the SHA from the first result as `upstream_sha`. If the response is empty or errors, report and stop.
+
+### 2c. Fetch content pinned to that SHA
+
+Fetch the raw file from the pinned commit — **not** the branch — so the content and the SHA you record are guaranteed consistent (TOCTOU guard):
+
+```
+https://raw.githubusercontent.com/{owner}/{repo}/{upstream_sha}/{file_path}
+```
+
+Do not fall back to `/<branch>/` if this fails — report the error and stop.
 
 ---
 
