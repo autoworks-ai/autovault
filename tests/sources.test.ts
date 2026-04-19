@@ -6,11 +6,17 @@ import {
 import { fetchSkillFromAgentSkills } from "../src/sources/agentskills.js";
 import { fetchSkillFromUrl } from "../src/sources/url.js";
 
-function makeResponse(body: string, init: { ok?: boolean; status?: number } = {}): Response {
+function makeResponse(
+  body: string,
+  init: { ok?: boolean; status?: number; headers?: Record<string, string> } = {}
+): Response {
   return {
     ok: init.ok ?? true,
     status: init.status ?? 200,
     statusText: "OK",
+    headers: {
+      get: (name: string) => init.headers?.[name.toLowerCase()] ?? init.headers?.[name] ?? null
+    },
     text: async () => body,
     json: async () => JSON.parse(body)
   } as unknown as Response;
@@ -56,6 +62,19 @@ describe("github source", () => {
       fetchSkillFromGitHub("owner/repo@abc", { fetch: fetcher })
     ).rejects.toThrow(/GitHub fetch failed/);
   });
+
+  it("fails fast when HEAD sha resolution fails", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      if (u.includes("api.github.com")) {
+        return makeResponse("rate-limited", { ok: false, status: 403 });
+      }
+      return makeResponse("---\nname: x\n---\n");
+    }) as unknown as typeof fetch;
+    await expect(fetchSkillFromGitHub("owner/repo", { fetch: fetcher })).rejects.toThrow(
+      /refusing to guess a default branch/
+    );
+  });
 });
 
 describe("url source", () => {
@@ -67,6 +86,36 @@ describe("url source", () => {
     const fetcher = vi.fn(async () => makeResponse("body")) as unknown as typeof fetch;
     const result = await fetchSkillFromUrl("https://example.com/SKILL.md", { fetch: fetcher });
     expect(result.skillMd).toBe("body");
+  });
+
+  it("follows https redirects and returns final body", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u === "https://example.com/SKILL.md") {
+        return makeResponse("", {
+          ok: false,
+          status: 302,
+          headers: { location: "https://cdn.example.com/skill.md" }
+        });
+      }
+      return makeResponse("redirected-body");
+    }) as unknown as typeof fetch;
+    const result = await fetchSkillFromUrl("https://example.com/SKILL.md", { fetch: fetcher });
+    expect(result.skillMd).toBe("redirected-body");
+    expect(result.sourceUrl).toBe("https://cdn.example.com/skill.md");
+  });
+
+  it("rejects redirects to non-https", async () => {
+    const fetcher = vi.fn(async () =>
+      makeResponse("", {
+        ok: false,
+        status: 302,
+        headers: { location: "http://example.com/plaintext.md" }
+      })
+    ) as unknown as typeof fetch;
+    await expect(fetchSkillFromUrl("https://example.com/SKILL.md", { fetch: fetcher })).rejects.toThrow(
+      /non-https/
+    );
   });
 });
 

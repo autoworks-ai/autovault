@@ -54,7 +54,12 @@ export async function fetchSkillFromGitHub(
   const ident = parseGithubIdentifier(identifier);
 
   const upstreamSha = await resolveSha(ident, fetcher, token);
-  const ref = upstreamSha ?? (ident.ref === "HEAD" ? "main" : ident.ref);
+  if (ident.ref === "HEAD" && !upstreamSha) {
+    throw new Error(
+      `GitHub SHA resolution failed for ${ident.owner}/${ident.repo}@HEAD; refusing to guess a default branch`
+    );
+  }
+  const ref = upstreamSha ?? ident.ref;
   const rawUrl = `https://raw.githubusercontent.com/${ident.owner}/${ident.repo}/${ref}/${ident.filePath}`;
   const headers: Record<string, string> = { "User-Agent": "autovault" };
   if (token) headers.Authorization = `Bearer ${token}`;
