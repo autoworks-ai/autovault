@@ -1,11 +1,11 @@
 {
   "name": "skills",
-  "version": "1.0.0",
-  "description": "LLM skill files with upstream tracking, import/update tooling, and automated drift detection",
+  "version": "2.0.0",
+  "description": "Self-bootstrapping skill pack — skill-importer and skill-manager manage themselves and the rest of the repo",
   "type": "module",
   "scripts": {
-    "check-updates": "node scripts/check-updates.js",
-    "check-updates:report": "node scripts/check-updates.js --write-report"
+    "check-drift": "node skill-manager/scripts/check-drift.js",
+    "check-drift:report": "node skill-manager/scripts/check-drift.js --write-report"
   },
   "engines": {
     "node": ">=18"
