@@ -23,9 +23,38 @@ Use this skill whenever someone wants to add a skill to their agent setup.
 
 ## Step 1 — Identify the target skill
 
-If the user gave a GitHub URL, skip to Step 2.
+If the user named a skill (or asked what's available), read `CATALOG.md` at the repo root and present the list. Ask which skill they want, or confirm the one they named. The result is a GitHub URL from the catalog.
 
-If the user named a skill (or asked what's available), read `CATALOG.md` at the repo root and present the list. Ask which skill they want, or confirm the one they named.
+### 1a. Resolve the URL to a single skill
+
+Accept these GitHub URL shapes:
+
+- **Blob URL** — `https://github.com/<owner>/<repo>/blob/<ref>/<path>/SKILL.md` — use directly, skip to Step 2.
+- **Tree URL** — `https://github.com/<owner>/<repo>/tree/<ref>/<path>` — treat `<path>` as a scoping filter below.
+- **Repo root** — `https://github.com/<owner>/<repo>` (optionally with `/tree/<ref>`) — search the whole repo.
+
+For tree or repo-root URLs, list every `SKILL.md` in the repo:
+
+```
+GET https://api.github.com/repos/{owner}/{repo}/git/trees/{ref}?recursive=1
+```
+
+Filter tree entries whose basename is `SKILL.md` (also accept `skill.md`). If a tree path was supplied, restrict to entries under that path.
+
+For each remaining candidate, fetch the file and read its frontmatter `name` + `description`.
+
+- **Zero candidates** — report "No SKILL.md found in {repo}" and stop.
+- **One candidate** — build the blob URL for that path and proceed to Step 2.
+- **Multiple candidates** — present the list and ask which one to import:
+
+    > Found 3 skills in {owner}/{repo}:
+    >   1. clawhub — ClawHub CLI skill
+    >   2. cli-helpers — Helpers for clawhub-cli
+    >   3. doctor — Runtime + install health checks
+    >
+    > Which one?
+
+  The chosen candidate's blob URL feeds Step 2.
 
 ---
 
