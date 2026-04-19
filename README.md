@@ -1,224 +1,102 @@
-# skills
+# AutoVault
 
-A self-bootstrapping skill pack. Two built-in skills manage themselves and the rest of the repo — clone it, add them to your agent, and your agent handles the rest.
+AutoVault is a Model Context Protocol (MCP) server that **stores, validates,
+and serves curated agent skills**. It does not execute skills.
 
-## The pitch
+The server runs over **stdio only** (see [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md)).
+An MCP host (Cursor, Claude Desktop, custom agent) is expected to spawn the
+process and communicate over stdin/stdout. AutoVault never opens a network
+listener.
 
-```
-Clone the repo.
-Add skill-importer and skill-manager to your agent.
-Browse the catalog. Grab what you want.
-Your agent manages its own skills from there.
-```
+## Features
 
----
+- MCP tools: `list_skills`, `search_skills`, `get_skill`, `read_skill_resource`,
+  `install_skill`, `propose_skill`, `check_updates`.
+- Validation pipeline: frontmatter parse + repair, schema validation,
+  configurable security denylist, content-similarity dedup gate.
+- Pluggable source adapters: `github` (owner/repo[@ref][:path]), `agentskills`
+  (slug[@version]), `url` (https only).
+- Drift detection via per-skill source metadata sidecar (`.autovault-source.json`)
+  and content hashes.
+- Structured JSON logs to stderr; stdout is reserved for MCP framing.
 
 ## Quick Start
 
-**1. Clone the repo**
+```bash
+cp .env.example .env
+npm install
+npm run build
+node dist/index.js   # spawned by your MCP host, not run interactively
+```
+
+For development:
 
 ```bash
-git clone https://github.com/verygoodplugins/skills.git
+npm run dev          # tsx watch
+npm test             # vitest
 ```
 
-**2. Point your agent at the skills folder**
+## Configuration
 
-In Claude Code, Cursor, or any agent that supports skills — add `skill-importer` and `skill-manager` from this repo.
+All configuration is via environment variables. Invalid values fail fast at
+startup with a descriptive error.
 
-**3. Ask your agent to browse the catalog**
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOVAULT_MODE` | `local` | Reserved for future modes. |
+| `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
+| `AUTOVAULT_SECURITY_STRICT` | `true` | If true, security denylist hits block install/propose. If false, hits become warnings. |
+| `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (only `text` shipped today). |
+| `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
+| `GITHUB_TOKEN` | _unset_ | Optional. Used for GitHub API rate-limit headroom. |
+| `AUTOVAULT_AGENTSKILLS_BASE` | `https://agentskills.io/api/v1` | Override agentskills base URL. |
 
-```
-"What skills are available in the catalog?"
-```
+## Project Layout
 
-The agent reads `CATALOG.md`, shows you the list, and guides you through installation.
+- `src/mcp/` MCP server wiring.
+- `src/tools/` tool handlers (one file per tool).
+- `src/validation/` frontmatter, schema, security, dedup.
+- `src/sources/` upstream source adapters (`github`, `agentskills`, `url`).
+- `src/storage/` filesystem-backed skill storage.
+- `src/util/` logging and hashing helpers.
+- `scripts/security/patterns.json` security denylist (single source of truth).
+- `docs/adr/` architecture decision records.
+- `docs/THREAT-MODEL.md` threat model.
 
-**4. Install a skill**
-
-```
-"Install the X skill"
-```
-
-The agent fetches it, safety-checks it, scaffolds the folder, and registers it in `skills.lock`.
-
-**5. Stay current**
-
-```
-"Are my skills up to date?"
-```
-
-The agent reads `skills.lock`, checks each upstream SHA against GitHub, and surfaces anything that's drifted.
-
----
-
-## Architecture
-
-### skill-importer
-
-The onramp. When someone says "I want skill X", it:
-1. Shows the curated catalog (`CATALOG.md`)
-2. Fetches the skill from GitHub
-3. Safety-checks it
-4. Scaffolds `skill-name/SKILL.md`
-5. Populates upstream tracking metadata
-6. Updates `skills.lock`
-
-### skill-manager
-
-The lifecycle manager. It:
-- Reads `skills.lock` to see what's installed
-- Fetches current upstream SHAs in parallel
-- Reports drift (local SHA vs upstream HEAD)
-- Offers three merge options for non-trivial updates
-- Auto-applies trivial changes (typos, wording)
-- Maintains per-skill `CHANGELOG.md` entries
-- Runs a weekly drift check (built-in job instructions)
-
----
-
-## Directory Structure
+## Storage Layout
 
 ```
-skills/
-├── README.md                         # This file
-├── CATALOG.md                        # Curated skill list
-├── skills.lock                       # Installed skills manifest
-├── skill-importer/
-│   └── SKILL.md                      # Onramp skill
-├── skill-manager/
-│   ├── SKILL.md                      # Lifecycle manager skill
-│   └── scripts/
-│       └── check-drift.js            # CLI drift checker
-└── {your-skill}/
-    ├── SKILL.md                      # The skill itself
-    └── CHANGELOG.md                  # Per-skill update history
+$AUTOVAULT_STORAGE_PATH/
+  skills/
+    <name>/
+      SKILL.md
+      .autovault-source.json   # source provenance + content hash
+      <resources...>
 ```
 
----
+## Backup and Restore
 
-## Skill Format
-
-All skills follow the [agentskills.io specification](https://agentskills.io/specification): a folder with `SKILL.md` as the entry point.
-
-```
-skill-name/
-├── SKILL.md          # Required: frontmatter + instructions
-├── scripts/          # Optional: executable code
-├── references/       # Optional: reference docs
-└── assets/           # Optional: templates, data
-```
-
-### SKILL.md frontmatter
-
-Standard fields from the agentskills.io spec:
-
-```yaml
----
-name: skill-name
-description: What this skill does and when to use it.
-license: MIT
-compatibility: Designed for Claude Code
-metadata:
-  version: "1.0.0"
-  author: verygoodplugins
----
-```
-
-### Upstream tracking fields
-
-For imported skills, add provenance tracking inside `metadata`:
-
-```yaml
-metadata:
-  version: "1.0.0"
-  upstream: "https://github.com/org/repo/blob/main/skill-name/SKILL.md"
-  upstream_sha: "abc1234def5678901234567890abcdef12345678"
-  imported_at: "2026-04-19T00:00:00Z"
-  adapted_for: "Claude Code"
-```
-
-| Field | Description |
-|-------|-------------|
-| `upstream` | GitHub blob URL of the source file |
-| `upstream_sha` | Commit SHA at time of import or last sync |
-| `imported_at` | ISO 8601 UTC timestamp of initial import |
-| `adapted_for` | Platform/project this was adapted for |
-
-Rules:
-- `upstream` and `upstream_sha` must appear together or not at all.
-- `upstream_sha` does **not** update on local edits — only on explicit syncs. This is what enables drift detection.
-- Bump `version` on local edits (semver minor for compatible, major for rewrites).
-
----
-
-## skills.lock
-
-`skills.lock` is the single source of truth for what's installed. Updated automatically by `skill-importer` on install and by `skill-manager` when checking drift.
-
-```yaml
-version: "1"
-updated: "2026-04-19T00:00:00Z"
-skills:
-  skill-name:
-    version: "1.0.0"
-    upstream: "https://github.com/org/repo/blob/main/skill-name/SKILL.md"
-    upstream_sha: "abc1234def5678901234567890abcdef12345678"
-    installed_at: "2026-04-19T00:00:00Z"
-    last_checked: "2026-04-19T00:00:00Z"
-    adapted_for: "Claude Code"
-```
-
----
-
-## CLI Drift Check
-
-For CI or cron jobs, use the bundled script:
+Skills are plain files, so backup is a `tar`/`rsync` of
+`$AUTOVAULT_STORAGE_PATH/skills/`. To restore, drop the directory back in
+place; AutoVault re-reads metadata on each request.
 
 ```bash
-node skill-manager/scripts/check-drift.js
+tar -czf autovault-backup-$(date +%F).tgz -C "$HOME" .autovault
 ```
 
-```
-Checking 3 tracked skill(s)...
+## Docker
 
-✅ Up to date:
-   skill-name (v1.0.0)
-
-⚠️  Drift detected:
-   other-skill (v1.2.0)
-     Local SHA:    abc1234...
-     Upstream SHA: def5678...
-     Diff:         https://github.com/org/repo/compare/abc1234...def5678
-```
-
-Flags:
-- `--write-report` — append drift notes to each skill's `CHANGELOG.md`
-- `--lock-path <path>` — override `skills.lock` location
-
-Exit codes: `0` = up to date, `1` = drift detected, `2` = fatal error.
-
-Set `GITHUB_TOKEN` to avoid rate limits.
+Docker is provided for build/distribution; AutoVault is still stdio-only.
 
 ```bash
-npm run check-drift
-npm run check-drift:report
+docker compose build
+docker compose run --rm autovault   # attach an MCP client over stdio
 ```
 
----
+The image does not expose any port and does not run as a detached daemon.
 
-## Contributing
+## Status
 
-Skills are Markdown folders. To contribute:
-
-1. Create `your-skill/SKILL.md` following the [agentskills.io spec](https://agentskills.io/specification).
-2. If importing from elsewhere, use `skill-importer` to populate upstream tracking.
-3. Add your skill to `CATALOG.md`.
-4. Open a PR.
-
----
-
-## Forks and Personal Packs
-
-Fork this repo to build your own skill pack. Your fork is your personal collection — customized, curated, yours. The upstream (`verygoodplugins/skills`) is the canonical public catalog.
-
-`skill-manager` will track drift against whatever `upstream` URLs your skills declare, whether those point here or anywhere else on GitHub.
+This is a working v1. Roadmap items: signed skill bundles
+(`tweetnacl`-backed), richer remote source ranking, optional semantic
+search.

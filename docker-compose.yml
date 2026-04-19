@@ -1,0 +1,25 @@
+# Developer convenience only. AutoVault is a stdio MCP server; running it
+# detached without an MCP client attached over stdin is not a useful state.
+#
+# Use this compose file to:
+#   1. Build the image:        `docker compose build`
+#   2. Spawn the server attached to your terminal: `docker compose run --rm autovault`
+#
+# It intentionally does not expose ports or restart automatically.
+
+services:
+  autovault:
+    build: .
+    image: autoworks/autovault:dev
+    environment:
+      - AUTOVAULT_MODE=local
+      - AUTOVAULT_STORAGE_PATH=/data/autovault
+      - AUTOVAULT_SECURITY_STRICT=true
+      - AUTOVAULT_SEARCH_MODE=text
+    volumes:
+      - autovault-data:/data
+    stdin_open: true
+    tty: false
+
+volumes:
+  autovault-data:

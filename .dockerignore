@@ -1,0 +1,11 @@
+node_modules
+dist
+coverage
+.env
+.git
+.github
+.cursor
+docs
+tests
+assistant
+README.md

@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "patterns": [
+    {
+      "id": "ssh-read",
+      "regex": "cat\\s+~\\/\\.ssh\\/",
+      "flags": "i",
+      "reason": "Reads SSH private material"
+    },
+    {
+      "id": "curl-upload",
+      "regex": "curl\\s+.*(-d|--data)\\s+@",
+      "flags": "i",
+      "reason": "Potential file exfiltration via curl upload"
+    },
+    {
+      "id": "obfuscated-shell",
+      "regex": "base64\\s+-d\\s+\\|\\s*(sh|bash)",
+      "flags": "i",
+      "reason": "Obfuscated command execution"
+    },
+    {
+      "id": "no-verify",
+      "regex": "--no-verify",
+      "flags": "i",
+      "reason": "Bypasses verification checks"
+    },
+    {
+      "id": "rm-rf-root",
+      "regex": "rm\\s+-rf\\s+(/|~|\\$HOME)(/|\\s|$)?",
+      "flags": "i",
+      "reason": "Destructive recursive delete of home or root"
+    },
+    {
+      "id": "curl-pipe-shell",
+      "regex": "curl\\s+[^|]*\\|\\s*(sh|bash)",
+      "flags": "i",
+      "reason": "Pipes remote content directly into a shell"
+    }
+  ]
+}
