@@ -24,7 +24,7 @@ async function runTool<T>(name: string, handler: ToolHandler<T>): Promise<{ cont
 export function createServer(): McpServer {
   const server = new McpServer({
     name: "autovault",
-    version: "0.1.0"
+    version: "0.2.0"
   });
 
   server.tool("list_skills", "List installed skill metadata only", {}, async () =>
