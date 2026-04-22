@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach } from "vitest";
 import { resetConfigCache } from "../src/config.js";
+import { resetSigningCache } from "../src/util/sign.js";
 
 let tempRoot: string | null = null;
 
@@ -14,6 +15,7 @@ beforeEach(() => {
   process.env.AUTOVAULT_SEARCH_MODE = "text";
   process.env.AUTOVAULT_LOG_LEVEL = "error";
   resetConfigCache();
+  resetSigningCache();
 });
 
 afterEach(() => {
@@ -22,6 +24,7 @@ afterEach(() => {
     tempRoot = null;
   }
   resetConfigCache();
+  resetSigningCache();
 });
 
 export function currentStorageRoot(): string {
