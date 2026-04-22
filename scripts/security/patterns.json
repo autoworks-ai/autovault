@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "patterns": [
     {
       "id": "ssh-read",
@@ -8,16 +8,28 @@
       "reason": "Reads SSH private material"
     },
     {
+      "id": "aws-read",
+      "regex": "cat\\s+~\\/\\.aws\\/(credentials|config)",
+      "flags": "i",
+      "reason": "Reads AWS credentials"
+    },
+    {
       "id": "curl-upload",
-      "regex": "curl\\s+.*(-d|--data)\\s+@",
+      "regex": "curl\\s+.*(-d|--data|-F|--form)\\s+\\S*@",
       "flags": "i",
       "reason": "Potential file exfiltration via curl upload"
     },
     {
-      "id": "obfuscated-shell",
-      "regex": "base64\\s+-d\\s+\\|\\s*(sh|bash)",
+      "id": "obfuscated-shell-base64",
+      "regex": "base64\\s+-d\\s+\\|\\s*(sh|bash|zsh)",
       "flags": "i",
-      "reason": "Obfuscated command execution"
+      "reason": "Obfuscated command execution via base64 decode"
+    },
+    {
+      "id": "obfuscated-shell-hex",
+      "regex": "xxd\\s+-r\\s+-p\\s*\\|\\s*(sh|bash|zsh)",
+      "flags": "i",
+      "reason": "Obfuscated command execution via hex decode"
     },
     {
       "id": "no-verify",
@@ -33,9 +45,33 @@
     },
     {
       "id": "curl-pipe-shell",
-      "regex": "curl\\s+[^|]*\\|\\s*(sh|bash)",
+      "regex": "curl\\s+[^|]*\\|\\s*(sh|bash|zsh)",
       "flags": "i",
       "reason": "Pipes remote content directly into a shell"
+    },
+    {
+      "id": "wget-pipe-shell",
+      "regex": "wget\\s+[^|]*-O-\\s*\\|\\s*(sh|bash|zsh)",
+      "flags": "i",
+      "reason": "Pipes remote content directly into a shell via wget"
+    },
+    {
+      "id": "eval-untrusted-var",
+      "regex": "\\beval\\s+\"?\\$[A-Za-z_][A-Za-z0-9_]*\"?",
+      "flags": "",
+      "reason": "Evaluates a shell variable without sanitization"
+    },
+    {
+      "id": "setuid-setgid",
+      "regex": "chmod\\s+[0-9]*[ug]\\+s\\b",
+      "flags": "i",
+      "reason": "Grants setuid/setgid which can escalate privileges"
+    },
+    {
+      "id": "disable-ssl-verify",
+      "regex": "\\b(curl|wget)\\b[^|\\n]*?\\s(-k|--insecure|--no-check-certificate)\\b",
+      "flags": "i",
+      "reason": "Disables SSL verification"
     }
   ]
 }

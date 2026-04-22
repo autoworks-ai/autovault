@@ -3,8 +3,11 @@ import path from "node:path";
 import { loadConfig } from "../config.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
 import type { SkillRecord, SkillSummary } from "../types.js";
+import { signContent, verifyContent } from "../util/sign.js";
+import { log } from "../util/log.js";
 
 const SOURCE_FILE = ".autovault-source.json";
+const SIGNATURE_FILE = ".autovault-signature";
 
 export type SkillSource = {
   source: "github" | "agentskills" | "url" | "inline";
@@ -97,6 +100,7 @@ export async function readSkill(name: string): Promise<SkillRecord | null> {
   const skillPath = path.join(skillDir(name), "SKILL.md");
   try {
     const skillMd = await fs.readFile(skillPath, "utf-8");
+    await verifySignatureIfPresent(name, skillMd);
     const { data } = parseFrontmatter(skillMd);
     const summary = buildSummary(name, data);
     return {
@@ -108,6 +112,20 @@ export async function readSkill(name: string): Promise<SkillRecord | null> {
     };
   } catch {
     return null;
+  }
+}
+
+async function verifySignatureIfPresent(name: string, skillMd: string): Promise<void> {
+  const signaturePath = path.join(skillDir(name), SIGNATURE_FILE);
+  let signature: string;
+  try {
+    signature = (await fs.readFile(signaturePath, "utf-8")).trim();
+  } catch {
+    return;
+  }
+  const ok = await verifyContent(skillMd, signature);
+  if (!ok) {
+    log.warn("storage.signature_mismatch", { name });
   }
 }
 
@@ -127,6 +145,12 @@ export async function writeSkill(name: string, skillMd: string): Promise<void> {
   const dir = skillDir(name);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), skillMd, "utf-8");
+  try {
+    const signature = await signContent(skillMd);
+    await fs.writeFile(path.join(dir, SIGNATURE_FILE), signature, { encoding: "utf-8", mode: 0o600 });
+  } catch (error) {
+    log.warn("storage.sign_failed", { name, error: String(error) });
+  }
 }
 
 function isAbsoluteLikePath(input: string): boolean {

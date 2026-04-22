@@ -7,7 +7,7 @@ import {
   writeSkillSource
 } from "../storage/index.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
-import { scoreSimilarity } from "../validation/dedup.js";
+import { classifyDedup, type DedupCandidate } from "../validation/dedup.js";
 import { validateSkillInput } from "../validation/index.js";
 import { sha256 } from "../util/hash.js";
 import { log } from "../util/log.js";
@@ -33,24 +33,48 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
 
   const { data } = parseFrontmatter(normalizedSkillMd);
   const nextName = typeof data.name === "string" ? data.name : "proposed-skill";
+  const candidateHash = sha256(normalizedSkillMd);
 
-  const installed = await listInstalledSkillNames();
-  for (const existingName of installed) {
-    const existing = await readSkill(existingName);
-    if (!existing) continue;
+  const existing: DedupCandidate[] = [];
+  for (const existingName of await listInstalledSkillNames()) {
+    const record = await readSkill(existingName);
+    if (!record) continue;
+    existing.push({
+      name: record.name,
+      contentHash: sha256(record.skillMd),
+      content: record.skillMd
+    });
+  }
 
-    const similarity = scoreSimilarity(existing.skillMd, normalizedSkillMd);
-    if (similarity > 0.9) {
-      log.info("propose_skill.duplicate", { existing: existing.name, similarity });
-      return {
-        outcome: "duplicate",
-        existing_match: {
-          name: existing.name,
-          similarity,
-          merge_options: ["keep_existing", "replace", "merge", "keep_both"]
-        }
-      };
-    }
+  const dedup = classifyDedup(candidateHash, normalizedSkillMd, existing);
+
+  if (dedup.tier === "exact") {
+    log.info("propose_skill.duplicate_exact", { existing: dedup.existingName });
+    return {
+      outcome: "duplicate",
+      existing_match: {
+        name: dedup.existingName,
+        similarity: 1,
+        match_type: "exact",
+        merge_options: ["keep_existing"]
+      }
+    };
+  }
+
+  if (dedup.tier === "near_exact") {
+    log.info("propose_skill.duplicate_near", {
+      existing: dedup.existingName,
+      similarity: dedup.similarity
+    });
+    return {
+      outcome: "duplicate",
+      existing_match: {
+        name: dedup.existingName,
+        similarity: dedup.similarity,
+        match_type: "near_exact",
+        merge_options: ["keep_existing", "replace", "merge", "keep_both"]
+      }
+    };
   }
 
   if (input.resources && input.resources.length > 0) {
@@ -76,9 +100,25 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     source: "inline",
     identifier: input.source_session ?? "proposed",
     fetchedAt: new Date().toISOString(),
-    contentHash: sha256(normalizedSkillMd)
+    contentHash: candidateHash
   });
 
-  log.info("propose_skill.accepted", { name: nextName });
-  return { outcome: "accepted", name: nextName, warnings: validation.warnings };
+  const warnings = [...validation.warnings];
+  if (dedup.tier === "functional" && dedup.existingName) {
+    warnings.push(
+      `Functionally similar to existing skill "${dedup.existingName}" (similarity ${dedup.similarity.toFixed(2)}). Consider reviewing for overlap.`
+    );
+  }
+
+  log.info("propose_skill.accepted", { name: nextName, tier: dedup.tier });
+  return {
+    outcome: "accepted",
+    name: nextName,
+    warnings,
+    dedup: {
+      tier: dedup.tier,
+      similarity: dedup.similarity,
+      similar_to: dedup.existingName ?? null
+    }
+  };
 }

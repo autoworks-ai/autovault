@@ -66,8 +66,10 @@ Every install/propose path goes through a validation pipeline that includes:
 
 - frontmatter parsing and normalization
 - schema validation via `zod`
-- denylist-based security scanning
-- duplicate detection based on content similarity
+- denylist-based security scanning (12 patterns, extensible)
+- capability-declaration cross-check (e.g., `network: false` vs. a `curl` in content)
+- three-tier deduplication: exact content-hash match, near-exact text similarity, functional-overlap warning
+- Ed25519 signing of every stored skill (log-only verification in V1)
 - safe path handling for skill names and resource reads/writes
 
 ### Source Adapters
@@ -82,12 +84,13 @@ Remote content is treated as untrusted until it passes validation.
 
 ### Provenance and Drift Detection
 
-Installed skills are stored with a sidecar file:
+Installed skills are stored with two sidecar files:
 
-- `.autovault-source.json`
+- `.autovault-source.json` — source, identifier, upstream SHA, content hash, timestamps
+- `.autovault-signature` — detached Ed25519 signature over the SKILL.md content
 
-That sidecar records source metadata, content hash, and timestamps so
-`check_updates` can detect upstream drift.
+`check_updates` uses the content hash to detect upstream drift. The signature
+detects post-install tampering (log-only warning in V1).
 
 ## Benefits
 
@@ -112,10 +115,12 @@ Storage layout:
 
 ```text
 $AUTOVAULT_STORAGE_PATH/
+  .signing-key.json            # Ed25519 keypair (0600)
   skills/
     <name>/
       SKILL.md
-      .autovault-source.json
+      .autovault-source.json   # source, hash, timestamps
+      .autovault-signature     # detached Ed25519 signature (0600)
       <resources...>
 ```
 
@@ -123,13 +128,15 @@ $AUTOVAULT_STORAGE_PATH/
 
 ```bash
 cp .env.example .env
-npm install
+npm ci
 npm run build
-node dist/index.js
+node scripts/bootstrap-skills.mjs   # seed the bundled skills into ~/.autovault
 ```
 
 Note: `node dist/index.js` is meant to be **spawned by an MCP host**, not used
-as a long-running interactive CLI.
+as a long-running interactive CLI. See [`INSTALL.md`](INSTALL.md) for
+complete setup instructions including MCP host config for Claude Code,
+Cursor, and Codex.
 
 For development:
 
@@ -241,7 +248,10 @@ See:
 
 Likely next areas of expansion:
 
-- signed skill bundles (`tweetnacl` roadmap)
-- richer provenance and trust controls
-- stronger release automation
-- more advanced search modes
+- signature verification enforcement (currently log-only)
+- semantic search via local embeddings
+- description optimization loop (from skill-creator)
+- Hermes-style agent filesystem watchers for post-hoc consolidation
+- remote HTTP+SSE mode with OAuth 2.1
+- additional source adapters (ClawHub, LobeHub, Tessl)
+- secret resolver (brainstorm pending)

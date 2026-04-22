@@ -53,11 +53,47 @@ description: too short
     expect(result.outcome).toBe("invalid");
   });
 
-  it("detects duplicates against installed skills", async () => {
+  it("detects exact duplicates via content hash", async () => {
     const md = baseSkill("dup-target");
     await proposeSkill({ skill_md: md });
     const result = await proposeSkill({ skill_md: md });
     expect(result.outcome).toBe("duplicate");
+    const match = (result as { existing_match?: { match_type?: string; name?: string } })
+      .existing_match;
+    expect(match?.match_type).toBe("exact");
+    expect(match?.name).toBe("dup-target");
+  });
+
+  it("warns on functional similarity but still accepts", async () => {
+    const words = (n: number) =>
+      Array.from({ length: n }, (_, i) => String.fromCharCode(97 + i)).join(" ");
+    const existing = `---
+name: first-func-skill
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+metadata:
+  version: "1.0.0"
+---
+
+${words(11)}
+`;
+    const similar = `---
+name: second-func-skill
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+metadata:
+  version: "1.0.0"
+---
+
+${words(10)} z
+`;
+
+    await proposeSkill({ skill_md: existing });
+    const result = await proposeSkill({ skill_md: similar });
+    expect(result.outcome).toBe("accepted");
+    const dedup = (result as { dedup?: { tier?: string; similar_to?: string } }).dedup;
+    expect(dedup?.tier).toBe("functional");
+    expect(dedup?.similar_to).toBe("first-func-skill");
+    const warnings = (result as { warnings?: string[] }).warnings ?? [];
+    expect(warnings.some((w) => w.includes("first-func-skill"))).toBe(true);
   });
 
   it("rejects resources that escape the skill directory and does not persist the skill", async () => {

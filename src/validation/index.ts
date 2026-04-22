@@ -1,5 +1,6 @@
 import { loadConfig } from "../config.js";
 import type { ValidationResult } from "../types.js";
+import { checkCapabilityDeclaration } from "./capability.js";
 import { attemptRepair, parseFrontmatter } from "./frontmatter.js";
 import { validateSchema } from "./schema.js";
 import { runSecurityScan } from "./security.js";
@@ -23,7 +24,9 @@ export function validateSkillInput(skillMd: string): ValidationResult {
   }
 
   const schemaResult = validateSchema(parsed.data);
-  const securityFlags = runSecurityScan(output);
+  const denylistFlags = runSecurityScan(output);
+  const capabilityFlags = checkCapabilityDeclaration(output, parsed.data);
+  const securityFlags = [...denylistFlags, ...capabilityFlags];
 
   if (repaired) {
     warnings.push("Frontmatter formatting was auto-normalized.");
