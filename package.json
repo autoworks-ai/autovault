@@ -19,7 +19,8 @@
     "sync:profiles": "tsx src/cli.ts sync-profiles",
     "import:autohub": "tsx src/cli.ts import-autohub --tool-filters ../autohub/config/tool-filters.json --mcp-servers ../autohub/config/mcp-servers.json --reset",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "npm run build"
   },
   "engines": {
     "node": ">=20.0.0"
