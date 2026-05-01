@@ -1,6 +1,6 @@
 ---
 name: autovault-skill
-description: Access shared skills through AutoVault. Always search AutoVault before writing a new skill so duplicates are avoided and curated knowledge is reused.
+description: Understand AutoVault-managed skills. AutoVault syncs skills into the agent's normal skill directory, so loaded skills can be used directly without an AutoVault MCP server.
 license: MIT
 tags:
   - meta
@@ -16,27 +16,63 @@ metadata:
 capabilities:
   network: false
   filesystem: readonly
-  tools:
-    - mcp
+  tools: []
 ---
 
 # AutoVault Meta-Skill
 
-Use AutoVault as the canonical source of curated agent skills. AutoVault
-stores, validates, and serves skills; it does not execute them. The agent
-that loads a skill is responsible for sandboxing and user confirmation
-before running anything the skill describes.
+AutoVault is the local capability and skill profile layer. It stores and
+validates skills, then syncs them into the agent's normal skill directory as
+filesystem symlinks. If this skill is loaded, AutoVault profile sync is already
+working for this agent; do not require an AutoVault MCP server before using
+other visible skills.
+
+AutoVault does not execute skills. The agent that loads a skill is responsible
+for sandboxing and user confirmation before running anything the skill
+describes.
 
 ## When to use
 
-- Before writing any new skill, search AutoVault first.
-- Before suggesting a workflow, check whether a curated skill already
-  encodes that workflow.
-- When a previously installed skill might be stale.
+- When the user asks why an AutoVault-managed skill is visible.
+- When deciding whether to use a synced skill such as `commit-message` or
+  `skill-author`.
+- Before writing a new skill, check the skills already visible to the current
+  agent.
+- When debugging profile sync or stale skill links.
 
-## Tool reference
+## Primary workflow: synced skills
 
-AutoVault exposes seven MCP tools over stdio:
+AutoVault's primary interface is filesystem-native profile sync:
+
+```text
+$AUTOVAULT_STORAGE_PATH/
+  skills/SKILL_NAME/SKILL.md
+  profiles/AGENT/SKILL_NAME points to ../../skills/SKILL_NAME
+
+~/.claude/skills/SKILL_NAME points to ~/.autovault/profiles/claude-code/SKILL_NAME
+~/.codex/skills/SKILL_NAME points to ~/.autovault/profiles/codex/SKILL_NAME
+```
+
+Use synced skills directly through the host's normal skill mechanism. If a
+skill is visible in the current agent session, it is already available; no
+`mcp__autovault__*` tools are required.
+
+For local troubleshooting, inspect the profile directory:
+
+```bash
+ls -l ~/.autovault/profiles/claude-code
+ls -l ~/.claude/skills
+ls -l ~/.codex/skills
+```
+
+## Optional compatibility: MCP tools
+
+Some hosts may still connect the AutoVault MCP compatibility server. Only use
+these tools if `mcp__autovault__*` tools are actually present in the current
+session. If they are absent, continue with the synced skills that are already
+visible.
+
+The compatibility server exposes seven MCP tools:
 
 - `list_skills` - returns metadata for every installed skill.
 - `search_skills(query, top_k?)` - text search across name, description,
@@ -55,9 +91,10 @@ AutoVault exposes seven MCP tools over stdio:
 - `check_updates(skill?)` - compares installed content hash against the
   recorded source. Inline skills are always reported as up_to_date.
 
-## Required workflow
+## Optional MCP workflow
 
-1. Call `search_skills` with a concise query.
+1. If `mcp__autovault__search_skills` is available, call `search_skills` with a
+   concise query.
 2. If a result has high confidence, call `get_skill` and follow it.
 3. If nothing fits, author a new `SKILL.md` and call `propose_skill`.
    Handle every outcome explicitly:
@@ -66,8 +103,10 @@ AutoVault exposes seven MCP tools over stdio:
      value (`keep_existing`, `replace`, `merge`, `keep_both`).
    - `invalid` - fix the listed schema errors and resubmit.
    - `security_blocked` - rewrite the content to remove flagged patterns.
-4. Periodically call `check_updates` for skills installed from a remote
-   source.
+4. Periodically call `check_updates` for skills installed from a remote source.
+
+Skip this workflow entirely when the MCP tools are not connected. Missing MCP
+tools are not an error for filesystem-synced skills.
 
 ## SKILL.md schema (minimum)
 
