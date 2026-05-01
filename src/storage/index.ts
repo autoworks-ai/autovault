@@ -33,7 +33,21 @@ export async function ensureStorage(): Promise<void> {
 export async function listInstalledSkillNames(): Promise<string[]> {
   await ensureStorage();
   const entries = await fs.readdir(skillsDir(), { withFileTypes: true });
-  return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  const names: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      names.push(entry.name);
+      continue;
+    }
+    if (!entry.isSymbolicLink()) continue;
+    try {
+      const stat = await fs.stat(path.join(skillsDir(), entry.name));
+      if (stat.isDirectory()) names.push(entry.name);
+    } catch {
+      // Ignore broken symlinks; profile sync can clean those up.
+    }
+  }
+  return names;
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -92,7 +106,8 @@ function buildSummary(name: string, frontmatter: Record<string, unknown>): Skill
     description: asString(frontmatter.description, ""),
     version: asString(metadata.version, "0.0.0"),
     tags: asStringArray(frontmatter.tags),
-    category: typeof frontmatter.category === "string" ? frontmatter.category : undefined
+    category: typeof frontmatter.category === "string" ? frontmatter.category : undefined,
+    agents: asStringArray(frontmatter.agents)
   };
 }
 
@@ -137,7 +152,8 @@ export async function readSkillSummary(name: string): Promise<SkillSummary | nul
     description: record.description,
     version: record.version,
     tags: record.tags,
-    category: record.category
+    category: record.category,
+    agents: record.agents
   };
 }
 

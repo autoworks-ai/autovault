@@ -25,6 +25,7 @@ const schema = z.object({
   description: z.string().min(20),
   license: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  agents: z.array(z.string().min(1)).optional(),
   category: z.string().optional(),
   metadata: z
     .object({

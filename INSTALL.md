@@ -1,7 +1,8 @@
 # Installing AutoVault
 
-This guide walks through setting up AutoVault as a local MCP server for
-Claude Code, Cursor, Codex, or any other MCP-compatible host.
+This guide walks through setting up AutoVault as a local capability library and
+compatibility MCP server for Claude Code, Cursor, Codex, AutoHub, or any other
+local agent host.
 
 ## Prerequisites
 
@@ -18,17 +19,19 @@ npm ci
 npm run build
 ```
 
-`npm run build` compiles TypeScript into `dist/`. The MCP server entry point is
-`dist/index.js`.
+`npm run build` compiles TypeScript into `dist/`. The library entry point is
+`dist/library.js`; the compatibility MCP server entry point is `dist/index.js`.
 
 ## 2. Choose a storage path (optional)
 
-By default, AutoVault stores installed skills in `~/.autovault/`. Override with
-the `AUTOVAULT_STORAGE_PATH` environment variable if you prefer a different
-location (for example, to keep skills under a dotfiles repo).
+By default, AutoVault stores installed skills in `~/.autovault/` and capability
+metadata in `~/.autovault/autovault.sqlite`. Override with
+`AUTOVAULT_STORAGE_PATH` or `AUTOVAULT_DB_PATH` if you prefer a different
+location.
 
 ```bash
 export AUTOVAULT_STORAGE_PATH=~/.autovault   # default
+export AUTOVAULT_DB_PATH=~/.autovault/autovault.sqlite
 ```
 
 See [`README.md`](README.md#configuration) for the full list of environment
@@ -66,9 +69,33 @@ Bootstrapping 3 skill(s) into /Users/you/.autovault
 Each install runs the full validation gate (schema, security denylist,
 capability cross-check). If any skill is rejected, the gate will explain why.
 
-## 4. Configure your MCP host
+## 4. Generate per-agent skill profiles
 
-AutoVault is a stdio MCP server. Point your host at `node dist/index.js`.
+Installed skills stay in `$AUTOVAULT_STORAGE_PATH/skills/<name>/SKILL.md`.
+Profile sync reads each skill's `agents` frontmatter and creates symlinks under
+`$AUTOVAULT_STORAGE_PATH/profiles/<agent>/`.
+
+```bash
+npm run sync:profiles
+```
+
+To expose those generated profiles inside an existing host skill root without
+replacing the whole directory, pass managed external roots:
+
+```bash
+node dist/cli.js sync-profiles \
+  --link claude-code="$HOME/.claude/skills" \
+  --link codex="$HOME/.codex/skills"
+```
+
+This creates or updates managed links inside those roots and leaves unrelated
+system or manually installed skills intact.
+
+## 5. Configure your MCP host
+
+AutoVault's primary interface is the library package. The compatibility MCP
+server remains available for MCP-native hosts; point the host at
+`node dist/index.js`.
 
 ### Claude Code
 
@@ -123,7 +150,7 @@ env = { AUTOVAULT_STORAGE_PATH = "/Users/you/.autovault" }
 
 Check Codex docs for your specific version; the stanza shape may vary.
 
-## 5. Verify
+## 6. Verify
 
 From your MCP host, run:
 
@@ -140,7 +167,7 @@ search_skills("author a new skill")
 get_skill("skill-author")
 ```
 
-## 5a. Make the agent reach for the vault (recommended)
+## 6a. Make the agent reach for the vault (recommended)
 
 By default, the agent only consults AutoVault when you name it
 ("use autovault to..."). To make the agent check the vault reflexively for
@@ -164,7 +191,30 @@ host's global agent instructions.
 Without this instruction, AutoVault still works — you just have to ask
 for it explicitly.
 
-## 6. First-test sanity checks (optional)
+## AutoHub library integration
+
+AutoHub can depend on AutoVault directly:
+
+```json
+{
+  "dependencies": {
+    "@autoworks/autovault": "file:../autovault"
+  }
+}
+```
+
+Then seed legacy AutoHub capability config into SQLite:
+
+```bash
+node dist/cli.js import-autohub \
+  --tool-filters /absolute/path/to/autohub/config/tool-filters.json \
+  --mcp-servers /absolute/path/to/autohub/config/mcp-servers.json
+```
+
+The importer stores required environment variable names only. Literal secret
+values from MCP config are not written to SQLite.
+
+## 7. First-test sanity checks (optional)
 
 Run the included smoke script against your built server:
 

@@ -1,13 +1,23 @@
 {
   "name": "@autoworks/autovault",
   "version": "0.2.0",
-  "description": "AutoVault MCP server for curated agent skills",
+  "description": "AutoVault local capability library and MCP compatibility server",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/library.js",
+  "bin": {
+    "autovault": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/library.js",
+    "./mcp": "./dist/index.js",
+    "./cli": "./dist/cli.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "sync:profiles": "tsx src/cli.ts sync-profiles",
+    "import:autohub": "tsx src/cli.ts import-autohub --tool-filters ../autohub/config/tool-filters.json --mcp-servers ../autohub/config/mcp-servers.json --reset",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -16,6 +26,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.5",
     "gray-matter": "^4.0.3",
     "minisearch": "^7.1.1",
@@ -23,6 +34,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.8.7",
     "@vitest/coverage-v8": "^2.1.9",
     "tsx": "^4.19.1",

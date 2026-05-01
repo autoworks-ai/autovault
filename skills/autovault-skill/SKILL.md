@@ -6,6 +6,10 @@ tags:
   - meta
   - discovery
   - skills
+agents:
+  - claude-code
+  - codex
+  - autojack
 category: meta
 metadata:
   version: "1.0.0"

@@ -3,6 +3,7 @@ name: skill-author
 description: Author a well-formed SKILL.md with valid AutoVault frontmatter, a helpful description, and correct capability declarations. Walks the schema section by section with a template and checklist.
 license: MIT
 tags: [authoring, skills, autovault, meta, demo]
+agents: [claude-code, codex, autojack]
 category: meta
 metadata:
   version: "1.0.0"
