@@ -9,6 +9,8 @@ let cachedDb: CapabilityDb | null = null;
 
 export function openCapabilityDb(dbPath = loadConfig().dbPath): CapabilityDb {
   if (cachedDb && cachedDb.name === dbPath) return cachedDb;
+  cachedDb?.close();
+  cachedDb = null;
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");

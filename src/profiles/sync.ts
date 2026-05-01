@@ -58,7 +58,17 @@ async function replaceSymlink(linkPath: string, targetPath: string): Promise<voi
       throw new Error(`Refusing to replace non-symlink path: ${linkPath}`);
     }
   }
-  await fs.symlink(targetPath, linkPath, "dir");
+  const symlinkType = process.platform === "win32" ? "junction" : "dir";
+  await fs.symlink(targetPath, linkPath, symlinkType);
+}
+
+async function existingDirectoryNames(root: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
+  } catch {
+    return [];
+  }
 }
 
 export async function syncProfiles(input: SyncProfilesInput = {}): Promise<SyncProfilesResult> {
@@ -84,14 +94,16 @@ export async function syncProfiles(input: SyncProfilesInput = {}): Promise<SyncP
   }
 
   const resultProfiles: Record<string, string[]> = {};
-  for (const [agent, names] of profiles.entries()) {
+  const agents = new Set([...await existingDirectoryNames(profileRoot), ...profiles.keys()]);
+  for (const agent of agents) {
+    const names = profiles.get(agent) ?? [];
     const agentRoot = path.join(profileRoot, agent);
     const keep = new Set(names);
     await removeManagedLinks(agentRoot, path.resolve(config.storagePath, "skills"), keep);
     for (const name of names.sort()) {
       await replaceSymlink(path.join(agentRoot, name), path.resolve(skillDir(name)));
     }
-    resultProfiles[agent] = names.sort();
+    if (names.length > 0) resultProfiles[agent] = names.sort();
   }
 
   const linkedRoots: Record<string, string> = {};

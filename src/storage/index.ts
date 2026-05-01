@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
@@ -177,6 +178,18 @@ function hasTraversalSegment(input: string): boolean {
   return input.split(/[\\/]+/).some((segment) => segment === "..");
 }
 
+function realpathIfExists(inputPath: string): string | null {
+  try {
+    return fsSync.realpathSync.native(inputPath);
+  } catch {
+    return null;
+  }
+}
+
+function isWithinRoot(target: string, root: string): boolean {
+  return target === root || target.startsWith(root + path.sep);
+}
+
 export function validateResourcePath(name: string, resourcePath: string): string {
   if (typeof resourcePath !== "string" || resourcePath.length === 0) {
     throw new Error(`Invalid resource path: ${resourcePath}`);
@@ -189,7 +202,13 @@ export function validateResourcePath(name: string, resourcePath: string): string
   if (target !== root && !target.startsWith(root + path.sep)) {
     throw new Error(`Resource escapes skill directory: ${resourcePath}`);
   }
-  return target;
+
+  const realRoot = realpathIfExists(root) ?? root;
+  const realTarget = realpathIfExists(target);
+  if (realTarget && !isWithinRoot(realTarget, realRoot)) {
+    throw new Error(`Resource escapes skill directory: ${resourcePath}`);
+  }
+  return realTarget ?? target;
 }
 
 export async function writeSkillResources(

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import path from "node:path";
 import { loadConfig } from "../config.js";
 import { listInstalledSkillNames, readSkill } from "../storage/index.js";
 import {
@@ -8,7 +9,7 @@ import {
   parseJsonObject,
   type CapabilityDb
 } from "./db.js";
-import { matchesAny, parseContextPattern, serverFromToolPattern, wildcardMatches } from "./match.js";
+import { matchesAny, parseContextPattern, serverFromToolPattern } from "./match.js";
 
 export type ResolveCapabilitiesInput = {
   query: string;
@@ -224,7 +225,6 @@ function buildTools(
 
   const addTool = (pattern: string, group: string, scope: string): void => {
     if (matchesAny(pattern, disabled)) return;
-    if ([...disabled].some((disabledPattern) => wildcardMatches(disabledPattern, pattern))) return;
     const key = `${group}:${pattern}`;
     if (seen.has(key)) return;
     seen.add(key);
@@ -268,7 +268,7 @@ async function resolvedSkills(db: CapabilityDb, groups: string[]): Promise<Resol
   for (const name of [...names].sort()) {
     const record = await readSkill(name);
     if (!record) continue;
-    const skillPath = `${root}/skills/${name}/SKILL.md`;
+    const skillPath = path.join(root, "skills", name, "SKILL.md");
     skills.push({
       name,
       path: skillPath,
