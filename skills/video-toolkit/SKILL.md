@@ -39,20 +39,18 @@ only).
 
 ## Prerequisites
 
-- Toolkit checked out at `/Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit`. **Always
-  `cd` here before running any tool command** — paths inside the toolkit are resolved relative to
-  this root.
+- Set `VIDEO_TOOLKIT_ROOT` to the path of your `claude-code-video-toolkit` checkout (e.g.
+  `export VIDEO_TOOLKIT_ROOT="$HOME/Projects/claude-code-video-toolkit"`). **Always
+  `cd "$VIDEO_TOOLKIT_ROOT"` before running any tool command** — paths inside the toolkit are
+  resolved relative to this root.
 - Use the toolkit's bundled venv: `.venv/bin/python`. The repo ships with its own virtualenv
   populated from `tools/requirements.txt`; do not use system `python3` (it's missing `dotenv` and
   the GPU client libs).
-- `node` 18+, `npm`, `ffmpeg` on PATH.
+- `node` 20+, `npm`, `ffmpeg` on PATH.
 - Toolkit's `.env` populated with at minimum `MODAL_FLUX2_ENDPOINT_URL`. Other endpoints
   (`MODAL_MUSIC_GEN_ENDPOINT_URL`, `MODAL_QWEN3_TTS_ENDPOINT_URL`, `MODAL_SADTALKER_ENDPOINT_URL`)
   are needed only for their respective steps. Confirm with
   `.venv/bin/python tools/verify_setup.py`.
-
-> Future: the path above should resolve from `$VIDEO_TOOLKIT_ROOT` once that env var is wired
-> through autohub. For v0.1 it's hardcoded.
 
 ## Workflow — Smoke test (start here)
 
@@ -62,7 +60,7 @@ under $0.02, total wall time under 30s on warm GPU.
 ### 1. Verify setup
 
 ```bash
-cd /Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit
+cd "$VIDEO_TOOLKIT_ROOT"
 .venv/bin/python tools/verify_setup.py
 ```
 
@@ -72,7 +70,7 @@ just won't be available later.
 ### 2. Generate one FLUX.2 image
 
 ```bash
-cd /Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit
+cd "$VIDEO_TOOLKIT_ROOT"
 .venv/bin/python tools/flux2.py \
   --preset title-bg \
   --output /tmp/video-toolkit-smoke.png \
@@ -101,7 +99,7 @@ and renders them into one mp4.
 ### 1. Create the project
 
 ```bash
-cd /Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit
+cd "$VIDEO_TOOLKIT_ROOT"
 cp -r templates/product-demo projects/PROJECT_NAME
 cd projects/PROJECT_NAME && npm install
 ```
@@ -117,7 +115,7 @@ voiceover lengths are known.
 ### 3. Generate background music
 
 ```bash
-cd /Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit
+cd "$VIDEO_TOOLKIT_ROOT"
 .venv/bin/python tools/music_gen.py \
   --preset corporate-bg --duration 90 \
   --output projects/PROJECT_NAME/public/audio/bg-music.mp3 \
@@ -140,7 +138,7 @@ After voiceover generation (when added), measure each scene's audio duration wit
 update `durationSeconds` in `demo-config.ts` to `ceil(audio_duration + 2)`. Then render:
 
 ```bash
-cd /Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit/projects/PROJECT_NAME
+cd "$VIDEO_TOOLKIT_ROOT/projects/PROJECT_NAME"
 npm run render
 ```
 
@@ -155,7 +153,7 @@ each tool invocation).
 ## Anti-patterns
 
 - **Don't run tool commands from inside a project directory.** Tools resolve paths relative to
-  the toolkit root. Always `cd /Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit` first.
+  the toolkit root. Always `cd "$VIDEO_TOOLKIT_ROOT"` first.
   The only command that runs from inside `projects/PROJECT_NAME/` is `npm run render`.
 - **Don't omit `--progress json`** on any cloud GPU command. Without it you have no visibility
   into job stages and can't report progress to the user.
@@ -173,8 +171,8 @@ For LTX-2 video clips, chained scene continuity, SadTalker talking heads, voice 
 `yieldMs` polling pattern for long jobs, and the full Remotion composition guide, read:
 
 ```
-/Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit/skills/openclaw-video-toolkit/SKILL.md
+$VIDEO_TOOLKIT_ROOT/skills/openclaw-video-toolkit/SKILL.md
 ```
 
 That skill assumes the toolkit lives at `~/.openclaw/workspace/claude-code-video-toolkit` — when
-following its commands, substitute the actual path `/Users/jgarturo/Projects/OpenAI/claude-code-video-toolkit`.
+following its commands, substitute your own `$VIDEO_TOOLKIT_ROOT`.
