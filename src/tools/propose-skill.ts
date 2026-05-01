@@ -11,6 +11,7 @@ import { classifyDedup, type DedupCandidate } from "../validation/dedup.js";
 import { validateSkillInput } from "../validation/index.js";
 import { sha256 } from "../util/hash.js";
 import { log } from "../util/log.js";
+import { syncProfiles } from "../profiles/sync.js";
 
 export type ProposeSkillInput = {
   skill_md: string;
@@ -102,6 +103,7 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     fetchedAt: new Date().toISOString(),
     contentHash: candidateHash
   });
+  await syncProfiles();
 
   const warnings = [...validation.warnings];
   if (dedup.tier === "functional" && dedup.existingName) {

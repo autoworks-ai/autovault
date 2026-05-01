@@ -11,6 +11,7 @@ import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
 import { sha256 } from "../util/hash.js";
 import { log } from "../util/log.js";
+import { syncProfiles } from "../profiles/sync.js";
 
 export type InstallSkillInput = {
   source: "github" | "agentskills" | "url";
@@ -97,6 +98,7 @@ export async function installSkill(
     contentHash: sha256(normalizedSkillMd)
   };
   await writeSkillSource(name, sourceMeta);
+  await syncProfiles();
 
   log.info("install_skill.installed", { name, source: sourceMeta.source });
 

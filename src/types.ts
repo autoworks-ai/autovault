@@ -4,6 +4,7 @@ export type SkillSummary = {
   version: string;
   tags: string[];
   category?: string;
+  agents: string[];
 };
 
 export type SkillRecord = SkillSummary & {

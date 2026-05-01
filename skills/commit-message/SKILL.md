@@ -3,6 +3,7 @@ name: commit-message
 description: Draft a conventional-commit-style message from the repository's staged changes. Uses git only; no external services or API keys required.
 license: MIT
 tags: [git, commit, conventional-commits, demo]
+agents: [claude-code, codex, autojack]
 category: git
 metadata:
   version: "1.0.0"

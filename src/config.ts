@@ -21,6 +21,7 @@ const booleanish = z.union([z.boolean(), z.string()]).transform((value, ctx) => 
 const schema = z.object({
   AUTOVAULT_MODE: z.enum(["local"]).default("local"),
   AUTOVAULT_STORAGE_PATH: z.string().min(1).default("~/.autovault"),
+  AUTOVAULT_DB_PATH: z.string().min(1).optional(),
   AUTOVAULT_SECURITY_STRICT: booleanish.default(true),
   AUTOVAULT_SEARCH_MODE: z.enum(["text"]).default("text"),
   AUTOVAULT_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info")
@@ -29,6 +30,7 @@ const schema = z.object({
 export type Config = {
   mode: "local";
   storagePath: string;
+  dbPath: string;
   strictSecurity: boolean;
   searchMode: "text";
   logLevel: "debug" | "info" | "warn" | "error";
@@ -49,6 +51,7 @@ export function loadConfig(): Config {
   const parsed = schema.safeParse({
     AUTOVAULT_MODE: process.env.AUTOVAULT_MODE,
     AUTOVAULT_STORAGE_PATH: process.env.AUTOVAULT_STORAGE_PATH,
+    AUTOVAULT_DB_PATH: process.env.AUTOVAULT_DB_PATH,
     AUTOVAULT_SECURITY_STRICT: process.env.AUTOVAULT_SECURITY_STRICT,
     AUTOVAULT_SEARCH_MODE: process.env.AUTOVAULT_SEARCH_MODE,
     AUTOVAULT_LOG_LEVEL: process.env.AUTOVAULT_LOG_LEVEL
@@ -59,9 +62,13 @@ export function loadConfig(): Config {
       .join("; ");
     throw new Error(`Invalid AutoVault configuration: ${issues}`);
   }
+  const storagePath = expandHome(parsed.data.AUTOVAULT_STORAGE_PATH);
   cached = {
     mode: parsed.data.AUTOVAULT_MODE,
-    storagePath: expandHome(parsed.data.AUTOVAULT_STORAGE_PATH),
+    storagePath,
+    dbPath: parsed.data.AUTOVAULT_DB_PATH
+      ? expandHome(parsed.data.AUTOVAULT_DB_PATH)
+      : path.join(storagePath, "autovault.sqlite"),
     strictSecurity: parsed.data.AUTOVAULT_SECURITY_STRICT,
     searchMode: parsed.data.AUTOVAULT_SEARCH_MODE,
     logLevel: parsed.data.AUTOVAULT_LOG_LEVEL

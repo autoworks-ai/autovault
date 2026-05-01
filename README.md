@@ -1,56 +1,66 @@
 # AutoVault
 
-AutoVault is a **stdio-first Model Context Protocol (MCP) server for agent skills**.
-It gives MCP hosts like Cursor or Claude Desktop a single place to store,
-validate, search, install, inspect, and update reusable `SKILL.md` files.
+AutoVault is a **local capability library backed by SQLite**, with a stdio
+Model Context Protocol (MCP) server kept as a compatibility wrapper. It gives
+agents and agent hosts a single local place to resolve tools, MCP servers, and
+reusable `SKILL.md` files.
 
-In plain English: AutoVault is a skill registry that runs locally, speaks MCP,
-and helps agents reuse curated workflows instead of rewriting them from scratch.
-It does **not** execute skills itself. It validates and serves them; the MCP
-host or downstream agent decides how to use them.
+In plain English: AutoVault is the local capability layer. It stores capability
+metadata in SQLite, keeps skills as filesystem-native directories, generates
+per-agent skill profiles, and helps agents reuse curated workflows instead of
+rewriting them from scratch. It does **not** execute skills itself. It validates
+and serves content; the host or downstream agent decides how to use it.
 
 ## What It Is
 
-AutoVault is a Node/TypeScript MCP server that:
+AutoVault is a Node/TypeScript library and compatibility MCP server that:
 
 - stores skills on the local filesystem
+- indexes profiles, callers, tool groups, aliases, context rules, and MCP servers in SQLite
+- resolves scoped capabilities through `resolveCapabilities()`
+- generates per-agent skill profile symlinks
 - validates submitted or imported skill content
-- exposes those skills over MCP tools
+- exposes existing skill lifecycle operations over MCP tools
 - tracks where installed skills came from
 - detects when a remotely sourced skill has drifted upstream
 
-The server runs over **stdio only**. An MCP host is expected to spawn
-`node dist/index.js` and communicate over stdin/stdout.
+The compatibility server runs over **stdio only**. An MCP host can spawn
+`node dist/index.js` and communicate over stdin/stdout, while local callers can
+import `@autoworks/autovault` directly.
 
 See [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md) for the runtime decision.
 
 ## What It Does
 
-AutoVault supports the full skill lifecycle for a local MCP environment:
+AutoVault supports local capability resolution plus the skill lifecycle:
 
-1. **Discover** installed skills via search or listing
-2. **Inspect** a skill's full `SKILL.md`, metadata, capabilities, and provenance
-3. **Read** resource files packaged alongside a skill
-4. **Propose** new skills with validation, dedup, and security gating
-5. **Install** skills from GitHub, agentskills, or arbitrary HTTPS URLs
-6. **Track provenance** with a per-skill sidecar file and content hash
-7. **Check updates** to detect upstream drift
+1. **Resolve** tools, skills, and MCP servers for a caller/context
+2. **Sync** skills into per-agent profile directories
+3. **Discover** installed skills via search or listing
+4. **Inspect** a skill's full `SKILL.md`, metadata, capabilities, and provenance
+5. **Read** resource files packaged alongside a skill
+6. **Propose** new skills with validation, dedup, and security gating
+7. **Install** skills from GitHub, agentskills, or arbitrary HTTPS URLs
+8. **Track provenance** with a per-skill sidecar file and content hash
+9. **Check updates** to detect upstream drift
 
 ## Why Use It
 
 AutoVault is useful when you want:
 
-- a consistent source of truth for reusable agent skills
+- a consistent source of truth for agent capabilities
+- per-caller and per-channel capability scoping
 - a safer workflow than ad hoc copy/paste skill files
 - deduplication before new skills get added
-- a lightweight local registry that works well with MCP-native tools
+- filesystem-native skill profiles for Claude Code, Codex, and other agents
+- a lightweight local registry that still works with MCP-native tools
 - provenance and drift visibility for imported skills
 
 ## Core Capabilities
 
 ### MCP Tool Surface
 
-AutoVault exposes 7 MCP tools:
+AutoVault still exposes 7 MCP tools:
 
 - `list_skills` - list installed skill summaries
 - `search_skills` - search by name, description, tags, and category
@@ -59,6 +69,19 @@ AutoVault exposes 7 MCP tools:
 - `install_skill` - install from `github`, `agentskills`, or `url`
 - `propose_skill` - validate and store a newly proposed skill
 - `check_updates` - compare installed content to upstream source state
+
+### Library Surface
+
+AutoVault exports an ESM library API:
+
+- `resolveCapabilities()` / `resolve_capabilities()` - resolve tools, skills, and MCP servers for a scoped caller request
+- `syncProfiles()` - regenerate per-agent profile symlinks from skill frontmatter
+- `installSkill()` - install and validate a skill from a configured source
+- `proposeSkill()` - validate, deduplicate, and store proposed skill content
+- `importAutohubCapabilities()` / `ensureAutohubSeeded()` - import legacy AutoHub JSON state into SQLite
+
+Unknown callers fail closed. Register callers explicitly or map unknown users to
+a known restricted caller such as `guest`.
 
 ### Validation and Safety
 
@@ -105,6 +128,9 @@ detects post-install tampering (log-only warning in V1).
 The server is intentionally simple:
 
 - `src/mcp/` - MCP server wiring and tool registration
+- `src/library.ts` - public library exports
+- `src/capabilities/` - SQLite schema, AutoHub import, and capability resolver
+- `src/profiles/` - per-agent skill profile symlink generation
 - `src/tools/` - tool handlers
 - `src/validation/` - parsing, schema validation, security scanning, dedup
 - `src/sources/` - remote source adapters
@@ -115,6 +141,7 @@ Storage layout:
 
 ```text
 $AUTOVAULT_STORAGE_PATH/
+  autovault.sqlite            # capability index
   .signing-key.json            # Ed25519 keypair (0600)
   skills/
     <name>/
@@ -122,6 +149,9 @@ $AUTOVAULT_STORAGE_PATH/
       .autovault-source.json   # source, hash, timestamps
       .autovault-signature     # detached Ed25519 signature (0600)
       <resources...>
+  profiles/
+    <agent>/
+      <skill-name> -> ../../skills/<skill-name>
 ```
 
 ## Quick Start
@@ -131,12 +161,13 @@ cp .env.example .env
 npm ci
 npm run build
 node scripts/bootstrap-skills.mjs   # seed the bundled skills into ~/.autovault
+npm run sync:profiles               # generate ~/.autovault/profiles/<agent> links
 ```
 
 Note: `node dist/index.js` is meant to be **spawned by an MCP host**, not used
-as a long-running interactive CLI. See [`INSTALL.md`](INSTALL.md) for
-complete setup instructions including MCP host config for Claude Code,
-Cursor, and Codex.
+as a long-running interactive CLI. Use `npx autovault sync-profiles` or
+`node dist/cli.js sync-profiles` for profile sync. See [`INSTALL.md`](INSTALL.md)
+for complete setup instructions.
 
 For development:
 
@@ -174,6 +205,7 @@ All config is environment-based and validated at startup.
 |----------|---------|---------|
 | `AUTOVAULT_MODE` | `local` | Reserved for future modes. |
 | `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
+| `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite path for capability metadata. |
 | `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
 | `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently `text` only). |
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
