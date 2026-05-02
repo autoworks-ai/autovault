@@ -39,6 +39,7 @@ describe("tool-boundary name validation", () => {
     const result = await checkUpdates();
     expect(result.drifted).toEqual([]);
     expect(result.up_to_date).toEqual([]);
+    expect(result.unchecked).toEqual([]);
     expect(result.errors).toEqual([]);
   });
 });

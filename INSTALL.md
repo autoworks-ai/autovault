@@ -257,7 +257,8 @@ check_updates                 # all skills
 check_updates("skill-name")   # specific skill
 ```
 
-Inline skills (including the bundled ones) never drift.
+Bundled inline skills are checked against the repo's `skills/<name>/SKILL.md`.
+Other inline skills have no upstream to compare and are reported as unchecked.
 
 ## Troubleshooting
 

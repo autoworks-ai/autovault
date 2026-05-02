@@ -89,7 +89,8 @@ The compatibility server exposes seven MCP tools:
   installs a new skill. Outcome is one of `accepted`, `duplicate`,
   `invalid`, or `security_blocked`.
 - `check_updates(skill?)` - compares installed content hash against the
-  recorded source. Inline skills are always reported as up_to_date.
+  recorded source. Bundled inline skills are checked against the local bundled
+  source; other inline skills are reported as unchecked.
 
 ## Optional MCP workflow
 

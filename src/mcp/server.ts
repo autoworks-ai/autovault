@@ -81,7 +81,7 @@ export function createServer(): McpServer {
 
   server.tool(
     "check_updates",
-    "Detect upstream drift for skills installed from `github`, `agentskills`, or `url`. Compares each skill's stored content hash against the current upstream state. Use periodically for maintenance, or when the user asks whether a skill is stale. Inline-proposed skills never drift and are always reported up-to-date.",
+    "Detect upstream drift for skills installed from `github`, `agentskills`, `url`, or bundled inline sources. Compares each skill's stored content hash against the current source state. Non-bundled inline skills are reported as unchecked.",
     { skill: z.string().optional() },
     async ({ skill }) => runTool("check_updates", () => checkUpdates(skill))
   );
