@@ -18,6 +18,7 @@ export type InstallSkillInput = {
   identifier: string;
   version?: string;
   skill_md?: string;
+  bundled_skill_name?: string;
 };
 
 type InstallDeps = {
@@ -92,6 +93,7 @@ export async function installSkill(
   const sourceMeta: SkillSource = {
     source: input.skill_md ? "inline" : input.source,
     identifier: input.identifier,
+    bundledSkillName: input.bundled_skill_name,
     version: input.version,
     upstreamSha: fetched?.upstreamSha,
     fetchedAt: new Date().toISOString(),

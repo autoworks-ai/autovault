@@ -63,7 +63,8 @@ export function createServer(): McpServer {
       source: z.enum(["github", "agentskills", "url"]),
       identifier: z.string(),
       version: z.string().optional(),
-      skill_md: z.string().optional()
+      skill_md: z.string().optional(),
+      bundled_skill_name: z.string().optional()
     },
     async (input) => runTool("install_skill", () => installSkill(input))
   );

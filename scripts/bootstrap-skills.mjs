@@ -90,7 +90,8 @@ async function main() {
         name: "install_skill",
         arguments: {
           source: "url",
-          identifier: `bundled:${skill.dir}`,
+          identifier: skill.dir,
+          bundled_skill_name: skill.dir,
           skill_md: skill.body
         }
       })

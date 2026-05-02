@@ -13,6 +13,7 @@ import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
 import { sha256 } from "../util/hash.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
+import { attemptRepair } from "../validation/frontmatter.js";
 
 type DriftEntry = {
   name: string;
@@ -46,12 +47,13 @@ async function readBundledInlineSkill(
   source: SkillSource,
   deps: CheckUpdatesDeps
 ): Promise<string | null> {
-  const prefix = "bundled:";
-  if (!source.identifier.startsWith(prefix)) return null;
-  const bundledName = source.identifier.slice(prefix.length);
+  if (!source.bundledSkillName) return null;
+  const bundledName = source.bundledSkillName;
   assertSafeSkillName(bundledName);
   const bundledRoot = deps.bundledSkillsDir ?? defaultBundledSkillsDir();
-  return fs.readFile(path.join(bundledRoot, bundledName, "SKILL.md"), "utf-8");
+  const raw = await fs.readFile(path.join(bundledRoot, bundledName, "SKILL.md"), "utf-8");
+  const { output } = attemptRepair(raw);
+  return output;
 }
 
 async function fetchForSource(

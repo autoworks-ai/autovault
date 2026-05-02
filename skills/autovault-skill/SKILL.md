@@ -104,7 +104,7 @@ The compatibility server exposes seven MCP tools:
      value (`keep_existing`, `replace`, `merge`, `keep_both`).
    - `invalid` - fix the listed schema errors and resubmit.
    - `security_blocked` - rewrite the content to remove flagged patterns.
-4. Periodically call `check_updates` for skills installed from a remote source.
+4. Periodically call `check_updates` to detect drift for skills installed from a remote source or as a bundled inline skill.
 
 Skip this workflow entirely when the MCP tools are not connected. Missing MCP
 tools are not an error for filesystem-synced skills.

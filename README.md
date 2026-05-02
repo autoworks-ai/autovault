@@ -22,7 +22,7 @@ AutoVault is a Node/TypeScript library and compatibility MCP server that:
 - validates submitted or imported skill content
 - exposes existing skill lifecycle operations over MCP tools
 - tracks where installed skills came from
-- detects when a remotely sourced skill has drifted upstream
+- detects when an installed skill has drifted from its upstream source
 
 The compatibility server runs over **stdio only**. An MCP host can spawn
 `node dist/index.js` and communicate over stdin/stdout, while local callers can

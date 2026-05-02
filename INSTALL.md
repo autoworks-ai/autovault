@@ -249,16 +249,16 @@ idempotent.
 
 ## Checking for upstream drift
 
-For skills installed from `github`, `agentskills`, or `url`, AutoVault can
-detect when the upstream source has changed:
+AutoVault can detect when an installed skill has drifted from its source:
+
+- Skills installed from `github`, `agentskills`, or `url` are compared against the current upstream content.
+- Bundled inline skills are checked against the repo's `skills/<name>/SKILL.md`.
+- Other inline skills have no upstream to compare and are reported as unchecked.
 
 ```
 check_updates                 # all skills
 check_updates("skill-name")   # specific skill
 ```
-
-Bundled inline skills are checked against the repo's `skills/<name>/SKILL.md`.
-Other inline skills have no upstream to compare and are reported as unchecked.
 
 ## Troubleshooting
 

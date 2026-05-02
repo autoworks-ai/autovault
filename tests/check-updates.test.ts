@@ -66,7 +66,8 @@ describe("checkUpdates", () => {
     const bundledSkillsDir = await writeBundledSkill("drift-skill", skillMd);
     await installSkill({
       source: "url",
-      identifier: "bundled:drift-skill",
+      identifier: "drift-skill",
+      bundled_skill_name: "drift-skill",
       skill_md: skillMd
     });
     const result = await checkUpdates(undefined, { bundledSkillsDir });
@@ -79,7 +80,8 @@ describe("checkUpdates", () => {
     const bundledSkillsDir = await writeBundledSkill("drift-skill", skillMdV2);
     await installSkill({
       source: "url",
-      identifier: "bundled:drift-skill",
+      identifier: "drift-skill",
+      bundled_skill_name: "drift-skill",
       skill_md: skillMd
     });
     const result = await checkUpdates(undefined, { bundledSkillsDir });
@@ -87,7 +89,7 @@ describe("checkUpdates", () => {
     expect(result.drifted[0]).toMatchObject({
       name: "drift-skill",
       source: "inline",
-      identifier: "bundled:drift-skill",
+      identifier: "drift-skill",
       reason: "bundled content hash changed"
     });
     expect(result.up_to_date).not.toContain("drift-skill");
