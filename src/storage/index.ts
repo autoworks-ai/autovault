@@ -13,6 +13,7 @@ const SIGNATURE_FILE = ".autovault-signature";
 export type SkillSource = {
   source: "github" | "agentskills" | "url" | "inline";
   identifier: string;
+  bundledSkillName?: string;
   version?: string;
   upstreamSha?: string;
   fetchedAt: string;

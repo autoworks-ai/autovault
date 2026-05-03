@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   listInstalledSkillNames,
   readSkill,
@@ -10,6 +13,7 @@ import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
 import { sha256 } from "../util/hash.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
+import { attemptRepair } from "../validation/frontmatter.js";
 
 type DriftEntry = {
   name: string;
@@ -19,13 +23,38 @@ type DriftEntry = {
   upstreamSha?: string;
 };
 
+type UncheckedEntry = {
+  name: string;
+  source: SkillSource["source"];
+  identifier: string;
+  reason: string;
+};
+
 export type CheckUpdatesDeps = {
   fetchers?: {
     github?: typeof fetchSkillFromGitHub;
     agentskills?: typeof fetchSkillFromAgentSkills;
     url?: typeof fetchSkillFromUrl;
   };
+  bundledSkillsDir?: string;
 };
+
+function defaultBundledSkillsDir(): string {
+  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "skills");
+}
+
+async function readBundledInlineSkill(
+  source: SkillSource,
+  deps: CheckUpdatesDeps
+): Promise<string | null> {
+  if (!source.bundledSkillName) return null;
+  const bundledName = source.bundledSkillName;
+  assertSafeSkillName(bundledName);
+  const bundledRoot = deps.bundledSkillsDir ?? defaultBundledSkillsDir();
+  const raw = await fs.readFile(path.join(bundledRoot, bundledName, "SKILL.md"), "utf-8");
+  const { output } = attemptRepair(raw);
+  return output;
+}
 
 async function fetchForSource(
   source: SkillSource,
@@ -49,12 +78,14 @@ export async function checkUpdates(
 ): Promise<{
   drifted: DriftEntry[];
   up_to_date: string[];
+  unchecked: UncheckedEntry[];
   errors: Array<{ name: string; error: string }>;
 }> {
   if (skill !== undefined) assertSafeSkillName(skill);
   const names = skill ? [skill] : await listInstalledSkillNames();
   const drifted: DriftEntry[] = [];
   const upToDate: string[] = [];
+  const unchecked: UncheckedEntry[] = [];
   const errors: Array<{ name: string; error: string }> = [];
 
   for (const name of names) {
@@ -68,14 +99,40 @@ export async function checkUpdates(
       errors.push({ name, error: "No source metadata recorded" });
       continue;
     }
-    if (source.source === "inline") {
-      upToDate.push(name);
-      continue;
-    }
     try {
+      if (source.source === "inline") {
+        const bundledSkillMd = await readBundledInlineSkill(source, deps);
+        if (!bundledSkillMd) {
+          unchecked.push({
+            name,
+            source: source.source,
+            identifier: source.identifier,
+            reason: "inline skill has no checkable upstream"
+          });
+          continue;
+        }
+        const bundledHash = sha256(bundledSkillMd);
+        if (bundledHash !== source.contentHash) {
+          drifted.push({
+            name,
+            source: source.source,
+            identifier: source.identifier,
+            reason: "bundled content hash changed"
+          });
+        } else {
+          upToDate.push(name);
+        }
+        continue;
+      }
+
       const fetched = await fetchForSource(source, deps);
       if (!fetched) {
-        upToDate.push(name);
+        unchecked.push({
+          name,
+          source: source.source,
+          identifier: source.identifier,
+          reason: "source has no checkable upstream"
+        });
         continue;
       }
       const upstreamHash = sha256(fetched.skillMd);
@@ -98,5 +155,5 @@ export async function checkUpdates(
     }
   }
 
-  return { drifted, up_to_date: upToDate, errors };
+  return { drifted, up_to_date: upToDate, unchecked, errors };
 }

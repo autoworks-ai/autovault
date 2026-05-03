@@ -22,7 +22,7 @@ AutoVault is a Node/TypeScript library and compatibility MCP server that:
 - validates submitted or imported skill content
 - exposes existing skill lifecycle operations over MCP tools
 - tracks where installed skills came from
-- detects when a remotely sourced skill has drifted upstream
+- detects when an installed skill has drifted from its upstream source
 
 The compatibility server runs over **stdio only**. An MCP host can spawn
 `node dist/index.js` and communicate over stdin/stdout, while local callers can
@@ -112,8 +112,9 @@ Installed skills are stored with two sidecar files:
 - `.autovault-source.json` — source, identifier, upstream SHA, content hash, timestamps
 - `.autovault-signature` — detached Ed25519 signature over the SKILL.md content
 
-`check_updates` uses the content hash to detect upstream drift. The signature
-detects post-install tampering (log-only warning in V1).
+`check_updates` uses the content hash to detect upstream drift for remote
+sources and bundled inline skills. Non-bundled inline skills are reported as
+unchecked. The signature detects post-install tampering (log-only warning in V1).
 
 ## Benefits
 
