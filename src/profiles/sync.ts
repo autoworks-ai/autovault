@@ -3,8 +3,8 @@ import path from "node:path";
 import os from "node:os";
 import { loadConfig } from "../config.js";
 import {
-  listInstalledSkillNames,
-  readSkill,
+  listInstalledSkillNamesUnlocked,
+  readSkillUnlocked,
   recoverOrphanBackups,
   skillDir
 } from "../storage/index.js";
@@ -178,8 +178,8 @@ export async function syncProfiles(input: SyncProfilesInput = {}): Promise<SyncP
     const snapshot: Snapshot = await withStorageLock(async () => {
       const profiles = new Map<string, string[]>();
       const warnings: string[] = [];
-      for (const name of await listInstalledSkillNames()) {
-        const record = await readSkill(name);
+      for (const name of await listInstalledSkillNamesUnlocked()) {
+        const record = await readSkillUnlocked(name);
         if (!record) continue;
         if (record.agents.length === 0) {
           warnings.push(`Skill "${name}" has no agents frontmatter and is hidden from generated profiles.`);

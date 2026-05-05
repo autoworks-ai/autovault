@@ -177,8 +177,12 @@ export async function recoverOrphanBackups(): Promise<void> {
   });
 }
 
-export async function listInstalledSkillNames(): Promise<string[]> {
-  await ensureStorage();
+// Unlocked reader for callers that already hold the storage lock (e.g.
+// profiles/sync.ts builds its keep-set inside a single lock acquisition so the
+// snapshot is coherent across many readSkill calls). Takes no lock itself —
+// re-entering withStorageLock from a holder would deadlock because the file
+// lock is non-reentrant.
+export async function listInstalledSkillNamesUnlocked(): Promise<string[]> {
   const entries = await fs.readdir(skillsDir(), { withFileTypes: true });
   const names: string[] = [];
   for (const entry of entries) {
@@ -200,6 +204,18 @@ export async function listInstalledSkillNames(): Promise<string[]> {
     }
   }
   return names;
+}
+
+export async function listInstalledSkillNames(): Promise<string[]> {
+  await ensureStorage();
+  // Round-54: take the storage lock for the readdir + per-entry stat pair so
+  // a concurrent writeSkill swap (live → bak rename, then tmp → live rename)
+  // cannot expose us to the transient window where the live skill directory
+  // is briefly absent. Without the lock, an unlocked reader in another
+  // stdio server process could observe ENOENT and report the in-flight
+  // skill as missing — silently dropping it from list_skills, search, and
+  // profile sync until the next read.
+  return withStorageLock(() => listInstalledSkillNamesUnlocked());
 }
 
 function asString(value: unknown, fallback: string): string {
@@ -291,7 +307,9 @@ function buildSummary(name: string, frontmatter: Record<string, unknown>): Skill
   };
 }
 
-export async function readSkill(name: string): Promise<SkillRecord | null> {
+// Unlocked reader for callers that already hold the storage lock (see
+// listInstalledSkillNamesUnlocked rationale).
+export async function readSkillUnlocked(name: string): Promise<SkillRecord | null> {
   const skillPath = path.join(skillDir(name), "SKILL.md");
   try {
     // Round-51 fix: stat-first cap on the on-disk SKILL.md. Every write path
@@ -327,6 +345,16 @@ export async function readSkill(name: string): Promise<SkillRecord | null> {
   } catch {
     return null;
   }
+}
+
+export async function readSkill(name: string): Promise<SkillRecord | null> {
+  // Round-54: serialize SKILL.md + manifest read against writeSkill's swap
+  // window. Without the lock, a concurrent install in another stdio server
+  // process can rename live → bak between our stat and our readFile, leaving
+  // us with a stale handle (or ENOENT, depending on platform) and returning
+  // null even though the skill is fully installed both before and after the
+  // swap.
+  return withStorageLock(() => readSkillUnlocked(name));
 }
 
 async function readManifestRaw(name: string): Promise<string | null> {
@@ -485,8 +513,34 @@ export async function writeSkill(
       await fs.chmod(targetAbs, mode);
     }
 
-    // Sign SKILL.md + every resource. Failure here propagates and the swap
-    // never runs — the prior install (if any) is intact.
+    // Determine source bytes BEFORE signing so `.autovault-source.json` can be
+    // bound into the manifest alongside SKILL.md and resources. Either:
+    //   (a) the caller passed `source` for this install — serialize it.
+    //   (b) the caller did not — carry forward the prior install's source so
+    //       a writeSkill that doesn't refresh provenance (rare; tests only)
+    //       doesn't blank out a legitimate upstream record.
+    // Round-54: Before this fix the source.json was written AFTER signFiles,
+    // so the manifest never covered it. check_updates trusts
+    // source.contentHash / upstreamSha to decide up_to_date vs drifted; an
+    // attacker with FS write access could rewrite source.json to claim any
+    // contentHash and silently produce false "up_to_date" verdicts for
+    // tampered bytes. Binding source.json into the signed manifest closes
+    // that window — readSkillSource refuses to return source bytes whose
+    // signature does not verify against the recorded manifest.
+    let sourceContent: string | null = null;
+    if (source) {
+      sourceContent = JSON.stringify(source, null, 2);
+    } else {
+      try {
+        sourceContent = await fs.readFile(path.join(liveDir, SOURCE_FILE), "utf-8");
+      } catch {
+        sourceContent = null;
+      }
+    }
+
+    // Sign SKILL.md + every resource + source.json (when present). Failure
+    // here propagates and the swap never runs — the prior install (if any)
+    // is intact.
     // Null-prototype map for the same reason signFiles uses one — a path
     // equal to `__proto__` must not silently route writes onto Object.prototype
     // and disappear from the manifest. Validation rejects those names too;
@@ -496,6 +550,9 @@ export async function writeSkill(
     for (const resource of resources) {
       files[canonicalRelPath(resource.path)] = resource.content;
     }
+    if (sourceContent !== null) {
+      files[SOURCE_FILE] = sourceContent;
+    }
     const manifest = await signFiles(name, files);
     await fs.writeFile(
       path.join(tmpDir, MANIFEST_FILE),
@@ -503,30 +560,12 @@ export async function writeSkill(
       { encoding: "utf-8", mode: 0o600 }
     );
 
-    // Write source provenance INSIDE the staged tmp dir so it lands atomically
-    // with SKILL.md/resources/manifest. Before this, callers wrote source.json
-    // AFTER writeSkill returned: a crash between the rename and that follow-up
-    // write left live SKILL.md/resources paired with stale provenance — and
-    // check_updates relies on source.contentHash to detect drift, so this
-    // window made tampered bytes look upstream-clean. Either:
-    //   (a) the caller passed `source` for this install — write it.
-    //   (b) the caller did not — carry forward the prior install's source so
-    //       a writeSkill that doesn't refresh provenance (rare; tests only)
-    //       doesn't blank out a legitimate upstream record.
-    if (source) {
-      await fs.writeFile(
-        path.join(tmpDir, SOURCE_FILE),
-        JSON.stringify(source, null, 2),
-        "utf-8"
-      );
-    } else {
-      try {
-        const existingSource = await fs.readFile(path.join(liveDir, SOURCE_FILE), "utf-8");
-        await fs.writeFile(path.join(tmpDir, SOURCE_FILE), existingSource, "utf-8");
-      } catch {
-        // No prior install and no caller-supplied source — leave source.json
-        // absent rather than fabricate a record.
-      }
+    // Write source.json AFTER manifest (order is irrelevant for atomicity —
+    // both land inside the staged tmp dir before the rename swap). Bytes
+    // written here MUST equal `sourceContent` exactly so the signature in
+    // the manifest validates the bytes on disk.
+    if (sourceContent !== null) {
+      await fs.writeFile(path.join(tmpDir, SOURCE_FILE), sourceContent, "utf-8");
     }
 
     // Atomic-ish swap: rename live → backup, rename tmp → live, rm backup.
@@ -685,16 +724,87 @@ async function loadBinPaths(name: string): Promise<Set<string>> {
   }
 }
 
-export async function writeSkillSource(name: string, source: SkillSource): Promise<void> {
-  const target = path.join(skillDir(name), SOURCE_FILE);
-  await fs.writeFile(target, JSON.stringify(source, null, 2), "utf-8");
+export type SkillSourceStatus =
+  | { kind: "present"; source: SkillSource }
+  | { kind: "tampered"; reason: "signature_invalid" | "manifest_corrupt" | "manifest_missing_entry" }
+  | { kind: "unparseable" }
+  | { kind: "absent" };
+
+// Round-54: source.json is now bound into the signed manifest by writeSkill.
+// Verify here on every read so a tampered (or pre-round-54-unsigned) source
+// record cannot falsify check_updates' drift verdict. Returning a status
+// (vs. just null) lets callers like check_updates surface an actionable error
+// — "Source metadata signature invalid; reinstall the skill" — instead of the
+// generic "No source metadata recorded" message.
+//
+// Lock domain: take the storage lock for the manifest+source.json read pair.
+// Without it, a concurrent writeSkill swap could expose us to the live → bak
+// → tmp window where the skill directory is briefly absent (round-54 medium
+// finding). The lock is also the right serialization point because manifest
+// and source.json are written together inside writeSkill's tmp dir; reading
+// them under the same lock guarantees we don't catch a half-swapped pair.
+export async function readSkillSourceStatus(name: string): Promise<SkillSourceStatus> {
+  return withStorageLock(async () => {
+    let raw: string;
+    try {
+      raw = await fs.readFile(path.join(skillDir(name), SOURCE_FILE), "utf-8");
+    } catch {
+      return { kind: "absent" };
+    }
+
+    let parsed: SkillSource;
+    try {
+      parsed = JSON.parse(raw) as SkillSource;
+    } catch {
+      return { kind: "unparseable" };
+    }
+
+    const manifestRaw = await readManifestRaw(name);
+    if (manifestRaw === null) {
+      // No manifest at all — either a pre-manifest legacy install (rare;
+      // every modern install writes one) or an attacker deleted it to
+      // silence verification. Either way we can't bind the source.json
+      // signature, so refuse to use it. Caller should reinstall.
+      log.warn("storage.signature_mismatch", {
+        name,
+        file: SOURCE_FILE,
+        reason: "no_manifest"
+      });
+      return { kind: "tampered", reason: "manifest_missing_entry" };
+    }
+    const manifest = parseManifest(manifestRaw);
+    if (!manifest) {
+      log.warn("storage.signature_mismatch", {
+        name,
+        file: SOURCE_FILE,
+        reason: "manifest_corrupt"
+      });
+      return { kind: "tampered", reason: "manifest_corrupt" };
+    }
+    const result = await verifyFile(manifest, name, SOURCE_FILE, raw);
+    if (!result.present) {
+      // Manifest exists but does not cover SOURCE_FILE. This is either a
+      // pre-round-54 install (writeSkill wrote source.json outside the
+      // signed bundle) OR an attacker swapped a fresh source.json in but
+      // could not produce a valid signature. We cannot distinguish; refuse
+      // to trust the metadata in either case. v1 accepts the cost: legacy
+      // installs must reinstall to regain check_updates support.
+      log.warn("storage.signature_missing", {
+        name,
+        file: SOURCE_FILE,
+        reason: "manifest_missing_source"
+      });
+      return { kind: "tampered", reason: "manifest_missing_entry" };
+    }
+    if (!result.valid) {
+      log.warn("storage.signature_mismatch", { name, file: SOURCE_FILE });
+      return { kind: "tampered", reason: "signature_invalid" };
+    }
+    return { kind: "present", source: parsed };
+  });
 }
 
 export async function readSkillSource(name: string): Promise<SkillSource | null> {
-  try {
-    const raw = await fs.readFile(path.join(skillDir(name), SOURCE_FILE), "utf-8");
-    return JSON.parse(raw) as SkillSource;
-  } catch {
-    return null;
-  }
+  const status = await readSkillSourceStatus(name);
+  return status.kind === "present" ? status.source : null;
 }

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   listInstalledSkillNames,
   readSkill,
-  readSkillSource,
+  readSkillSourceStatus,
   type SkillSource
 } from "../storage/index.js";
 import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
@@ -111,11 +111,28 @@ export async function checkUpdates(
       errors.push({ name, error: "Skill not installed" });
       continue;
     }
-    const source = await readSkillSource(name);
-    if (!source) {
+    const sourceStatus = await readSkillSourceStatus(name);
+    // Round-54: distinguish "no source recorded" from "source signature
+    // invalid". A tampered source.json (manifest entry missing or
+    // signature-mismatch) must surface as an actionable error rather than
+    // the generic "No source metadata recorded" message — the latter hides
+    // the integrity failure behind what looks like a hand-built install.
+    if (sourceStatus.kind === "tampered") {
+      errors.push({
+        name,
+        error: `Source metadata signature invalid (${sourceStatus.reason}); reinstall the skill`
+      });
+      continue;
+    }
+    if (sourceStatus.kind === "unparseable") {
+      errors.push({ name, error: "Source metadata is unparseable; reinstall the skill" });
+      continue;
+    }
+    if (sourceStatus.kind === "absent") {
       errors.push({ name, error: "No source metadata recorded" });
       continue;
     }
+    const source = sourceStatus.source;
     try {
       if (source.source === "inline") {
         const bundle = await readBundledInlineBundle(source, deps);

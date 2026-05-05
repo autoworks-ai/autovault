@@ -6,10 +6,10 @@ import {
   listInstalledSkillNames,
   readSkill,
   readSkillSource,
+  readSkillSourceStatus,
   recoverOrphanBackups,
   writeSkill,
-  writeSkillResources,
-  writeSkillSource
+  writeSkillResources
 } from "../src/storage/index.js";
 import { withStorageLock } from "../src/storage/lock.js";
 import { currentStorageRoot } from "./setup.js";
@@ -618,8 +618,7 @@ bin:
   });
 
   it("round-trips skill source metadata", async () => {
-    await writeSkill("src-skill", skillMd.replace("parsed-skill", "src-skill"));
-    await writeSkillSource("src-skill", {
+    await writeSkill("src-skill", skillMd.replace("parsed-skill", "src-skill"), [], {
       source: "github",
       identifier: "owner/repo",
       fetchedAt: new Date().toISOString(),
@@ -718,5 +717,95 @@ bin:
     expect(source?.source).toBe("github");
     expect(source?.identifier).toBe("owner/repo");
     expect(source?.contentHash).toBe("v2hash");
+  });
+
+  it("readSkillSource refuses tampered source.json (round-54)", async () => {
+    // Round-54: writeSkill now binds .autovault-source.json into the signed
+    // manifest. After install, mutating the file on disk (e.g. an attacker
+    // rewriting contentHash to silence check_updates drift) MUST be detected
+    // and the metadata refused. Without the fix, an unsigned source.json
+    // produced false "up_to_date" verdicts because the recorded contentHash
+    // was attacker-controlled.
+    const fetchedAt = new Date().toISOString();
+    await writeSkill(
+      "tampered-source",
+      skillMd.replace("parsed-skill", "tampered-source"),
+      [],
+      {
+        source: "github",
+        identifier: "owner/repo",
+        fetchedAt,
+        contentHash: "originalhash",
+        upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+      }
+    );
+    // Sanity: legitimate read returns the recorded source.
+    const before = await readSkillSourceStatus("tampered-source");
+    expect(before.kind).toBe("present");
+
+    // Tamper: rewrite source.json on disk with a fake contentHash.
+    const sourcePath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "tampered-source",
+      ".autovault-source.json"
+    );
+    const tampered = JSON.stringify(
+      {
+        source: "github",
+        identifier: "owner/repo",
+        fetchedAt,
+        contentHash: "FAKEHASH",
+        upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+      },
+      null,
+      2
+    );
+    await fs.writeFile(sourcePath, tampered, "utf-8");
+
+    const after = await readSkillSourceStatus("tampered-source");
+    expect(after.kind).toBe("tampered");
+    if (after.kind === "tampered") {
+      expect(after.reason).toBe("signature_invalid");
+    }
+    // Compatibility wrapper returns null on tampered source so callers that
+    // don't consume the status fall closed rather than trusting the bytes.
+    expect(await readSkillSource("tampered-source")).toBeNull();
+  });
+
+  it("readSkill blocks while writeSkill holds the storage lock (round-54)", async () => {
+    // Round-54 medium: readers must serialize against writeSkill's swap so
+    // a concurrent reader cannot observe the live → bak → tmp → live window
+    // as ENOENT. We pin the lock-takes-it-too invariant directly: hold the
+    // storage lock with a deferred release, fire readSkill in parallel, and
+    // verify it does not settle until the lock releases. Pre-fix, readSkill
+    // didn't take the lock and would have settled immediately.
+    let releaseHolder: () => void = () => {};
+    const heldUntil = new Promise<void>((resolve) => {
+      releaseHolder = resolve;
+    });
+    let signalAcquired: () => void = () => {};
+    const acquired = new Promise<void>((resolve) => {
+      signalAcquired = resolve;
+    });
+    let readerSettled = false;
+    const holder = withStorageLock(async () => {
+      signalAcquired();
+      await heldUntil;
+    });
+    // Wait until the holder actually owns the lock — without this barrier
+    // the reader can race to acquire first, defeating the test setup.
+    await acquired;
+    const reader = readSkill("nonexistent-during-lock").then(() => {
+      readerSettled = true;
+    });
+    // Yield to the event loop — if readSkill bypassed the lock, it would
+    // settle quickly. With the fix it must queue behind the holder.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readerSettled).toBe(false);
+    releaseHolder();
+    await holder;
+    await reader;
+    expect(readerSettled).toBe(true);
   });
 });
