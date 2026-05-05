@@ -1,3 +1,5 @@
+import { MAX_SKILL_MD_BYTES } from "../util/limits.js";
+import { assertContentLength, fetchWithDeadline, readBoundedText } from "../util/bounded-fetch.js";
 import type { FetchedSkill } from "./types.js";
 
 const MAX_REDIRECTS = 5;
@@ -27,10 +29,16 @@ export async function fetchSkillFromUrl(
 
   let currentUrl = url;
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
-    const response = await fetcher(currentUrl, {
-      headers: { "User-Agent": "autovault" },
-      redirect: "manual"
-    });
+    const label = currentUrl.toString();
+    const response = await fetchWithDeadline(
+      fetcher,
+      currentUrl,
+      {
+        headers: { "User-Agent": "autovault" },
+        redirect: "manual"
+      },
+      label
+    );
 
     if (response.status >= 300 && response.status < 400) {
       if (i === MAX_REDIRECTS) {
@@ -51,8 +59,12 @@ export async function fetchSkillFromUrl(
     if (!response.ok) {
       throw new Error(`URL fetch failed: ${response.status} ${response.statusText} (${currentUrl})`);
     }
-    const skillMd = await response.text();
-    return { skillMd, sourceUrl: currentUrl.toString() };
+
+    // Pre-check on Content-Length when present, then enforce the cap during
+    // the body read in case the upstream lied or omitted the header.
+    assertContentLength(label, response.headers.get("content-length"), MAX_SKILL_MD_BYTES);
+    const skillMd = await readBoundedText(response, MAX_SKILL_MD_BYTES, label);
+    return { skillMd, sourceUrl: label };
   }
 
   throw new Error(`Unexpected URL fetch failure: ${url}`);

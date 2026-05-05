@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runSkillCommand } from "./cli/skill.js";
 import { importAutohubCapabilities, resolveCapabilities, syncProfiles } from "./library.js";
 
 function usage(): never {
@@ -6,6 +7,9 @@ function usage(): never {
   autovault sync-profiles [--link agent=/path/to/skills]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
+  autovault skill <action> <name>
+  autovault skill list
+  autovault skill which <name> [<action>]
 `);
   process.exit(1);
 }
@@ -47,6 +51,11 @@ async function main(): Promise<void> {
       reset: hasFlag(args, "--reset")
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "skill") {
+    await runSkillCommand(args);
     return;
   }
 

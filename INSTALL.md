@@ -32,6 +32,7 @@ location.
 ```bash
 export AUTOVAULT_STORAGE_PATH=~/.autovault   # default
 export AUTOVAULT_DB_PATH=~/.autovault/autovault.sqlite
+export AUTOVAULT_PROFILE_LINKS="codex=~/.codex/skills,claude-code=~/.claude/skills"
 ```
 
 See [`README.md`](README.md#configuration) for the full list of environment
@@ -90,6 +91,8 @@ node dist/cli.js sync-profiles \
 
 This creates or updates managed links inside those roots and leaves unrelated
 system or manually installed skills intact.
+Set `AUTOVAULT_PROFILE_LINKS` to make `install_skill`, `propose_skill`, and
+plain `sync-profiles` refresh those roots automatically.
 
 ## 5. Configure your MCP host
 
@@ -108,7 +111,8 @@ Add to your project's `.mcp.json` (or `~/.claude/mcp.json` for global):
       "command": "node",
       "args": ["/absolute/path/to/autovault/dist/index.js"],
       "env": {
-        "AUTOVAULT_STORAGE_PATH": "/Users/you/.autovault"
+        "AUTOVAULT_STORAGE_PATH": "/Users/you/.autovault",
+        "AUTOVAULT_PROFILE_LINKS": "claude-code=/Users/you/.claude/skills"
       }
     }
   }
@@ -145,7 +149,7 @@ Codex uses `~/.codex/config.toml`. Add a server entry:
 [mcp_servers.autovault]
 command = "node"
 args = ["/absolute/path/to/autovault/dist/index.js"]
-env = { AUTOVAULT_STORAGE_PATH = "/Users/you/.autovault" }
+env = { AUTOVAULT_STORAGE_PATH = "/Users/you/.autovault", AUTOVAULT_PROFILE_LINKS = "codex=/Users/you/.codex/skills" }
 ```
 
 Check Codex docs for your specific version; the stanza shape may vary.
@@ -271,8 +275,14 @@ confirm the value is quoted. If unset, AutoVault expands `~/.autovault`.
 
 - Confirm `AUTOVAULT_STORAGE_PATH` points to the same location the bootstrap
   script wrote to.
+- If the MCP host says `auth unsupported`, that is expected for the local
+  stdio server. It means the host asked for remote auth status, not that
+  AutoVault credentials are broken.
 - Check `ls $AUTOVAULT_STORAGE_PATH/skills/` — each skill must be a directory
   containing `SKILL.md`.
+- Check `AUTOVAULT_PROFILE_LINKS` or rerun `sync-profiles --link ...` if
+  skills exist in the vault but are missing from Codex/Claude native skill
+  directories.
 - Look at stderr from the MCP host for JSON-structured logs from AutoVault.
 
 ### Signature mismatch warnings in logs

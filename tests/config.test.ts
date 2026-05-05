@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import os from "node:os";
+import path from "node:path";
 import { loadConfig, resetConfigCache } from "../src/config.js";
 
 describe("loadConfig", () => {
@@ -8,6 +10,38 @@ describe("loadConfig", () => {
     expect(cfg.searchMode).toBe("text");
     expect(cfg.strictSecurity).toBe(true);
     expect(cfg.logLevel).toBe("error");
+    expect(cfg.profileRoots).toEqual({});
+  });
+
+  it("parses AUTOVAULT_PROFILE_LINKS and expands home paths", () => {
+    const previous = process.env.AUTOVAULT_PROFILE_LINKS;
+    process.env.AUTOVAULT_PROFILE_LINKS =
+      "codex=~/.codex/skills, claude-code=/tmp/claude-skills";
+    resetConfigCache();
+    try {
+      expect(loadConfig().profileRoots).toEqual({
+        codex: path.join(os.homedir(), ".codex/skills"),
+        "claude-code": "/tmp/claude-skills"
+      });
+    } finally {
+      if (previous === undefined) delete process.env.AUTOVAULT_PROFILE_LINKS;
+      else process.env.AUTOVAULT_PROFILE_LINKS = previous;
+      resetConfigCache();
+    }
+  });
+
+  it("fails fast on malformed AUTOVAULT_PROFILE_LINKS", () => {
+    const previous = process.env.AUTOVAULT_PROFILE_LINKS;
+    process.env.AUTOVAULT_PROFILE_LINKS = "codex";
+    resetConfigCache();
+    try {
+      expect(() => loadConfig()).toThrow(/Invalid AutoVault configuration/);
+      expect(() => loadConfig()).toThrow(/AUTOVAULT_PROFILE_LINKS/);
+    } finally {
+      if (previous === undefined) delete process.env.AUTOVAULT_PROFILE_LINKS;
+      else process.env.AUTOVAULT_PROFILE_LINKS = previous;
+      resetConfigCache();
+    }
   });
 
   it("fails fast on invalid AUTOVAULT_SEARCH_MODE", () => {

@@ -96,6 +96,43 @@ describe("checkUpdates", () => {
     expect(result.unchecked).toHaveLength(0);
   });
 
+  it("reports drift when only a fetched resource changes, not SKILL.md", async () => {
+    const skillWithBin = `---
+name: drift-skill
+description: A description that is intentionally long enough to satisfy the schema length check.
+metadata:
+  version: "1.0.0"
+bin:
+  setup:
+    command: bin/setup
+---
+
+# Body
+`;
+    const installFetcher = vi.fn().mockResolvedValue({
+      skillMd: skillWithBin,
+      sourceUrl: "https://x",
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      resources: [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho v1\n" }]
+    });
+    const installResult = await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: installFetcher } }
+    );
+    expect(installResult.success).toBe(true);
+
+    // Upstream now serves identical SKILL.md but a patched bin/setup.
+    const checkFetcher = vi.fn().mockResolvedValue({
+      skillMd: skillWithBin,
+      sourceUrl: "https://x",
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      resources: [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho v2\n" }]
+    });
+    const result = await checkUpdates(undefined, { fetchers: { github: checkFetcher } });
+    expect(result.drifted.map((d) => d.name)).toContain("drift-skill");
+    expect(result.drifted[0].reason).toBe("content hash changed");
+  });
+
   it("reports non-bundled inline skills as unchecked", async () => {
     await installSkill({
       source: "url",

@@ -13,6 +13,7 @@ beforeEach(() => {
   process.env.AUTOVAULT_MODE = "local";
   process.env.AUTOVAULT_STORAGE_PATH = tempRoot;
   delete process.env.AUTOVAULT_DB_PATH;
+  delete process.env.AUTOVAULT_PROFILE_LINKS;
   process.env.AUTOVAULT_SECURITY_STRICT = "true";
   process.env.AUTOVAULT_SEARCH_MODE = "text";
   process.env.AUTOVAULT_LOG_LEVEL = "error";

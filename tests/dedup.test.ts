@@ -22,7 +22,7 @@ describe("classifyDedup", () => {
     const result = classifyDedup(
       "hash-abc",
       "totally different words",
-      [{ name: "prior", contentHash: "hash-abc", content: "does not even matter" }]
+      [{ name: "prior", contentHash: "hash-abc", similarityCorpus: "does not even matter" }]
     );
     expect(result).toEqual({ tier: "exact", similarity: 1, existingName: "prior" });
   });
@@ -34,7 +34,7 @@ describe("classifyDedup", () => {
       {
         name: "nearly-the-same",
         contentHash: "other-hash",
-        content: [...words20.slice(0, 19), "u"].join(" ")
+        similarityCorpus: [...words20.slice(0, 19), "u"].join(" ")
       }
     ];
     const result = classifyDedup("new-hash", content, existing);
@@ -49,7 +49,7 @@ describe("classifyDedup", () => {
       {
         name: "some-overlap",
         contentHash: "other-hash",
-        content: "a b c d e f g h i j m"
+        similarityCorpus: "a b c d e f g h i j m"
       }
     ];
     const result = classifyDedup("new-hash", content, existing);
@@ -61,7 +61,7 @@ describe("classifyDedup", () => {
 
   it("returns novel when nothing is close", () => {
     const result = classifyDedup("new-hash", "completely unique content phrase here", [
-      { name: "other", contentHash: "x", content: "totally different words and ideas" }
+      { name: "other", contentHash: "x", similarityCorpus: "totally different words and ideas" }
     ]);
     expect(result.tier).toBe("novel");
   });

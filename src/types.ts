@@ -7,6 +7,13 @@ export type SkillSummary = {
   agents: string[];
 };
 
+export type SkillBinAction = {
+  command: string;
+  args: string[];
+  description?: string;
+  requiresTty: boolean;
+};
+
 export type SkillRecord = SkillSummary & {
   skillMd: string;
   resources: Array<{ path: string; type: string }>;
@@ -16,6 +23,7 @@ export type SkillRecord = SkillSummary & {
     tools: string[];
   };
   requiresSecrets: Array<{ name: string; description?: string; required?: boolean }>;
+  bin: Record<string, SkillBinAction>;
 };
 
 export type ValidationResult = {

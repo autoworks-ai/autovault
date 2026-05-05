@@ -35,6 +35,10 @@ export function runSecurityScan(content: string): string[] {
   return flags;
 }
 
+export function scanResource(path: string, content: string): string[] {
+  return runSecurityScan(content).map((reason) => `${path}: ${reason}`);
+}
+
 export function resetSecurityCache(): void {
   compiled = null;
 }

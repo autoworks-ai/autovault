@@ -11,7 +11,7 @@ import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
 import { fetchSkillFromGitHub } from "../sources/github.js";
 import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
-import { sha256 } from "../util/hash.js";
+import { bundleHash, type HashedResource } from "../util/hash.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair } from "../validation/frontmatter.js";
 
@@ -43,17 +43,34 @@ function defaultBundledSkillsDir(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "skills");
 }
 
-async function readBundledInlineSkill(
+async function readBundledInlineBundle(
   source: SkillSource,
   deps: CheckUpdatesDeps
-): Promise<string | null> {
+): Promise<{ skillMd: string; resources: HashedResource[] } | null> {
   if (!source.bundledSkillName) return null;
   const bundledName = source.bundledSkillName;
   assertSafeSkillName(bundledName);
   const bundledRoot = deps.bundledSkillsDir ?? defaultBundledSkillsDir();
-  const raw = await fs.readFile(path.join(bundledRoot, bundledName, "SKILL.md"), "utf-8");
+  const skillRoot = path.join(bundledRoot, bundledName);
+  const raw = await fs.readFile(path.join(skillRoot, "SKILL.md"), "utf-8");
   const { output } = attemptRepair(raw);
-  return output;
+
+  const resources: HashedResource[] = [];
+  async function walk(current: string, relative: string): Promise<void> {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const abs = path.join(current, entry.name);
+      const rel = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(abs, rel);
+      } else if (entry.name !== "SKILL.md") {
+        const content = await fs.readFile(abs, "utf-8");
+        resources.push({ path: rel, content });
+      }
+    }
+  }
+  await walk(skillRoot, "");
+  return { skillMd: output, resources };
 }
 
 async function fetchForSource(
@@ -101,8 +118,8 @@ export async function checkUpdates(
     }
     try {
       if (source.source === "inline") {
-        const bundledSkillMd = await readBundledInlineSkill(source, deps);
-        if (!bundledSkillMd) {
+        const bundle = await readBundledInlineBundle(source, deps);
+        if (!bundle) {
           unchecked.push({
             name,
             source: source.source,
@@ -111,7 +128,7 @@ export async function checkUpdates(
           });
           continue;
         }
-        const bundledHash = sha256(bundledSkillMd);
+        const bundledHash = bundleHash(bundle.skillMd, bundle.resources);
         if (bundledHash !== source.contentHash) {
           drifted.push({
             name,
@@ -135,7 +152,7 @@ export async function checkUpdates(
         });
         continue;
       }
-      const upstreamHash = sha256(fetched.skillMd);
+      const upstreamHash = bundleHash(fetched.skillMd, fetched.resources ?? []);
       if (
         upstreamHash !== source.contentHash ||
         (fetched.upstreamSha && source.upstreamSha && fetched.upstreamSha !== source.upstreamSha)
