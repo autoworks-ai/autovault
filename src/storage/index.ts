@@ -570,21 +570,42 @@ export async function verifyInstalledIntegrity(
       await verifyEntry(filePath, null);
     }
 
-    // Step 5 (round-58 hardening): walk the live skill directory and reject
-    // any non-metadata file that is NOT covered by the manifest. Without
-    // this, an attacker can drop an unsigned helper (e.g. lib/helper.sh)
-    // alongside a signed bin script — the bin script runs with cwd set to
-    // the skill directory, so a wrapper that `source`s a sibling file
-    // would pull in unsigned code without modifying any signed entry.
-    // Symlinks are always rejected; writeSkill never produces them, so
-    // any symlink under the skill dir is hostile injection.
+    // Step 5 (round-58/61 hardening): walk the live skill directory and
+    // reject any entry that is NOT covered by the manifest. Without this, an
+    // attacker can drop an unsigned helper (e.g. lib/helper.sh) alongside a
+    // signed bin script — the bin script runs with cwd set to the skill
+    // directory, so a wrapper that `source`s a sibling file would pull in
+    // unsigned code without modifying any signed entry. Round-61 widens the
+    // walk beyond regular files + symlinks: an empty control directory or a
+    // FIFO at a path the script reads from also alters behavior without
+    // changing any manifest entry, so the integrity check now flags them.
+    //
+    // Allowed directory set: derived from manifest file paths (every parent
+    // segment of every manifested file). A directory present on disk that
+    // isn't in this set has no manifest-recorded contents — flagged.
+    const allowedDirs = new Set<string>();
+    for (const filePath of Object.keys(manifest.files)) {
+      const parts = filePath.split("/");
+      for (let i = 1; i < parts.length; i++) {
+        allowedDirs.add(parts.slice(0, i).join("/"));
+      }
+    }
+
     const metadataNames = new Set<string>([MANIFEST_FILE, SIGNATURE_FILE]);
-    const liveFiles = await walkLiveFiles(root);
-    for (const live of liveFiles) {
-      if (live.isSymlink) {
+    const liveEntries = await walkLiveFiles(root);
+    for (const live of liveEntries) {
+      if (live.type === "symlink" || live.type === "special") {
+        // writeSkill never produces these under the skill dir, so any such
+        // entry is hostile injection regardless of name.
         mismatches.push({ file: live.path, reason: "unmanifested_file" });
         continue;
       }
+      if (live.type === "directory") {
+        if (allowedDirs.has(live.path)) continue;
+        mismatches.push({ file: live.path, reason: "unmanifested_file" });
+        continue;
+      }
+      // file
       if (live.path.indexOf("/") === -1 && metadataNames.has(live.path)) continue;
       if (Object.hasOwn(manifest.files, live.path)) continue;
       mismatches.push({ file: live.path, reason: "unmanifested_file" });
@@ -595,10 +616,21 @@ export async function verifyInstalledIntegrity(
   });
 }
 
+type LiveEntryType = "file" | "symlink" | "directory" | "special";
+
+// Round-61 fix: emit every dirent type — not just regular files and symlinks.
+// Bin scripts run with cwd=skillDir, so a post-install FIFO/socket/device at
+// a path the script reads from (or an empty control directory the script
+// existence-checks) can change exec behavior without modifying any manifest
+// entry. Directories used to be silently skipped if they had no children;
+// special files were ignored entirely. Both are now reported so the Step 5
+// open-set check in verifyInstalledIntegrity can flag them. writeSkill never
+// produces symlinks, special files, or empty intermediate directories that
+// aren't already implied by a manifest path, so any such entry is hostile.
 async function walkLiveFiles(
   root: string
-): Promise<Array<{ path: string; isSymlink: boolean }>> {
-  const out: Array<{ path: string; isSymlink: boolean }> = [];
+): Promise<Array<{ path: string; type: LiveEntryType }>> {
+  const out: Array<{ path: string; type: LiveEntryType }> = [];
   async function walk(current: string, relative: string): Promise<void> {
     let entries;
     try {
@@ -609,18 +641,19 @@ async function walkLiveFiles(
     for (const entry of entries) {
       const rel = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink()) {
-        out.push({ path: rel, isSymlink: true });
+        out.push({ path: rel, type: "symlink" });
         continue;
       }
       if (entry.isDirectory()) {
+        out.push({ path: rel, type: "directory" });
         await walk(path.join(current, entry.name), rel);
       } else if (entry.isFile()) {
-        out.push({ path: rel, isSymlink: false });
+        out.push({ path: rel, type: "file" });
+      } else {
+        // FIFO, socket, block/char device — never produced by writeSkill, so
+        // any such entry under the skill dir is a post-install injection.
+        out.push({ path: rel, type: "special" });
       }
-      // Other dirent types (sockets, FIFOs, block/char devices) are not
-      // produced by writeSkill and are not addressable as resources, so
-      // ignoring them is safe — verifyInstalledIntegrity already enforces
-      // membership for everything that matters.
     }
   }
   await walk(root, "");

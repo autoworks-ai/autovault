@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   ensureStorage,
@@ -8,6 +9,7 @@ import {
   readSkillSource,
   readSkillSourceStatus,
   recoverOrphanBackups,
+  verifyInstalledIntegrity,
   writeSkill,
   writeSkillResources
 } from "../src/storage/index.js";
@@ -239,6 +241,62 @@ ${resources.length > 0 ? `resources:\n${resources.map((p) => `  - path: ${p}\n  
       ])
     ).rejects.toThrow(/parent symlink|escapes/i);
     await expect(fs.stat(path.join(escapeTarget, "passwd"))).rejects.toThrow();
+  });
+
+  it("flags injected FIFOs as unmanifested files (round-61)", async () => {
+    // Round 61 finding: the integrity walk used to ignore non-regular,
+    // non-symlink dirent types. A signed bin script runs with cwd=skillDir,
+    // so an attacker who mkfifo's a sibling at a path the script reads
+    // from (e.g. `cat ./input`) can change exec behavior without modifying
+    // any signed file. The walk now reports special files as unmanifested.
+    await writeSkill(
+      "fifo-injection",
+      skillMd.replace("parsed-skill", "fifo-injection"),
+      [{ path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }]
+    );
+    const fifoPath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "fifo-injection",
+      "bin",
+      "input"
+    );
+    const mkfifoResult = spawnSync("mkfifo", [fifoPath]);
+    if (mkfifoResult.status !== 0) {
+      // Skip if mkfifo unavailable on this platform (Windows CI). The fix
+      // is still valid; we just can't exercise it here.
+      return;
+    }
+    const result = await verifyInstalledIntegrity("fifo-injection");
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      const fifo = result.mismatches.find((m) => m.file === "bin/input");
+      expect(fifo).toBeDefined();
+      expect(fifo?.reason).toBe("unmanifested_file");
+    }
+  });
+
+  it("flags empty injected directories as unmanifested files (round-61)", async () => {
+    // Round 61 finding companion: directories used to be silently traversed
+    // (and skipped if empty), so a post-install `mkdir feature-flag/` at a
+    // path the script existence-checks would not surface in the integrity
+    // walk. The walk now records every directory and rejects any that isn't
+    // an ancestor of a manifested file path.
+    await writeSkill(
+      "empty-dir-injection",
+      skillMd.replace("parsed-skill", "empty-dir-injection"),
+      [{ path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }]
+    );
+    const liveRoot = path.join(currentStorageRoot(), "skills", "empty-dir-injection");
+    await fs.mkdir(path.join(liveRoot, "feature-flag"));
+
+    const result = await verifyInstalledIntegrity("empty-dir-injection");
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      const dir = result.mismatches.find((m) => m.file === "feature-flag");
+      expect(dir).toBeDefined();
+      expect(dir?.reason).toBe("unmanifested_file");
+    }
   });
 
   it("reinstalls cleanly over a corrupted live install with a symlink ancestor (round-60)", async () => {

@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { readSkillManifestStatus, validateResourcePath } from "../storage/index.js";
 import { canonicalRelPath } from "../util/path.js";
-import { log } from "../util/log.js";
 import { verifyFile } from "../util/sign.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 
@@ -23,40 +22,38 @@ export async function readSkillResource(skillName: string, resourcePath: string)
 }> {
   assertSafeSkillName(skillName);
   const fullPath = validateResourcePath(skillName, resourcePath);
-  const content = await fs.readFile(fullPath, "utf-8");
-
-  // Match readSkill's V1 log-only enforcement: a tampered, corrupt, or missing
-  // manifest must surface a warning, not silently feed agents bytes whose
-  // signature we never verified. The CLI exec path is hard-fail; this read
-  // path stays log-only for V1 (matching SKILL.md), but it must NOT skip the
-  // check entirely. `readSkillManifest` collapses corrupt and absent into the
-  // same null return; status() preserves the distinction so the warning
-  // reasons match storage.signature_mismatch.
   const key = canonicalRelPath(resourcePath);
+
+  // Round-61: hard-fail on any integrity problem before returning content.
+  // Earlier this path returned bytes with a stderr-only warning, but stderr
+  // never reaches the MCP caller — an agent consuming the result couldn't
+  // distinguish a tampered file from a clean one. The CLI exec/print path
+  // hard-fails on the same conditions, so the MCP read path now matches.
+  // verifyFile binds the signature to (skill, path, content) so a manifest
+  // entry copied across skills or paths still fails closed here.
   const status = await readSkillManifestStatus(skillName);
   if (status.kind === "absent") {
-    log.warn("read_skill_resource.signature_mismatch", {
-      skill: skillName,
-      resource: key,
-      reason: "no_integrity_file"
-    });
-  } else if (status.kind === "corrupt") {
-    log.warn("read_skill_resource.signature_mismatch", {
-      skill: skillName,
-      resource: key,
-      reason: "manifest_corrupt"
-    });
-  } else {
-    // verifyFile binds the signature to (skill, path, content), so a manifest
-    // entry copied across skills or paths returns `present: false` here just
-    // like a missing entry does — both warn the operator the bytes aren't
-    // covered by a binding the manifest was actually signed for.
-    const result = await verifyFile(status.manifest, skillName, key, content);
-    if (!result.present) {
-      log.warn("read_skill_resource.unsigned", { skill: skillName, resource: key });
-    } else if (!result.valid) {
-      log.warn("read_skill_resource.signature_mismatch", { skill: skillName, resource: key });
-    }
+    throw new Error(
+      `Refusing to read: no signed manifest for skill '${skillName}'. Reinstall the skill.`
+    );
+  }
+  if (status.kind === "corrupt") {
+    throw new Error(
+      `Refusing to read: signed manifest for skill '${skillName}' is corrupt. Reinstall the skill.`
+    );
+  }
+
+  const content = await fs.readFile(fullPath, "utf-8");
+  const result = await verifyFile(status.manifest, skillName, key, content);
+  if (!result.present) {
+    throw new Error(
+      `Refusing to read: '${key}' is not covered by the signed manifest for skill '${skillName}'. Reinstall the skill.`
+    );
+  }
+  if (!result.valid) {
+    throw new Error(
+      `Refusing to read: signature mismatch for '${key}' in skill '${skillName}'. The file may have been tampered with — reinstall the skill.`
+    );
   }
 
   const ext = path.extname(fullPath).toLowerCase();

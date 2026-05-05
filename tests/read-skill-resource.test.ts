@@ -22,8 +22,9 @@ metadata:
 describe("readSkillResource", () => {
   it("reads a resource and infers a mime type", async () => {
     await ensureStorage();
-    await writeSkill("rsr", skillMd);
-    await writeSkillResources("rsr", [{ path: "data.json", content: "{}" }]);
+    // Round-61: resources must be written through writeSkill so the manifest
+    // covers them — read_skill_resource hard-fails on uncovered bytes.
+    await writeSkill("rsr", skillMd, [{ path: "data.json", content: "{}" }]);
     const result = await readSkillResource("rsr", "data.json");
     expect(result.content).toBe("{}");
     expect(result.mime_type).toBe("application/json");
@@ -43,78 +44,50 @@ describe("readSkillResource", () => {
   });
 
   it("allows non-traversal filenames that contain double dots", async () => {
-    await writeSkill("rsr", skillMd);
-    await writeSkillResources("rsr", [{ path: "examples/v1..json", content: "{\"ok\":true}" }]);
+    await writeSkill("rsr", skillMd, [
+      { path: "examples/v1..json", content: "{\"ok\":true}" }
+    ]);
     const result = await readSkillResource("rsr", "examples/v1..json");
     expect(result.content).toBe("{\"ok\":true}");
     expect(result.mime_type).toBe("application/json");
   });
 
-  it("warns when the manifest is absent (deleted post-install)", async () => {
-    // Mirrors readSkill's missing-integrity-file behavior. Before the fix,
-    // read_skill_resource silently returned bytes when readSkillManifest
-    // returned null, so an attacker who deleted .autovault-manifest could
-    // tamper with resources and the agent-facing read would surface no signal.
-    const calls: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
-    const logModule = await import("../src/util/log.js");
-    const original = logModule.log.warn;
-    logModule.log.warn = (msg: string, meta?: Record<string, unknown>) => {
-      calls.push({ msg, meta });
-    };
-    try {
-      await writeSkill("rsr-no-manifest", skillMd.replace("rsr", "rsr-no-manifest"), [
-        { path: "data.json", content: "{\"ok\":true}" }
-      ]);
-      const manifestPath = path.join(
-        currentStorageRoot(),
-        "skills",
-        "rsr-no-manifest",
-        ".autovault-manifest"
-      );
-      await fs.unlink(manifestPath);
-      const result = await readSkillResource("rsr-no-manifest", "data.json");
-      expect(result.content).toBe("{\"ok\":true}");
-      const warning = calls.find(
-        (entry) =>
-          entry.msg === "read_skill_resource.signature_mismatch" &&
-          entry.meta?.reason === "no_integrity_file"
-      );
-      expect(warning).toBeDefined();
-      expect(warning?.meta?.skill).toBe("rsr-no-manifest");
-    } finally {
-      logModule.log.warn = original;
-    }
+  it("refuses to read when the manifest is absent (deleted post-install) (round-61)", async () => {
+    // Round 61 finding: stderr-only warnings never reach the MCP caller, so
+    // an agent consuming the tool result couldn't tell a tampered/unsigned
+    // resource from a clean one. The fix is hard-fail — match the CLI
+    // exec/print surface. An attacker who deletes .autovault-manifest now
+    // gets a thrown error from the read path instead of the bytes plus a
+    // log line nobody reads.
+    await writeSkill("rsr-no-manifest", skillMd.replace("rsr", "rsr-no-manifest"), [
+      { path: "data.json", content: "{\"ok\":true}" }
+    ]);
+    const manifestPath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "rsr-no-manifest",
+      ".autovault-manifest"
+    );
+    await fs.unlink(manifestPath);
+    await expect(
+      readSkillResource("rsr-no-manifest", "data.json")
+    ).rejects.toThrow(/no signed manifest/);
   });
 
-  it("warns when the manifest is corrupt", async () => {
-    const calls: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
-    const logModule = await import("../src/util/log.js");
-    const original = logModule.log.warn;
-    logModule.log.warn = (msg: string, meta?: Record<string, unknown>) => {
-      calls.push({ msg, meta });
-    };
-    try {
-      await writeSkill("rsr-corrupt-manifest", skillMd.replace("rsr", "rsr-corrupt-manifest"), [
-        { path: "data.json", content: "{\"ok\":true}" }
-      ]);
-      const manifestPath = path.join(
-        currentStorageRoot(),
-        "skills",
-        "rsr-corrupt-manifest",
-        ".autovault-manifest"
-      );
-      await fs.writeFile(manifestPath, "not json", "utf-8");
-      const result = await readSkillResource("rsr-corrupt-manifest", "data.json");
-      expect(result.content).toBe("{\"ok\":true}");
-      const warning = calls.find(
-        (entry) =>
-          entry.msg === "read_skill_resource.signature_mismatch" &&
-          entry.meta?.reason === "manifest_corrupt"
-      );
-      expect(warning).toBeDefined();
-    } finally {
-      logModule.log.warn = original;
-    }
+  it("refuses to read when the manifest is corrupt (round-61)", async () => {
+    await writeSkill("rsr-corrupt-manifest", skillMd.replace("rsr", "rsr-corrupt-manifest"), [
+      { path: "data.json", content: "{\"ok\":true}" }
+    ]);
+    const manifestPath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "rsr-corrupt-manifest",
+      ".autovault-manifest"
+    );
+    await fs.writeFile(manifestPath, "not json", "utf-8");
+    await expect(
+      readSkillResource("rsr-corrupt-manifest", "data.json")
+    ).rejects.toThrow(/manifest .* is corrupt/);
   });
 
   it("reads a resource declared with backslashes via the canonical path (round-34)", async () => {
@@ -138,36 +111,43 @@ describe("readSkillResource", () => {
     expect(onDisk).toBe("# guide");
   });
 
-  it("logs a signature mismatch warning when a signed resource is tampered", async () => {
-    // V1 enforcement is log-only here (matches readSkill's SKILL.md behavior)
-    // — agents and the CLI hard-fail at exec time. The point of this test is
-    // to ensure read_skill_resource does NOT silently bypass the manifest.
-    const calls: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
-    const logModule = await import("../src/util/log.js");
-    const original = logModule.log.warn;
-    logModule.log.warn = (msg: string, meta?: Record<string, unknown>) => {
-      calls.push({ msg, meta });
-    };
-    try {
-      await writeSkill("rsr-tamper", skillMd.replace("rsr", "rsr-tamper"), [
-        { path: "data.json", content: "{\"ok\":true}" }
-      ]);
-      const resourcePath = path.join(
-        currentStorageRoot(),
-        "skills",
-        "rsr-tamper",
-        "data.json"
-      );
-      await fs.writeFile(resourcePath, "{\"ok\":false}", "utf-8");
-      const result = await readSkillResource("rsr-tamper", "data.json");
-      expect(result.content).toBe("{\"ok\":false}");
-      const mismatched = calls.find(
-        (entry) => entry.msg === "read_skill_resource.signature_mismatch"
-      );
-      expect(mismatched).toBeDefined();
-      expect(mismatched?.meta?.skill).toBe("rsr-tamper");
-    } finally {
-      logModule.log.warn = original;
-    }
+  it("refuses to read when a signed resource has been tampered (round-61)", async () => {
+    // Round 61 finding: log-only enforcement was invisible to MCP callers.
+    // Hard-fail so an agent calling read_skill_resource on tampered bytes
+    // gets an explicit error in-band instead of attacker-controlled content
+    // plus a stderr line it never sees.
+    await writeSkill("rsr-tamper", skillMd.replace("rsr", "rsr-tamper"), [
+      { path: "data.json", content: "{\"ok\":true}" }
+    ]);
+    const resourcePath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "rsr-tamper",
+      "data.json"
+    );
+    await fs.writeFile(resourcePath, "{\"ok\":false}", "utf-8");
+    await expect(
+      readSkillResource("rsr-tamper", "data.json")
+    ).rejects.toThrow(/signature mismatch/);
+  });
+
+  it("refuses to read a resource not covered by the signed manifest (round-61)", async () => {
+    // A resource present on disk but absent from the manifest is what
+    // happens when an attacker drops a sibling file post-install. Even if
+    // they then somehow forge a signature for it, the manifest binding
+    // (verifyFile.present check) is the gate that catches it.
+    await writeSkill("rsr-uncovered", skillMd.replace("rsr", "rsr-uncovered"), [
+      { path: "data.json", content: "{\"ok\":true}" }
+    ]);
+    const stray = path.join(
+      currentStorageRoot(),
+      "skills",
+      "rsr-uncovered",
+      "stray.txt"
+    );
+    await fs.writeFile(stray, "hello", "utf-8");
+    await expect(
+      readSkillResource("rsr-uncovered", "stray.txt")
+    ).rejects.toThrow(/not covered by the signed manifest/);
   });
 });
