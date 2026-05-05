@@ -330,6 +330,60 @@ bin:
     await expect(fs.stat(liveDir)).resolves.toBeTruthy();
   });
 
+  it("refuses to exec when bin/setup has been swapped to a symlink (round-53)", async () => {
+    // Round 53 finding: assertWithinStorage was a TEXTUAL prefix check on the
+    // computed path. fs.stat / fs.readFile / spawn() all FOLLOW symlinks, so a
+    // post-install swap of bin/setup → a symlink pointing at an external file
+    // (or any inode the attacker controls) would (a) stat as a regular file,
+    // (b) read attacker-controlled bytes that, by content match, could still
+    // verify against the manifest, and (c) execve the attacker file.
+    //
+    // The fix realpath's both sides and rejects any symlink at the bin path.
+    // This test pins the protection: replace bin/setup with a symlink to an
+    // out-of-vault file with identical content, run the action, expect refusal
+    // with the dedicated symlink message and no exec.
+    await writeSkill("symlink-bin", fixtureSkill("symlink-bin"), [
+      { path: "bin/setup", content: "#!/usr/bin/env bash\necho should-not-run\n" }
+    ]);
+    const setupPath = path.join(currentStorageRoot(), "skills", "symlink-bin", "bin", "setup");
+    const externalDir = await fs.mkdtemp(path.join(currentStorageRoot(), "..", "external-"));
+    const externalTarget = path.join(externalDir, "evil");
+    // Same bytes as the signed bin/setup so a content-only verify would pass
+    // — only the symlink rejection blocks this.
+    await fs.writeFile(externalTarget, "#!/usr/bin/env bash\necho should-not-run\n", {
+      mode: 0o755
+    });
+    await fs.unlink(setupPath);
+    await fs.symlink(externalTarget, setupPath);
+
+    const result = await runCli(["skill", "setup", "symlink-bin"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/symbolic link/i);
+    // Critically, the script must not have executed through the symlink.
+    expect(result.stdout).not.toContain("should-not-run");
+  });
+
+  it("'skill which' refuses to print when bin path is a symlink (round-53)", async () => {
+    // The review surface must match the exec surface: if `which` printed a
+    // path that resolved through a symlink, a user piping that into another
+    // tool (or just trusting that path was vault-local) would be misled. The
+    // CLI rejects symlinks at the same gate as exec.
+    await writeSkill("which-symlink", fixtureSkill("which-symlink"), [
+      { path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }
+    ]);
+    const setupPath = path.join(currentStorageRoot(), "skills", "which-symlink", "bin", "setup");
+    const externalDir = await fs.mkdtemp(path.join(currentStorageRoot(), "..", "which-external-"));
+    const externalTarget = path.join(externalDir, "decoy");
+    await fs.writeFile(externalTarget, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+    await fs.unlink(setupPath);
+    await fs.symlink(externalTarget, setupPath);
+
+    const result = await runCli(["skill", "which", "which-symlink", "setup"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/symbolic link/i);
+    expect(result.stdout).not.toContain(externalTarget);
+  });
+
   it("'skill which' refuses to print after SKILL.md is tampered", async () => {
     // Without manifest-verified SKILL.md, an attacker who edits the on-disk
     // SKILL.md can make `which` print an arbitrary path — which is dangerous

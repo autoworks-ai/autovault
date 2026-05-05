@@ -135,6 +135,11 @@ async function whichAction(name: string, action?: string): Promise<void> {
   async function verifiedPathOrFail(act: string, entry: SkillBinAction): Promise<string> {
     const resolved = resolveCommandPath(name, entry);
     await assertWithinStorage(resolved, storageRoot);
+    // Round-53: `which` is the documented review surface; if a user pipes the
+    // resolved path into another tool, an attacker-placed symlink at the bin
+    // path could redirect them to an external file. Block symlink-out here too,
+    // not just at exec, so the review surface itself is trustworthy.
+    await assertNoSymlinkEscape(resolved, name);
     const manifestKey = canonicalRelPath(entry.command);
     let body: string;
     try {
@@ -272,6 +277,7 @@ async function runAction(action: string, name: string, extraArgs: string[]): Pro
 
   const target = resolveCommandPath(name, entry);
   await assertWithinStorage(target, storageRoot);
+  await assertNoSymlinkEscape(target, name);
   await assertExecutableFile(target);
 
   const manifestKey = canonicalRelPath(entry.command);
@@ -369,12 +375,70 @@ async function assertWithinStorage(target: string, storageRoot: string): Promise
   }
 }
 
+// Round-53 fix: assertWithinStorage above is a TEXTUAL prefix check on the
+// path string the CLI computed by joining skillDir(name) with canonical
+// command. That string can pass the storage-root check while the on-disk
+// entry — or any intermediate path component — is a symlink pointing
+// somewhere else. fs.stat / fs.readFile / spawn() ALL follow symlinks, so
+// a `bin/setup` swapped post-install for a symlink → /tmp/attacker would
+// (a) stat as a regular file, (b) read attacker bytes, (c) execve the
+// attacker file — even though the textual path looked storage-local.
+//
+// Fix: realpath the target AND the skill directory, require the target to
+// stay under the realpath'd skill dir. This catches:
+//   • final-component symlink swaps (bin/setup → /tmp/x)
+//   • intermediate-dir symlink swaps (bin → /tmp/dir, then bin/setup)
+//   • symlinked storage roots are still legitimate (round-46 covered) —
+//     we realpath BOTH sides so the prefix compare is on canonical paths.
+//
+// We also lstat the final component as fast-path defense: if the very
+// entry the CLI is about to exec is itself a symlink, reject before any
+// more fs work. Skills don't ship symlinks (validateResourcePath rejects
+// them at install), so any post-install symlink at the bin path is by
+// definition anomalous.
+async function assertNoSymlinkEscape(target: string, name: string): Promise<void> {
+  let lstat;
+  try {
+    lstat = await fs.lstat(target);
+  } catch (error) {
+    fail(`Refusing to exec: ${target} is not accessible (${String(error)})`);
+  }
+  if (lstat!.isSymbolicLink()) {
+    fail(
+      `Refusing to exec: ${target} is a symbolic link; bin targets must be regular files within the skill directory (post-install tamper detected — reinstall the skill).`
+    );
+  }
+  let realSkillDir: string;
+  let realTarget: string;
+  try {
+    realSkillDir = await fs.realpath(skillDir(name));
+  } catch (error) {
+    fail(`Refusing to exec: skill directory for '${name}' is not accessible (${String(error)})`);
+  }
+  try {
+    realTarget = await fs.realpath(target);
+  } catch (error) {
+    fail(`Refusing to exec: ${target} is not accessible (${String(error)})`);
+  }
+  if (realTarget! !== realSkillDir! && !realTarget!.startsWith(realSkillDir! + path.sep)) {
+    fail(
+      `Refusing to exec: bin target escapes skill directory (resolved: ${realTarget}). The skill may have been tampered with — reinstall the skill.`
+    );
+  }
+}
+
 async function assertExecutableFile(target: string): Promise<void> {
   let stat;
   try {
-    stat = await fs.stat(target);
+    stat = await fs.lstat(target);
   } catch (error) {
     fail(`Refusing to exec: ${target} is not accessible (${String(error)})`);
+  }
+  if (stat!.isSymbolicLink()) {
+    // Should be unreachable when assertNoSymlinkEscape ran first, but defense-in-
+    // depth: if a future caller forgets to chain the symlink check, we still fail
+    // closed instead of stat-following the link.
+    fail(`Refusing to exec: ${target} is a symbolic link; bin targets must be regular files within the skill directory.`);
   }
   if (!stat!.isFile()) fail(`Refusing to exec: ${target} is not a regular file`);
 }

@@ -133,6 +133,53 @@ bin:
     expect(result.drifted[0].reason).toBe("content hash changed");
   });
 
+  it("treats remote SKILL.md as up_to_date when only repairable whitespace differs (round-53)", async () => {
+    // Round 53 finding: install_skill records contentHash from
+    // bundleHash(normalizedSkillMd, resources) where normalizedSkillMd is the
+    // output of attemptRepair (tabs → 2 spaces, trailing whitespace stripped).
+    // The remote drift path used to hash raw `fetched.skillMd`. So any GitHub/
+    // URL/agentskills upstream whose SKILL.md needed repair would install
+    // fine, then permanently report `content hash changed` even though the
+    // upstream content was unchanged byte-for-byte vs install. The fix runs
+    // attemptRepair on the fetched SKILL.md before hashing — same shape as
+    // install — so install-time and check-time hashes agree.
+    //
+    // This test pins the guarantee: install with a SKILL.md that has trailing
+    // whitespace (which attemptRepair strips), then check_updates with the
+    // exact same upstream bytes. Without the fix, drift fires (raw bytes
+    // differ from the repaired-and-hashed install record). With the fix,
+    // up_to_date.
+    // Embed a tab indent (attemptRepair turns tabs into 2 spaces) and a
+    // trailing space on the body line (attemptRepair strips it). Either
+    // mutation alone is enough to make the raw bytes differ from the
+    // repaired bytes the install hashes.
+    const repairable =
+      "---\n" +
+      "name: drift-skill\n" +
+      "description: A description that is intentionally long enough to satisfy the schema length check.\n" +
+      "metadata:\n" +
+      "\tversion: \"1.0.0\"\n" +
+      "---\n" +
+      "\n" +
+      "# Body \n";
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd: repairable,
+      sourceUrl: "https://x",
+      upstreamSha: "cccccccccccccccccccccccccccccccccccccccc"
+    });
+    const installResult = await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+    expect(installResult.success).toBe(true);
+
+    // Same upstream bytes, same SHA — nothing actually changed.
+    const checkResult = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(checkResult.up_to_date).toContain("drift-skill");
+    expect(checkResult.drifted).toHaveLength(0);
+    expect(checkResult.unchecked).toHaveLength(0);
+  });
+
   it("reports non-bundled inline skills as unchecked", async () => {
     await installSkill({
       source: "url",

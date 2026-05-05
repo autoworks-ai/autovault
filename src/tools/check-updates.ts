@@ -152,7 +152,18 @@ export async function checkUpdates(
         });
         continue;
       }
-      const upstreamHash = bundleHash(fetched.skillMd, fetched.resources ?? []);
+      // Round-53 fix: install_skill records contentHash from
+      // bundleHash(normalizedSkillMd, resources) where normalizedSkillMd is the
+      // output of attemptRepair (tabs → spaces, trailing whitespace stripped).
+      // The bundled-inline path above already mirrors this. The remote path
+      // previously hashed raw `fetched.skillMd`, so any GitHub/URL/agentskills
+      // skill whose upstream SKILL.md needed repair would install fine but
+      // permanently report `content hash changed` — drift output becomes noise
+      // and users learn to ignore it. Apply attemptRepair before hashing so
+      // install-time and check_updates-time hashes agree on a stable, repaired
+      // form.
+      const { output: normalizedUpstream } = attemptRepair(fetched.skillMd);
+      const upstreamHash = bundleHash(normalizedUpstream, fetched.resources ?? []);
       if (
         upstreamHash !== source.contentHash ||
         (fetched.upstreamSha && source.upstreamSha && fetched.upstreamSha !== source.upstreamSha)
