@@ -1,5 +1,5 @@
 import path from "node:path";
-import { parseFrontmatter } from "../validation/frontmatter.js";
+import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { canonicalRelPath } from "../util/path.js";
 import {
   MAX_RESOURCE_BYTES,
@@ -173,9 +173,16 @@ function rawUrl(owner: string, repo: string, ref: string, filePath: string): str
 // enumeration time via canonicalGithubFilePath, preserving the round-42
 // reject-before-fetch posture.
 function declaredResourcePaths(skillMd: string): string[] {
+  // Round-59 fix: parse against the repaired form so a SKILL.md with tabs or
+  // trailing whitespace in its frontmatter — which install_skill silently
+  // repairs via attemptRepair before validation — does not slip past resource
+  // discovery and ship a half-installed skill (declared bin/resource files
+  // never fetched). Mirroring the repair pass here keeps fetch-time
+  // enumeration consistent with the bytes that install actually validates.
   let data: Record<string, unknown>;
   try {
-    data = parseFrontmatter(skillMd).data;
+    const { output: normalized } = attemptRepair(skillMd);
+    data = parseFrontmatter(normalized).data;
   } catch {
     return [];
   }

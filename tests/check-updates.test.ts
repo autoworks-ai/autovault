@@ -423,6 +423,42 @@ bin:
     expect(result.unchecked).toHaveLength(0);
   });
 
+  it("rejects extra unmanifested files in the skill directory (round-59)", async () => {
+    // Without a live-directory walk, a local attacker (or a corrupt write)
+    // could plant an extra file under an installed skill — say a `lib/helper.sh`
+    // that bin/setup later sources, or an alternate SKILL.md sibling — and
+    // verifyInstalledIntegrity would still report kind=ok because every
+    // manifest-listed entry still verifies. Manifest-only enforcement is a
+    // closed-set check; tampering by *addition* needs an open-set check.
+    // Walk the live directory and fail closed on any non-metadata file the
+    // manifest does not cover.
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    const dir = skillDir("drift-skill");
+    await fs.mkdir(path.join(dir, "lib"), { recursive: true });
+    await fs.writeFile(
+      path.join(dir, "lib", "helper.sh"),
+      "#!/usr/bin/env bash\necho injected\n",
+      "utf-8"
+    );
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe("drift-skill");
+    expect(result.errors[0].error).toMatch(/Local integrity check failed/);
+    expect(result.errors[0].error).toMatch(/lib\/helper\.sh/);
+    expect(result.errors[0].error).toMatch(/unmanifested_file/);
+  });
+
   it("reports non-bundled inline skills as unchecked", async () => {
     await installSkill({
       source: "url",

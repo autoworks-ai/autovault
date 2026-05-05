@@ -160,6 +160,70 @@ bin:
     expect(rawFetches).toHaveLength(2);
   });
 
+  it("discovers declared resources after frontmatter repair (round-59)", async () => {
+    // install_skill runs attemptRepair on the fetched SKILL.md before
+    // validation, normalizing tabs to spaces and stripping trailing
+    // whitespace. The GitHub adapter previously parsed the *raw* fetched
+    // bytes for resource discovery, so a SKILL.md whose YAML mixed tabs
+    // (which gray-matter rejects) silently returned an empty resource list:
+    // declaredResourcePaths(skillMd) caught the parse error and returned
+    // []. Install would then succeed against the repaired body but the
+    // declared bin script would never have been fetched, leaving the user
+    // with a half-installed skill. Mirror the repair pass at fetch time so
+    // resource enumeration sees the same bytes install validates.
+    // Tabs in YAML indentation are a hard error in js-yaml (which gray-matter
+    // uses), so the raw fetched bytes parse to {}/throw and resource
+    // discovery comes up empty. attemptRepair rewrites every tab as two
+    // spaces; with two tabs (== four spaces) the `command:` line lands
+    // properly nested under `setup:` and the bin/setup declaration becomes
+    // visible.
+    const tabbed = [
+      "---",
+      "name: tab-skill",
+      "description: This description is intentionally long enough to satisfy schema length checks.",
+      "metadata:",
+      "  version: \"1.0.0\"",
+      "resources:",
+      "  - path: references/notes.md",
+      "    type: file",
+      "bin:",
+      "  setup:",
+      "\t\tcommand: bin/setup",
+      "---",
+      "",
+      "# Body",
+      ""
+    ].join("\n");
+
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (u.includes("api.github.com")) {
+        return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (u.endsWith("/skills/foo/SKILL.md")) {
+        return makeResponse(tabbed);
+      }
+      if (u.endsWith("/skills/foo/bin/setup")) {
+        return makeResponse("#!/usr/bin/env bash\necho ok\n");
+      }
+      if (u.endsWith("/skills/foo/references/notes.md")) {
+        return makeResponse("# notes\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", {
+      fetch: fetcher
+    });
+    expect(result.resources).toBeDefined();
+    expect(result.resources!.map((r) => r.path).sort()).toEqual([
+      "bin/setup",
+      "references/notes.md"
+    ]);
+  });
+
   it("rejects declared resource paths that escape the skill directory", async () => {
     const skillMd = `---
 name: traversal

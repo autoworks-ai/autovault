@@ -433,7 +433,8 @@ export type IntegrityMismatchReason =
   | "missing_on_disk"
   | "signature_invalid"
   | "not_covered"
-  | "missing_from_manifest";
+  | "missing_from_manifest"
+  | "unmanifested_file";
 
 export type SkillIntegrityStatus =
   | { kind: "ok" }
@@ -561,9 +562,61 @@ export async function verifyInstalledIntegrity(
       await verifyEntry(filePath, null);
     }
 
+    // Step 5 (round-58 hardening): walk the live skill directory and reject
+    // any non-metadata file that is NOT covered by the manifest. Without
+    // this, an attacker can drop an unsigned helper (e.g. lib/helper.sh)
+    // alongside a signed bin script — the bin script runs with cwd set to
+    // the skill directory, so a wrapper that `source`s a sibling file
+    // would pull in unsigned code without modifying any signed entry.
+    // Symlinks are always rejected; writeSkill never produces them, so
+    // any symlink under the skill dir is hostile injection.
+    const metadataNames = new Set<string>([MANIFEST_FILE, SIGNATURE_FILE]);
+    const liveFiles = await walkLiveFiles(root);
+    for (const live of liveFiles) {
+      if (live.isSymlink) {
+        mismatches.push({ file: live.path, reason: "unmanifested_file" });
+        continue;
+      }
+      if (live.path.indexOf("/") === -1 && metadataNames.has(live.path)) continue;
+      if (Object.hasOwn(manifest.files, live.path)) continue;
+      mismatches.push({ file: live.path, reason: "unmanifested_file" });
+    }
+
     if (mismatches.length === 0) return { kind: "ok" };
     return { kind: "tampered", mismatches };
   });
+}
+
+async function walkLiveFiles(
+  root: string
+): Promise<Array<{ path: string; isSymlink: boolean }>> {
+  const out: Array<{ path: string; isSymlink: boolean }> = [];
+  async function walk(current: string, relative: string): Promise<void> {
+    let entries;
+    try {
+      entries = await fs.readdir(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const rel = relative ? `${relative}/${entry.name}` : entry.name;
+      if (entry.isSymbolicLink()) {
+        out.push({ path: rel, isSymlink: true });
+        continue;
+      }
+      if (entry.isDirectory()) {
+        await walk(path.join(current, entry.name), rel);
+      } else if (entry.isFile()) {
+        out.push({ path: rel, isSymlink: false });
+      }
+      // Other dirent types (sockets, FIFOs, block/char devices) are not
+      // produced by writeSkill and are not addressable as resources, so
+      // ignoring them is safe — verifyInstalledIntegrity already enforces
+      // membership for everything that matters.
+    }
+  }
+  await walk(root, "");
+  return out;
 }
 
 export type SkillManifestStatus =
