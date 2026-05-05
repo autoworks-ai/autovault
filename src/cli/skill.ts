@@ -9,7 +9,8 @@ import {
   readSkill,
   readSkillManifest,
   recoverOrphanBackups,
-  skillDir
+  skillDir,
+  verifyInstalledIntegrity
 } from "../storage/index.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
@@ -23,6 +24,36 @@ const ACTION_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 function fail(message: string): never {
   process.stderr.write(`${message}\n`);
   process.exit(1);
+}
+
+// Round-60 fix: verifying SKILL.md and the selected bin file is a closed-set
+// check — it tells us nothing about extra files dropped into the skill
+// directory after install. A signed wrapper that `source`s a sibling helper
+// (e.g. `lib/helper.sh`) would happily exec attacker-controlled code while
+// every signed entry still verifies. verifyInstalledIntegrity walks the live
+// directory and rejects unmanifested files and symlinks, so wiring it into
+// the exec/print paths closes the open-set gap. Run it AFTER the existing
+// per-file verifies so SKILL.md/bin tamper still surfaces with their
+// specific messages; this is the catch-all gate for everything else.
+async function assertCleanIntegrity(name: string, surface: "exec" | "print"): Promise<void> {
+  const result = await verifyInstalledIntegrity(name);
+  if (result.kind === "ok") return;
+  if (result.kind === "no_manifest") {
+    fail(
+      `Refusing to ${surface}: no signed manifest for skill '${name}'. Reinstall the skill.`
+    );
+  }
+  if (result.kind === "manifest_corrupt") {
+    fail(
+      `Refusing to ${surface}: signed manifest for skill '${name}' is corrupt. Reinstall the skill.`
+    );
+  }
+  const detail = result.mismatches
+    .map((m) => `${m.file} (${m.reason})`)
+    .join(", ");
+  fail(
+    `Refusing to ${surface}: skill '${name}' integrity check failed: ${detail}. Reinstall the skill.`
+  );
 }
 
 function usage(): never {
@@ -117,6 +148,14 @@ async function whichAction(name: string, action?: string): Promise<void> {
       `Refusing to print: SKILL.md signature mismatch for skill '${name}'. The skill metadata may have been tampered with — reinstall the skill.`
     );
   }
+
+  // Round-60 gate: closed-set verify above is not enough. `skill which` is
+  // the documented review surface, so a user who pipes its output to a
+  // shell relies on the printed path representing the *whole* signed
+  // install. An unsigned sibling (e.g. lib/helper.sh) sourced by the
+  // signed bin script would otherwise be invisible here. Walk the live
+  // directory and refuse to print on any unmanifested file or symlink.
+  await assertCleanIntegrity(name, "print");
 
   // Parse bin metadata from the verified bytes. A second on-disk read here
   // (e.g. readSkill) opens a race: an attacker swapping SKILL.md between the
@@ -297,6 +336,13 @@ async function runAction(action: string, name: string, extraArgs: string[]): Pro
       `Refusing to exec: signature mismatch for '${manifestKey}' in skill '${name}'. The file may have been tampered with — reinstall the skill.`
     );
   }
+
+  // Round-60 gate: the SKILL.md/bin verifies above are a closed-set check.
+  // Walk the live directory and refuse on any unmanifested file or symlink
+  // before we hand control to the script — the cwd is `skillDir(name)`, so
+  // a wrapper that pulls in `./lib/helper.sh` could otherwise execute
+  // unsigned code without modifying any signed file.
+  await assertCleanIntegrity(name, "exec");
 
   // Hard TTY enforcement: a TTY is always required for bin exec. There is no
   // env-var or config bypass — a per-process flag is settable by whoever spawns

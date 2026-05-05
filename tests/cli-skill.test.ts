@@ -380,8 +380,60 @@ bin:
 
     const result = await runCli(["skill", "which", "which-symlink", "setup"]);
     expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).toMatch(/symbolic link/i);
+    // Round-60 widened the gate: the integrity walk catches the symlink as
+    // unmanifested_file before the per-action symlink check, so either form
+    // is a valid refusal. The security property is the same: refuse, no
+    // external-path leak in stdout.
+    expect(result.stderr).toMatch(/symbolic link|unmanifested_file/i);
     expect(result.stdout).not.toContain(externalTarget);
+  });
+
+  it("refuses to exec when an unsigned sibling file is dropped into the skill dir (round-60)", async () => {
+    // Closed-set verify (SKILL.md + bin file each individually signed) is
+    // not enough. The bin script runs with cwd set to the skill directory,
+    // so a signed wrapper that does `source ./lib/helper.sh` would happily
+    // pull in attacker-placed unsigned code without modifying any signed
+    // file. Walk the live directory and refuse on any unmanifested file
+    // before exec — turn the closed-set check into an open-set check.
+    await writeSkill("sibling-inject", fixtureSkill("sibling-inject"), [
+      { path: "bin/setup", content: "#!/usr/bin/env bash\necho clean\n" }
+    ]);
+    const skillRoot = path.join(currentStorageRoot(), "skills", "sibling-inject");
+    await fs.mkdir(path.join(skillRoot, "lib"), { recursive: true });
+    await fs.writeFile(
+      path.join(skillRoot, "lib", "helper.sh"),
+      "#!/usr/bin/env bash\necho injected\n",
+      "utf-8"
+    );
+
+    const result = await runCli(["skill", "setup", "sibling-inject"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/integrity check failed/i);
+    expect(result.stderr).toMatch(/lib\/helper\.sh/);
+    expect(result.stderr).toMatch(/unmanifested_file/);
+    expect(result.stdout).not.toContain("clean");
+    expect(result.stdout).not.toContain("injected");
+  });
+
+  it("'skill which' refuses to print when an unsigned sibling file is present (round-60)", async () => {
+    // Same gap, review surface. A user inspecting `skill which` before
+    // running expects it to represent the whole signed install — a
+    // sibling injection invalidates that promise.
+    await writeSkill("which-sibling", fixtureSkill("which-sibling"), [
+      { path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }
+    ]);
+    const skillRoot = path.join(currentStorageRoot(), "skills", "which-sibling");
+    await fs.writeFile(
+      path.join(skillRoot, "rogue.txt"),
+      "untracked\n",
+      "utf-8"
+    );
+
+    const result = await runCli(["skill", "which", "which-sibling", "setup"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/integrity check failed/i);
+    expect(result.stderr).toMatch(/rogue\.txt/);
+    expect(result.stderr).toMatch(/unmanifested_file/);
   });
 
   it("'skill which' refuses to print after SKILL.md is tampered", async () => {

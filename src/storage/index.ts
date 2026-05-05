@@ -526,7 +526,15 @@ export async function verifyInstalledIntegrity(
     // when its signature verified — otherwise an attacker who tampers
     // SKILL.md to remove resource/bin declarations would shrink the required
     // set and slip extra mutations past membership.
-    const requiredKeys = new Set<string>(["SKILL.md", SOURCE_FILE]);
+    //
+    // Round-60 note: SOURCE_FILE is intentionally NOT in the initial required
+    // set. Source-less installs (e.g. test harnesses calling writeSkill
+    // without a `source` argument) legitimately have no source.json. Attacker
+    // scenarios involving source.json are still caught: Step 4 verifies any
+    // manifest entry pointing at source.json (so deletion → missing_on_disk
+    // and tampering → signature_invalid), and Step 5 walks the live directory
+    // (so a rogue source.json without a manifest entry → unmanifested_file).
+    const requiredKeys = new Set<string>(["SKILL.md"]);
     if (verified.has("SKILL.md") && skillMdContent !== null) {
       try {
         const { data } = parseFrontmatter(skillMdContent);
@@ -688,10 +696,15 @@ export async function writeSkill(
     await fs.writeFile(path.join(tmpDir, "SKILL.md"), skillMd, "utf-8");
 
     for (const resource of resources) {
-      // Validate against the LIVE root: traversal/symlink-parent invariants
-      // are about where the file ends up post-swap, not where it lands during
-      // staging.
-      validateResourcePath(name, resource.path);
+      // Round-60 fix: validate against the freshly-created tmpDir, not the
+      // live skill directory. The live-root variant probes the on-disk
+      // ancestors and refuses paths whose realpath escapes — correct for
+      // in-place writes/reads, but wrong here because a corrupted live install
+      // (e.g. `skills/<name>/bin` left as a symlink to /tmp by a partial
+      // write or attacker) would reject reinstall of the very bytes that
+      // replace it. Path-shape invariants (traversal, reserved, forbidden
+      // segments) still trip identically; only the ancestor walk is rerouted.
+      validateStagedResourcePath(tmpDir, resource.path);
       const relCanonical = canonicalRelPath(resource.path);
       if (relCanonical.length === 0) {
         throw new Error(`Invalid resource path: ${resource.path}`);
@@ -829,6 +842,56 @@ function findExistingAncestor(target: string, root: string): string {
     current = parent;
   }
   return root;
+}
+
+// Round-60 fix: writeSkill staging needs a path validator that probes the
+// fresh tmpDir (which the caller just mkdir'd) rather than the live skill
+// directory. The live-root variant (validateResourcePath below) is correct
+// for in-place writes and reads, but using it during atomic staging means a
+// corrupted live install — say, `skills/foo/bin -> /tmp` planted by an
+// attacker or a partial-write crash — rejects the very reinstall that would
+// replace the hostile state. The user is then forced to manually `rm -rf`
+// before the normal reinstall path will accept the bytes. Keep the
+// path-shape invariants identical so traversal/reserved-name/forbidden
+// segment checks still trip; only swap which directory we ancestor-walk.
+export function validateStagedResourcePath(
+  stagingRoot: string,
+  resourcePath: string
+): string {
+  if (typeof resourcePath !== "string" || resourcePath.length === 0) {
+    throw new Error(`Invalid resource path: ${resourcePath}`);
+  }
+  if (isAbsoluteLikePath(resourcePath) || hasTraversalSegment(resourcePath)) {
+    throw new Error(`Invalid resource path: ${resourcePath}`);
+  }
+  const canonical = canonicalRelPath(resourcePath);
+  if (canonical.length === 0 || isReservedResourcePath(canonical)) {
+    throw new Error(`Reserved resource path: ${resourcePath}`);
+  }
+  if (hasForbiddenPathSegment(canonical)) {
+    throw new Error(`Reserved resource path: ${resourcePath}`);
+  }
+  const root = path.resolve(stagingRoot);
+  const target = path.resolve(root, canonical);
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    throw new Error(`Resource escapes skill directory: ${resourcePath}`);
+  }
+  const realRoot = realpathIfExists(root) ?? root;
+  const realTarget = realpathIfExists(target);
+  if (realTarget && !isWithinRoot(realTarget, realRoot)) {
+    throw new Error(`Resource escapes skill directory: ${resourcePath}`);
+  }
+  // Walk up from the not-yet-created target inside stagingRoot. The caller
+  // freshly mkdir'd stagingRoot, so a hostile ancestor here would only
+  // materialize via a same-process race — defense-in-depth, not the common
+  // case. The live-skill ancestor walk that this replaces was the source of
+  // the recovery wedge.
+  const ancestor = findExistingAncestor(target, root);
+  const realAncestor = realpathIfExists(ancestor);
+  if (realAncestor !== null && !isWithinRoot(realAncestor, realRoot)) {
+    throw new Error(`Resource escapes skill directory (parent symlink): ${resourcePath}`);
+  }
+  return realTarget ?? target;
 }
 
 export function validateResourcePath(name: string, resourcePath: string): string {

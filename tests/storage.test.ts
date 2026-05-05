@@ -241,6 +241,49 @@ ${resources.length > 0 ? `resources:\n${resources.map((p) => `  - path: ${p}\n  
     await expect(fs.stat(path.join(escapeTarget, "passwd"))).rejects.toThrow();
   });
 
+  it("reinstalls cleanly over a corrupted live install with a symlink ancestor (round-60)", async () => {
+    // Closing the recovery wedge: writeSkill stages bytes into a fresh
+    // tmpDir, then atomically swaps live → backup → tmpDir. Validation
+    // previously probed the LIVE skill directory's ancestors via realpath,
+    // which meant a corrupted install — say, `skills/<name>/bin` left as a
+    // symlink to /tmp by an attacker or a partial-write crash — rejected
+    // the very reinstall whose swap would replace the hostile state.
+    // Users were stuck `rm -rf`-ing the skill dir before normal recovery.
+    // The fix validates against tmpDir for staging, leaving the live-root
+    // check intact for in-place writes (writeSkillResources).
+    await writeSkill(
+      "wedge-skill",
+      skillMd.replace("parsed-skill", "wedge-skill"),
+      [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho original\n" }]
+    );
+    const skillRoot = path.join(currentStorageRoot(), "skills", "wedge-skill");
+    const escapeTarget = path.join(currentStorageRoot(), "wedge-escape");
+    await fs.mkdir(escapeTarget, { recursive: true });
+    // Replace the live bin/ subdirectory with a symlink that escapes the
+    // skill root. This is the exact post-tamper / partial-write shape the
+    // wedge exhibited.
+    await fs.rm(path.join(skillRoot, "bin"), { recursive: true, force: true });
+    await fs.symlink(escapeTarget, path.join(skillRoot, "bin"));
+
+    // Reinstall with the same shape (bin/setup as a normal file) — the
+    // staged validator must accept this even though the live-root walk
+    // would still reject it.
+    await expect(
+      writeSkill(
+        "wedge-skill",
+        skillMd.replace("parsed-skill", "wedge-skill").replace("# Body", "# Recovered"),
+        [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho recovered\n" }]
+      )
+    ).resolves.not.toThrow();
+
+    // Post-swap, the symlink is gone and the new bytes are live.
+    const stat = await fs.lstat(path.join(skillRoot, "bin"));
+    expect(stat.isSymbolicLink()).toBe(false);
+    expect(stat.isDirectory()).toBe(true);
+    const recovered = await fs.readFile(path.join(skillRoot, "bin", "setup"), "utf-8");
+    expect(recovered).toBe("#!/usr/bin/env bash\necho recovered\n");
+  });
+
   it("rolls back atomically when a resource path fails validation", async () => {
     // A bad resource path throws inside writeSkill *after* the new tmp dir
     // has been created. The previous install must be observable in full,
