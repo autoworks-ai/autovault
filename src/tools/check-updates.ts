@@ -160,6 +160,22 @@ export async function checkUpdates(
       errors.push({ name, error: "No source metadata recorded" });
       continue;
     }
+    if (sourceStatus.kind === "legacy") {
+      // Round-56: legacy installs (pre-v1 manifest signing) carry a valid
+      // detached SKILL.md signature but unsigned source.json. We can't
+      // verify the source metadata without the manifest, so treating drift
+      // results as authoritative would inherit a known integrity gap. Mark
+      // unchecked with a clear reinstall path so the user can migrate when
+      // they're ready, rather than seeing a hard tamper error on every
+      // legitimate pre-upgrade install.
+      unchecked.push({
+        name,
+        source: sourceStatus.source.source,
+        identifier: sourceStatus.source.identifier,
+        reason: "legacy install (pre-v1 manifest); reinstall the skill to enable update checks"
+      });
+      continue;
+    }
     const source = sourceStatus.source;
     try {
       if (source.source === "inline") {

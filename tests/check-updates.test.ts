@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { installSkill } from "../src/tools/install-skill.js";
 import { checkUpdates } from "../src/tools/check-updates.js";
 import { skillDir } from "../src/storage/index.js";
+import { signContent } from "../src/util/sign.js";
 import { currentStorageRoot } from "./setup.js";
 
 const skillMd = `---
@@ -254,6 +255,82 @@ bin:
     expect(result.errors[0].name).toBe("drift-skill");
     expect(result.errors[0].error).toMatch(/Local integrity check failed/);
     expect(result.errors[0].error).toMatch(/bin\/setup/);
+  });
+
+  it("treats pre-v1 legacy installs as unchecked, not tampered (round-56)", async () => {
+    // Round 56 finding: pre-v1 (main-style) installs wrote
+    // .autovault-signature (detached SKILL.md sig) and an unsigned
+    // .autovault-source.json — no .autovault-manifest. After the round-54
+    // signed-source change landed, every legitimate pre-upgrade install
+    // would surface "Source metadata signature invalid (manifest_missing_entry)"
+    // because readSkillSourceStatus refuses unsigned source data once the
+    // manifest is the canonical binding. That's a version-skew migration
+    // break, not evidence of tampering.
+    //
+    // Fix: detect the legacy shape (valid detached SKILL.md signature +
+    // unsigned source.json + no manifest) and surface as unchecked with a
+    // clear reinstall hint. Tampered installs (manifest deleted by an
+    // attacker without a valid detached sig fallback) still surface as
+    // tampered — see the next test.
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    // Reshape on disk to look like a pre-v1 install: drop the manifest,
+    // write a valid detached SKILL.md signature in its place. Use the same
+    // signing key (signContent) — that's what main's writeSkill produced.
+    const dir = skillDir("drift-skill");
+    await fs.unlink(path.join(dir, ".autovault-manifest"));
+    const liveSkillMd = await fs.readFile(path.join(dir, "SKILL.md"), "utf-8");
+    const detached = await signContent(liveSkillMd);
+    await fs.writeFile(path.join(dir, ".autovault-signature"), detached, {
+      encoding: "utf-8",
+      mode: 0o600
+    });
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.errors).toHaveLength(0);
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.drifted).toHaveLength(0);
+    expect(result.unchecked).toHaveLength(1);
+    expect(result.unchecked[0].name).toBe("drift-skill");
+    expect(result.unchecked[0].reason).toMatch(/legacy install/);
+    expect(result.unchecked[0].reason).toMatch(/reinstall/);
+  });
+
+  it("treats no-manifest-and-no-valid-signature installs as tampered (round-56)", async () => {
+    // The flip side of the legacy migration: if the manifest is missing
+    // AND the detached signature is missing or invalid, we cannot
+    // distinguish the install from an attacker-driven tamper. Refuse the
+    // drift check and surface a tamper error — the legacy path only
+    // applies when the detached signature actually verifies.
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    // Strip the manifest without restoring any legacy signature: this is
+    // the attacker shape, not a legitimate pre-v1 install.
+    const dir = skillDir("drift-skill");
+    await fs.unlink(path.join(dir, ".autovault-manifest"));
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe("drift-skill");
+    expect(result.errors[0].error).toMatch(/Source metadata signature invalid/);
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.unchecked).toHaveLength(0);
   });
 
   it("reports non-bundled inline skills as unchecked", async () => {

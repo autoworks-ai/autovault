@@ -801,9 +801,36 @@ async function loadBinPaths(name: string): Promise<Set<string>> {
 
 export type SkillSourceStatus =
   | { kind: "present"; source: SkillSource }
+  | { kind: "legacy"; source: SkillSource }
   | { kind: "tampered"; reason: "signature_invalid" | "manifest_corrupt" | "manifest_missing_entry" }
   | { kind: "unparseable" }
   | { kind: "absent" };
+
+// Round-56: detect pre-v1 installs (detached .autovault-signature + unsigned
+// source.json + no manifest) so callers can distinguish "needs migration" from
+// "tampered". Caller already holds the storage lock; this helper does only
+// reads. Returns "legacy" only if the detached signature exists AND verifies
+// SKILL.md — a missing or invalid signature alongside a missing manifest is
+// indistinguishable from tampering, so we refuse to grant legacy status there.
+async function readLegacyInstallStatus(
+  name: string
+): Promise<{ kind: "legacy" } | { kind: "not_legacy" }> {
+  const dir = skillDir(name);
+  let signature: string;
+  try {
+    signature = (await fs.readFile(path.join(dir, SIGNATURE_FILE), "utf-8")).trim();
+  } catch {
+    return { kind: "not_legacy" };
+  }
+  let skillMd: string;
+  try {
+    skillMd = await fs.readFile(path.join(dir, "SKILL.md"), "utf-8");
+  } catch {
+    return { kind: "not_legacy" };
+  }
+  const ok = await verifyContent(skillMd, signature);
+  return ok ? { kind: "legacy" } : { kind: "not_legacy" };
+}
 
 // Round-54: source.json is now bound into the signed manifest by writeSkill.
 // Verify here on every read so a tampered (or pre-round-54-unsigned) source
@@ -836,10 +863,23 @@ export async function readSkillSourceStatus(name: string): Promise<SkillSourceSt
 
     const manifestRaw = await readManifestRaw(name);
     if (manifestRaw === null) {
-      // No manifest at all — either a pre-manifest legacy install (rare;
-      // every modern install writes one) or an attacker deleted it to
-      // silence verification. Either way we can't bind the source.json
-      // signature, so refuse to use it. Caller should reinstall.
+      // Round-56: distinguish legacy pre-manifest installs from tampering.
+      // Pre-v1 writeSkill produced a detached `.autovault-signature` over
+      // SKILL.md and an unsigned `.autovault-source.json`, with no
+      // `.autovault-manifest`. Treating that case as tampered would
+      // version-skew-break every existing install on upgrade — users would
+      // see "Source metadata signature invalid" on legitimate skills they
+      // installed before this upgrade. Detect the legacy shape by checking
+      // the detached signature against SKILL.md; if it verifies, this is a
+      // legacy install whose source metadata is trustworthy at install time
+      // (main wrote both atomically) but is NOT bound by the manifest, so
+      // post-install source.json tampering is undetectable. Caller
+      // (check_updates) should mark these `unchecked` with a reinstall
+      // hint rather than running drift checks against unverified metadata.
+      const legacy = await readLegacyInstallStatus(name);
+      if (legacy.kind === "legacy") {
+        return { kind: "legacy", source: parsed };
+      }
       log.warn("storage.signature_mismatch", {
         name,
         file: SOURCE_FILE,
