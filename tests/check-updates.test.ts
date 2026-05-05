@@ -304,6 +304,96 @@ bin:
     expect(result.unchecked[0].reason).toMatch(/reinstall/);
   });
 
+  it("rejects manifest-entry-deletion + file-tamper attack (round-57)", async () => {
+    // Round 57 finding: verifyInstalledIntegrity only iterated keys present
+    // in manifest.files. Because the manifest itself is unsigned, a local
+    // tamperer could delete the SKILL.md (or bin/setup) entry from
+    // .autovault-manifest, mutate the corresponding file, leave the signed
+    // .autovault-source.json entry intact, and the integrity check would
+    // miss the tamper entirely — the deleted key was simply never iterated.
+    // check_updates would then report up_to_date against upstream, falsely
+    // greenlighting a compromised install.
+    //
+    // Fix: enforce a required-key set (SKILL.md + .autovault-source.json +
+    // declared resources/bins) before the per-entry verification. A removed
+    // key surfaces as a missing_from_manifest mismatch.
+    const skillWithBin = `---
+name: drift-skill
+description: A description that is intentionally long enough to satisfy the schema length check.
+metadata:
+  version: "1.0.0"
+bin:
+  setup:
+    command: bin/setup
+---
+
+# Body
+`;
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd: skillWithBin,
+      sourceUrl: "https://x",
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      resources: [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho v1\n" }]
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    const dir = skillDir("drift-skill");
+    const manifestPath = path.join(dir, ".autovault-manifest");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
+
+    // Simulated attacker move: drop the bin/setup entry from manifest, then
+    // tamper bin/setup on disk. .autovault-source.json entry is left intact
+    // so source-status verification passes.
+    delete manifest.files["bin/setup"];
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+    await fs.writeFile(
+      path.join(dir, "bin", "setup"),
+      "#!/usr/bin/env bash\necho pwned\n",
+      "utf-8"
+    );
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe("drift-skill");
+    expect(result.errors[0].error).toMatch(/Local integrity check failed/);
+    expect(result.errors[0].error).toMatch(/bin\/setup/);
+    expect(result.errors[0].error).toMatch(/missing_from_manifest/);
+  });
+
+  it("rejects SKILL.md manifest-entry deletion (round-57)", async () => {
+    // Companion to the bin tamper: deleting the SKILL.md entry from the
+    // manifest must also fail closed. Without the required-key gate, the
+    // SKILL.md entry was the very thing the iteration trusted to derive
+    // resource declarations from — losing it should be a hard error, not
+    // a silent skip.
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    const dir = skillDir("drift-skill");
+    const manifestPath = path.join(dir, ".autovault-manifest");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf-8"));
+    delete manifest.files["SKILL.md"];
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+    await fs.writeFile(path.join(dir, "SKILL.md"), skillMd + "\n# Tampered\n", "utf-8");
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].error).toMatch(/Local integrity check failed/);
+    expect(result.errors[0].error).toMatch(/SKILL\.md/);
+  });
+
   it("treats no-manifest-and-no-valid-signature installs as tampered (round-56)", async () => {
     // The flip side of the legacy migration: if the manifest is missing
     // AND the detached signature is missing or invalid, we cannot

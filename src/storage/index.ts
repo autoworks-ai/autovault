@@ -429,6 +429,12 @@ export async function readSkillManifest(name: string): Promise<SignedManifest | 
   return readManifest(name);
 }
 
+export type IntegrityMismatchReason =
+  | "missing_on_disk"
+  | "signature_invalid"
+  | "not_covered"
+  | "missing_from_manifest";
+
 export type SkillIntegrityStatus =
   | { kind: "ok" }
   | { kind: "no_manifest" }
@@ -437,25 +443,28 @@ export type SkillIntegrityStatus =
       kind: "tampered";
       mismatches: Array<{
         file: string;
-        reason: "missing_on_disk" | "signature_invalid" | "not_covered";
+        reason: IntegrityMismatchReason;
       }>;
     };
 
 // Round-55: walk the signed manifest and verify each entry's on-disk bytes
-// against its recorded signature. The previous integrity story was log-only
-// (verifySignatureIfPresent in readSkill, read-skill-resource manifest
-// status), and check_updates trusted source.contentHash vs. upstream alone
-// to declare up_to_date — but contentHash is a frozen-at-install snapshot.
-// An attacker who mutates SKILL.md or a signed resource on disk after
-// install (without re-signing — they don't have the key) leaves source.json
-// signature intact, source.contentHash matching upstream, and check_updates
-// would happily report "up_to_date" while the skill on disk was tampered.
+// against its recorded signature so check_updates can fail closed on local
+// tampering instead of inheriting the log-only readSkill behavior.
 //
-// This helper returns a hard tampered/ok result so callers (check_updates,
-// future read paths) can fail closed on mismatch instead of inheriting the
-// log-only behavior. Walks ONLY entries the manifest covers — if an attacker
-// added an extra unsigned file alongside a signed install, that's outside
-// the integrity surface here (the resource walker rejects on read separately).
+// Round-57 hardening: the manifest itself is unsigned (its `files` map is
+// authoritative for membership), so a local tamperer who deletes an entry
+// from .autovault-manifest and mutates the corresponding file would slip
+// past a "iterate manifest.files keys and verify each" loop — the deleted
+// key is simply never checked. Fix the membership gap by also requiring an
+// expected key set to be present:
+//   - SKILL.md (always)
+//   - .autovault-source.json (always — every install records source data)
+//   - every resources[].path declared in SKILL.md frontmatter
+//   - every bin.<action>.command path declared in SKILL.md frontmatter
+// SKILL.md is verified first so its frontmatter is trustworthy before we
+// derive expected resources/bins from it. After membership is enforced,
+// every manifest entry (required or extra) is verified against on-disk
+// bytes; missing or unsigned-bytes-on-disk surfaces as tampered.
 //
 // Lock: take the storage lock for the entire walk so the manifest map and
 // the file bytes we verify against it are both read from a single coherent
@@ -466,39 +475,92 @@ export async function verifyInstalledIntegrity(
   return withStorageLock(async () => {
     const raw = await readManifestRaw(name);
     if (raw === null) return { kind: "no_manifest" };
-    const manifest = parseManifest(raw);
-    if (!manifest) return { kind: "manifest_corrupt" };
+    const parsed = parseManifest(raw);
+    if (!parsed) return { kind: "manifest_corrupt" };
+    const manifest: SignedManifest = parsed;
     const root = skillDir(name);
-    const mismatches: Array<{
-      file: string;
-      reason: "missing_on_disk" | "signature_invalid" | "not_covered";
-    }> = [];
-    for (const filePath of Object.keys(manifest.files)) {
-      // Defense-in-depth: parseManifest already drops prototype-poison keys
-      // and writeSkill validates resource paths before signing, but a hand-
-      // crafted manifest on disk could still claim an absolute or
-      // traversing path. Read strictly under the skill root.
+    const resolvedRoot = path.resolve(root);
+    const mismatches: Array<{ file: string; reason: IntegrityMismatchReason }> = [];
+    const verified = new Set<string>();
+
+    async function verifyEntry(filePath: string, contentMaybe: string | null): Promise<void> {
       const target = path.join(root, filePath);
       const resolved = path.resolve(target);
-      const resolvedRoot = path.resolve(root);
       if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
         mismatches.push({ file: filePath, reason: "signature_invalid" });
-        continue;
+        return;
       }
-      let content: string;
-      try {
-        content = await fs.readFile(target, "utf-8");
-      } catch {
-        mismatches.push({ file: filePath, reason: "missing_on_disk" });
-        continue;
+      let content = contentMaybe;
+      if (content === null) {
+        try {
+          content = await fs.readFile(target, "utf-8");
+        } catch {
+          mismatches.push({ file: filePath, reason: "missing_on_disk" });
+          return;
+        }
       }
       const result = await verifyFile(manifest, name, filePath, content);
       if (!result.present) {
         mismatches.push({ file: filePath, reason: "not_covered" });
       } else if (!result.valid) {
         mismatches.push({ file: filePath, reason: "signature_invalid" });
+      } else {
+        verified.add(filePath);
       }
     }
+
+    // Step 1: verify SKILL.md before trusting its frontmatter to derive the
+    // required-key set. If SKILL.md is missing, unverified, or unsigned,
+    // we fall through to membership checks against a minimal required set
+    // (SKILL.md + source.json) so the failure still surfaces.
+    let skillMdContent: string | null = null;
+    try {
+      skillMdContent = await fs.readFile(path.join(root, "SKILL.md"), "utf-8");
+    } catch {
+      // recorded as missing_on_disk via verifyEntry / membership check.
+    }
+    await verifyEntry("SKILL.md", skillMdContent);
+
+    // Step 2: derive the required key set. Only consult SKILL.md frontmatter
+    // when its signature verified — otherwise an attacker who tampers
+    // SKILL.md to remove resource/bin declarations would shrink the required
+    // set and slip extra mutations past membership.
+    const requiredKeys = new Set<string>(["SKILL.md", SOURCE_FILE]);
+    if (verified.has("SKILL.md") && skillMdContent !== null) {
+      try {
+        const { data } = parseFrontmatter(skillMdContent);
+        for (const resource of asResourcesArray(data.resources)) {
+          if (resource.path.length > 0) requiredKeys.add(canonicalRelPath(resource.path));
+        }
+        for (const binPath of declaredBinPaths(asBinBlock(data.bin))) {
+          requiredKeys.add(binPath);
+        }
+      } catch {
+        // Frontmatter parse failed despite a valid signature — treat as
+        // tampered so the user reinstalls. Surface as a SKILL.md
+        // signature_invalid mismatch since the signed bytes no longer
+        // round-trip through our parser cleanly.
+        mismatches.push({ file: "SKILL.md", reason: "signature_invalid" });
+      }
+    }
+
+    // Step 3: enforce manifest membership for every required key. This is
+    // the round-57 fix — without it, a removed manifest entry was simply
+    // never checked, so paired SKILL.md / bin tampering would go silent.
+    for (const required of requiredKeys) {
+      if (!Object.hasOwn(manifest.files, required)) {
+        mismatches.push({ file: required, reason: "missing_from_manifest" });
+      }
+    }
+
+    // Step 4: verify every manifest entry on disk. Includes both required
+    // and extra entries so an attacker who adds a stale extra entry still
+    // produces a missing_on_disk or invalid-bytes mismatch.
+    for (const filePath of Object.keys(manifest.files)) {
+      if (verified.has(filePath)) continue;
+      await verifyEntry(filePath, null);
+    }
+
     if (mismatches.length === 0) return { kind: "ok" };
     return { kind: "tampered", mismatches };
   });
