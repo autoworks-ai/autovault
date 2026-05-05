@@ -429,6 +429,81 @@ export async function readSkillManifest(name: string): Promise<SignedManifest | 
   return readManifest(name);
 }
 
+export type SkillIntegrityStatus =
+  | { kind: "ok" }
+  | { kind: "no_manifest" }
+  | { kind: "manifest_corrupt" }
+  | {
+      kind: "tampered";
+      mismatches: Array<{
+        file: string;
+        reason: "missing_on_disk" | "signature_invalid" | "not_covered";
+      }>;
+    };
+
+// Round-55: walk the signed manifest and verify each entry's on-disk bytes
+// against its recorded signature. The previous integrity story was log-only
+// (verifySignatureIfPresent in readSkill, read-skill-resource manifest
+// status), and check_updates trusted source.contentHash vs. upstream alone
+// to declare up_to_date — but contentHash is a frozen-at-install snapshot.
+// An attacker who mutates SKILL.md or a signed resource on disk after
+// install (without re-signing — they don't have the key) leaves source.json
+// signature intact, source.contentHash matching upstream, and check_updates
+// would happily report "up_to_date" while the skill on disk was tampered.
+//
+// This helper returns a hard tampered/ok result so callers (check_updates,
+// future read paths) can fail closed on mismatch instead of inheriting the
+// log-only behavior. Walks ONLY entries the manifest covers — if an attacker
+// added an extra unsigned file alongside a signed install, that's outside
+// the integrity surface here (the resource walker rejects on read separately).
+//
+// Lock: take the storage lock for the entire walk so the manifest map and
+// the file bytes we verify against it are both read from a single coherent
+// post-swap snapshot, not split across a concurrent writeSkill.
+export async function verifyInstalledIntegrity(
+  name: string
+): Promise<SkillIntegrityStatus> {
+  return withStorageLock(async () => {
+    const raw = await readManifestRaw(name);
+    if (raw === null) return { kind: "no_manifest" };
+    const manifest = parseManifest(raw);
+    if (!manifest) return { kind: "manifest_corrupt" };
+    const root = skillDir(name);
+    const mismatches: Array<{
+      file: string;
+      reason: "missing_on_disk" | "signature_invalid" | "not_covered";
+    }> = [];
+    for (const filePath of Object.keys(manifest.files)) {
+      // Defense-in-depth: parseManifest already drops prototype-poison keys
+      // and writeSkill validates resource paths before signing, but a hand-
+      // crafted manifest on disk could still claim an absolute or
+      // traversing path. Read strictly under the skill root.
+      const target = path.join(root, filePath);
+      const resolved = path.resolve(target);
+      const resolvedRoot = path.resolve(root);
+      if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
+        mismatches.push({ file: filePath, reason: "signature_invalid" });
+        continue;
+      }
+      let content: string;
+      try {
+        content = await fs.readFile(target, "utf-8");
+      } catch {
+        mismatches.push({ file: filePath, reason: "missing_on_disk" });
+        continue;
+      }
+      const result = await verifyFile(manifest, name, filePath, content);
+      if (!result.present) {
+        mismatches.push({ file: filePath, reason: "not_covered" });
+      } else if (!result.valid) {
+        mismatches.push({ file: filePath, reason: "signature_invalid" });
+      }
+    }
+    if (mismatches.length === 0) return { kind: "ok" };
+    return { kind: "tampered", mismatches };
+  });
+}
+
 export type SkillManifestStatus =
   | { kind: "present"; manifest: SignedManifest }
   | { kind: "corrupt" }

@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { installSkill } from "../src/tools/install-skill.js";
 import { checkUpdates } from "../src/tools/check-updates.js";
+import { skillDir } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
 const skillMd = `---
@@ -178,6 +179,81 @@ bin:
     expect(checkResult.up_to_date).toContain("drift-skill");
     expect(checkResult.drifted).toHaveLength(0);
     expect(checkResult.unchecked).toHaveLength(0);
+  });
+
+  it("reports an error when local SKILL.md is tampered after install (round-55)", async () => {
+    // Round 55 finding: check_updates relied on the signed source.contentHash
+    // matching freshly-fetched upstream bytes to declare up_to_date. The
+    // signed-source fix from round 54 prevented an attacker from rewriting
+    // .autovault-source.json, but a local attacker who edits SKILL.md (or
+    // any signed resource) directly leaves source.json untouched. With
+    // upstream still serving the original bytes, check_updates would stamp
+    // the skill up_to_date even though the live install had been tampered
+    // with — a false clean bill of health for compromised content.
+    //
+    // Fix: gate the up_to_date verdict on verifyInstalledIntegrity before
+    // touching the upstream. This test mutates SKILL.md on disk and asserts
+    // the result becomes an error, not up_to_date.
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    // Mutate the live SKILL.md without re-signing the manifest.
+    const liveSkillMd = path.join(skillDir("drift-skill"), "SKILL.md");
+    await fs.writeFile(liveSkillMd, skillMd + "\n# Tampered\n", "utf-8");
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.drifted).toHaveLength(0);
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe("drift-skill");
+    expect(result.errors[0].error).toMatch(/Local integrity check failed/);
+    expect(result.errors[0].error).toMatch(/SKILL\.md/);
+  });
+
+  it("reports an error when a signed resource is tampered after install (round-55)", async () => {
+    // Same threat model as the SKILL.md case but for a manifest-covered
+    // resource. The bin script in particular is exec'd by the CLI, so
+    // letting check_updates greenlight a tampered bin file would mask the
+    // most dangerous local-tamper outcome.
+    const skillWithBin = `---
+name: drift-skill
+description: A description that is intentionally long enough to satisfy the schema length check.
+metadata:
+  version: "1.0.0"
+bin:
+  setup:
+    command: bin/setup
+---
+
+# Body
+`;
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd: skillWithBin,
+      sourceUrl: "https://x",
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      resources: [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho v1\n" }]
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+
+    const liveBin = path.join(skillDir("drift-skill"), "bin", "setup");
+    await fs.writeFile(liveBin, "#!/usr/bin/env bash\necho pwned\n", "utf-8");
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).not.toContain("drift-skill");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0].name).toBe("drift-skill");
+    expect(result.errors[0].error).toMatch(/Local integrity check failed/);
+    expect(result.errors[0].error).toMatch(/bin\/setup/);
   });
 
   it("reports non-bundled inline skills as unchecked", async () => {

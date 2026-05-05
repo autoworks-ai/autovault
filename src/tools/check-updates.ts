@@ -5,6 +5,7 @@ import {
   listInstalledSkillNames,
   readSkill,
   readSkillSourceStatus,
+  verifyInstalledIntegrity,
   type SkillSource
 } from "../storage/index.js";
 import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
@@ -111,6 +112,33 @@ export async function checkUpdates(
       errors.push({ name, error: "Skill not installed" });
       continue;
     }
+    // Round-55 fix: gate on local manifest integrity BEFORE trusting the
+    // signed source.contentHash to declare up_to_date. The signed-source
+    // check (round-54) closes contentHash/upstreamSha tampering in
+    // source.json, but a local attacker who mutates SKILL.md or a signed
+    // resource directly leaves source.json untouched. With matching
+    // upstream bytes, check_updates would otherwise stamp the skill
+    // up_to_date even though the live install is tampered. Recompute the
+    // live integrity and bail with an error on any mismatch.
+    const integrity = await verifyInstalledIntegrity(name);
+    if (integrity.kind === "manifest_corrupt") {
+      errors.push({ name, error: "Local manifest is corrupt; reinstall the skill" });
+      continue;
+    }
+    if (integrity.kind === "tampered") {
+      const detail = integrity.mismatches
+        .map((m) => `${m.file} (${m.reason})`)
+        .join(", ");
+      errors.push({
+        name,
+        error: `Local integrity check failed: ${detail}; reinstall the skill`
+      });
+      continue;
+    }
+    // kind === "ok" or "no_manifest" (legacy installs pre-signing) fall
+    // through. "no_manifest" preserves backward compat with installs that
+    // predate the manifest writer; readSkill already logs on missing
+    // manifest, so update-check stays usable.
     const sourceStatus = await readSkillSourceStatus(name);
     // Round-54: distinguish "no source recorded" from "source signature
     // invalid". A tampered source.json (manifest entry missing or
