@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { resetConfigCache } from "../src/config.js";
 import { installSkill } from "../src/tools/install-skill.js";
 import { readSkill, readSkillManifest, readSkillSource } from "../src/storage/index.js";
+import { GitHubSkillCandidatesError } from "../src/sources/github.js";
 import { currentStorageRoot } from "./setup.js";
 
 const skillMd = `---
@@ -48,6 +49,55 @@ describe("installSkill", () => {
     const source = await readSkillSource("fetched-skill");
     expect(source?.source).toBe("github");
     expect(source?.upstreamSha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  it("stores a resolved GitHub identifier when the adapter canonicalizes a candidate", async () => {
+    const githubFetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/skills/foo/SKILL.md",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567",
+      resolvedIdentifier: "owner/repo:skills/foo/SKILL.md"
+    });
+    const result = await installSkill(
+      { source: "github", identifier: "https://github.com/owner/repo" },
+      { fetchers: { github: githubFetcher } }
+    );
+    expect(result.success).toBe(true);
+    const source = await readSkillSource("fetched-skill");
+    expect(source?.source).toBe("github");
+    expect(source?.identifier).toBe("owner/repo:skills/foo/SKILL.md");
+  });
+
+  it("returns multiple GitHub candidates without writing a skill", async () => {
+    const candidates = [
+      {
+        name: "alpha-skill",
+        description: "Alpha skill description long enough for display.",
+        path: "skills/a/SKILL.md",
+        identifier: "owner/repo:skills/a/SKILL.md"
+      },
+      {
+        name: "beta-skill",
+        description: "Beta skill description long enough for display.",
+        path: "skills/b/SKILL.md",
+        identifier: "owner/repo:skills/b/SKILL.md"
+      }
+    ];
+    const githubFetcher = vi
+      .fn()
+      .mockRejectedValue(new GitHubSkillCandidatesError("owner/repo", candidates));
+
+    const result = await installSkill(
+      { source: "github", identifier: "https://github.com/owner/repo" },
+      { fetchers: { github: githubFetcher } }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.outcome).toBe("multiple_candidates");
+    expect(result.candidates).toEqual(candidates);
+    expect(Array.isArray(result.warnings) && result.warnings[0]).toMatch(/Found 2 skills/);
+    await expect(readSkill("alpha-skill")).resolves.toBeNull();
+    await expect(readSkill("beta-skill")).resolves.toBeNull();
   });
 
   it("returns failure when fetcher throws", async () => {

@@ -7,6 +7,8 @@ import {
   MAX_SKILL_MD_BYTES,
   MAX_TOTAL_BYTES
 } from "../util/limits.js";
+import { assertContentLength, fetchWithDeadline, readBoundedText } from "../util/bounded-fetch.js";
+import type { FetchedSkill, FetchedSkillResource } from "./types.js";
 
 // Cap on the GitHub commit API JSON body. A typical commit JSON is a few KiB
 // (sha + author + parents + message). 256 KiB matches the SKILL.md cap and
@@ -16,21 +18,118 @@ import {
 // runs. Round-39 fix: closes the unbounded `response.json()` window in
 // resolveSha that fetchWithDeadline (request-level only) didn't cover.
 const MAX_GITHUB_API_BYTES = 256 * 1024;
-import { assertContentLength, fetchWithDeadline, readBoundedText } from "../util/bounded-fetch.js";
-import type { FetchedSkill, FetchedSkillResource } from "./types.js";
 
-type GithubIdentifier = {
+// Repo-root/tree URL discovery can legitimately return more JSON than a
+// single commit object, but it is still untrusted network input. Keep the
+// tree body bounded and ask callers to narrow with a tree URL if GitHub
+// truncates or the candidate set is too broad.
+const MAX_GITHUB_TREE_API_BYTES = 5 * 1024 * 1024;
+const MAX_GITHUB_SKILL_CANDIDATES = 50;
+
+type GithubRepoRef = {
   owner: string;
   repo: string;
   ref: string;
+};
+
+type GithubIdentifier = GithubRepoRef & {
   filePath: string;
 };
 
+type GithubExactIdentifier = GithubIdentifier & {
+  kind: "exact";
+  resolvedIdentifier?: string;
+  alternatives?: GithubExactAlternative[];
+};
+
+type GithubExactAlternative = GithubIdentifier & {
+  resolvedIdentifier?: string;
+};
+
+type GithubDiscoveryIdentifier = GithubDiscoveryAlternative & {
+  kind: "discovery";
+  alternatives?: GithubDiscoveryAlternative[];
+};
+
+type GithubDiscoveryAlternative = GithubRepoRef & {
+  scopePath?: string;
+};
+
+type GithubParsedIdentifier = GithubExactIdentifier | GithubDiscoveryIdentifier;
+
+export type GitHubSkillCandidate = {
+  name: string;
+  description: string;
+  path: string;
+  identifier: string;
+};
+
+export class GitHubSkillCandidatesError extends Error {
+  readonly candidates: GitHubSkillCandidate[];
+
+  constructor(repo: string, candidates: GitHubSkillCandidate[]) {
+    super(`Found ${candidates.length} skills in ${repo}; choose one to import.`);
+    this.name = "GitHubSkillCandidatesError";
+    this.candidates = candidates;
+  }
+}
+
+export class GitHubSkillNotFoundError extends Error {
+  constructor(repo: string, scopePath?: string) {
+    super(`No SKILL.md found in ${repo}${scopePath ? ` under ${scopePath}` : ""}`);
+    this.name = "GitHubSkillNotFoundError";
+  }
+}
+
+export function isGitHubSkillCandidatesError(
+  error: unknown
+): error is GitHubSkillCandidatesError {
+  return (
+    error instanceof GitHubSkillCandidatesError ||
+    (typeof error === "object" &&
+      error !== null &&
+      (error as { name?: unknown }).name === "GitHubSkillCandidatesError" &&
+      Array.isArray((error as { candidates?: unknown }).candidates))
+  );
+}
+
+export function isGitHubSkillNotFoundError(error: unknown): error is GitHubSkillNotFoundError {
+  return (
+    error instanceof GitHubSkillNotFoundError ||
+    (typeof error === "object" &&
+      error !== null &&
+      (error as { name?: unknown }).name === "GitHubSkillNotFoundError")
+  );
+}
+
 export function parseGithubIdentifier(identifier: string): GithubIdentifier {
+  const parsed = parseGithubSourceIdentifier(identifier);
+  if (parsed.kind !== "exact") {
+    throw new Error(
+      `Invalid GitHub identifier: ${identifier}. Expected owner/repo[@ref][:path/to/SKILL.md] or a GitHub blob URL.`
+    );
+  }
+  return {
+    owner: parsed.owner,
+    repo: parsed.repo,
+    ref: parsed.ref,
+    filePath: parsed.filePath
+  };
+}
+
+function parseGithubSourceIdentifier(identifier: string): GithubParsedIdentifier {
+  const trimmed = identifier.trim();
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+    return parseGithubUrlIdentifier(trimmed);
+  }
+  return parseCompactGithubIdentifier(trimmed);
+}
+
+function parseCompactGithubIdentifier(identifier: string): GithubExactIdentifier {
   const pathSep = identifier.indexOf(":");
   const repoPart = pathSep === -1 ? identifier : identifier.slice(0, pathSep);
   const pathPart = pathSep === -1 ? undefined : identifier.slice(pathSep + 1);
-  const [ownerRepo, refRaw] = repoPart.split("@");
+  const [ownerRepo, refRaw] = splitOnce(repoPart, "@");
   const [owner, repo] = ownerRepo.split("/");
   if (!owner || !repo) {
     throw new Error(
@@ -38,11 +137,176 @@ export function parseGithubIdentifier(identifier: string): GithubIdentifier {
     );
   }
   return {
+    kind: "exact",
     owner,
     repo,
     ref: refRaw && refRaw.length > 0 ? refRaw : "HEAD",
     filePath: pathPart && pathPart.length > 0 ? pathPart : "SKILL.md"
   };
+}
+
+function parseGithubUrlIdentifier(identifier: string): GithubParsedIdentifier {
+  rejectEncodedDotSegments(identifier);
+  let url: URL;
+  try {
+    url = new URL(identifier);
+  } catch {
+    throw new Error(`Invalid GitHub URL: ${identifier}`);
+  }
+  if (url.protocol !== "https:" || url.hostname !== "github.com") {
+    throw new Error(
+      `Invalid GitHub URL: ${identifier}. Expected an https://github.com/<owner>/<repo> URL.`
+    );
+  }
+
+  const segments = url.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((segment) => decodeGithubUrlSegment(segment));
+  const [owner, repo, shape] = segments;
+  if (!owner || !repo) {
+    throw new Error(
+      `Invalid GitHub URL: ${identifier}. Expected https://github.com/<owner>/<repo>.`
+    );
+  }
+
+  if (!shape) {
+    return { kind: "discovery", owner, repo, ref: "HEAD" };
+  }
+
+  if (shape === "blob") {
+    const alternatives = buildBlobUrlAlternatives(owner, repo, segments.slice(3));
+    if (alternatives.length === 0) {
+      throw new Error(
+        `Invalid GitHub blob URL: ${identifier}. Expected https://github.com/<owner>/<repo>/blob/<ref>/<path>/SKILL.md.`
+      );
+    }
+    const firstSegmentRef = alternatives.find(
+      (candidate) => candidate.ref === segments[3] && candidate.filePath === segments.slice(4).join("/")
+    );
+    const selected = firstSegmentRef ?? alternatives[0];
+    return {
+      kind: "exact",
+      owner,
+      repo,
+      ref: selected.ref,
+      filePath: selected.filePath,
+      resolvedIdentifier: selected.resolvedIdentifier,
+      alternatives
+    };
+  }
+
+  if (shape === "tree") {
+    const alternatives = buildTreeUrlAlternatives(owner, repo, segments.slice(3));
+    if (alternatives.length === 0) {
+      throw new Error(
+        `Invalid GitHub tree URL: ${identifier}. Expected https://github.com/<owner>/<repo>/tree/<ref>/<path?>.`
+      );
+    }
+    const firstSegmentRef = alternatives.find(
+      (candidate) =>
+        candidate.ref === segments[3] &&
+        (candidate.scopePath ?? "") === segments.slice(4).join("/")
+    );
+    const selected = firstSegmentRef ?? alternatives[0];
+    return {
+      kind: "discovery",
+      owner,
+      repo,
+      ref: selected.ref,
+      scopePath: selected.scopePath,
+      alternatives
+    };
+  }
+
+  throw new Error(
+    `Invalid GitHub URL: ${identifier}. Expected a repo root, tree URL, or blob URL.`
+  );
+}
+
+function buildBlobUrlAlternatives(
+  owner: string,
+  repo: string,
+  tail: string[]
+): GithubExactAlternative[] {
+  const alternatives: GithubExactAlternative[] = [];
+  for (let refLength = tail.length - 1; refLength >= 1; refLength -= 1) {
+    const ref = tail.slice(0, refLength).join("/");
+    const rawPath = tail.slice(refLength).join("/");
+    if (!ref || !rawPath || !isSkillMarkdownPath(rawPath)) continue;
+    const filePath = canonicalGithubFilePath("SKILL.md", rawPath);
+    alternatives.push({
+      owner,
+      repo,
+      ref,
+      filePath,
+      resolvedIdentifier: compactGithubIdentifier(owner, repo, ref, filePath)
+    });
+  }
+  return alternatives;
+}
+
+function buildTreeUrlAlternatives(
+  owner: string,
+  repo: string,
+  tail: string[]
+): GithubDiscoveryAlternative[] {
+  const alternatives: GithubDiscoveryAlternative[] = [];
+  for (let refLength = tail.length; refLength >= 1; refLength -= 1) {
+    const ref = tail.slice(0, refLength).join("/");
+    if (!ref) continue;
+    const rawScopePath = tail.slice(refLength).join("/");
+    alternatives.push({
+      owner,
+      repo,
+      ref,
+      scopePath: rawScopePath
+        ? canonicalGithubFilePath("tree scope", rawScopePath)
+        : undefined
+    });
+  }
+  return alternatives;
+}
+
+function rejectEncodedDotSegments(identifier: string): void {
+  const pathOnly = identifier.split(/[?#]/, 1)[0];
+  if (/(?:^|\/)(?:\.\.|%2e%2e|%2e\.|\.%2e)(?:\/|$)/i.test(pathOnly)) {
+    throw new Error("Unsafe GitHub URL path segment: \"..\"");
+  }
+}
+
+function splitOnce(value: string, sep: string): [string, string | undefined] {
+  const index = value.indexOf(sep);
+  if (index === -1) return [value, undefined];
+  return [value.slice(0, index), value.slice(index + sep.length)];
+}
+
+function decodeGithubUrlSegment(segment: string): string {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    throw new Error(`Invalid GitHub URL path segment: ${segment}`);
+  }
+  if (
+    decoded.length === 0 ||
+    decoded === "." ||
+    decoded === ".." ||
+    decoded.includes("/") ||
+    decoded.includes("\\")
+  ) {
+    throw new Error(`Unsafe GitHub URL path segment: ${JSON.stringify(decoded)}`);
+  }
+  return decoded;
+}
+
+function isSkillMarkdownPath(filePath: string): boolean {
+  return path.posix.basename(filePath).toLowerCase() === "skill.md";
+}
+
+function compactGithubIdentifier(owner: string, repo: string, ref: string, filePath: string): string {
+  const repoRef = ref === "HEAD" ? `${owner}/${repo}` : `${owner}/${repo}@${ref}`;
+  return `${repoRef}:${filePath}`;
 }
 
 // Round-42 fix: caller-controlled paths flowing into rawUrl() were trusted
@@ -74,7 +338,7 @@ function encodeGithubPath(canonical: string): string {
 }
 
 async function resolveSha(
-  ident: GithubIdentifier,
+  ident: GithubRepoRef,
   fetcher: typeof fetch,
   token?: string
 ): Promise<string | undefined> {
@@ -117,13 +381,228 @@ export async function fetchSkillFromGitHub(
 ): Promise<FetchedSkill> {
   const fetcher = options.fetch ?? fetch;
   const token = options.token ?? process.env.GITHUB_TOKEN;
-  const ident = parseGithubIdentifier(identifier);
+  const parsed = parseGithubSourceIdentifier(identifier);
+
+  if (parsed.kind === "discovery") {
+    return fetchDiscoveredSkill(parsed, fetcher, token);
+  }
+  return fetchExactSkill(parsed, fetcher, token);
+}
+
+async function fetchDiscoveredSkill(
+  ident: GithubDiscoveryIdentifier,
+  fetcher: typeof fetch,
+  token?: string
+): Promise<FetchedSkill> {
+  if (ident.alternatives && ident.alternatives.length > 0) {
+    let lastError: unknown;
+    for (const alternative of ident.alternatives) {
+      try {
+        return await fetchDiscoveredSkillOnce(alternative, fetcher, token);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+  return fetchDiscoveredSkillOnce(ident, fetcher, token);
+}
+
+async function fetchDiscoveredSkillOnce(
+  ident: GithubDiscoveryAlternative,
+  fetcher: typeof fetch,
+  token?: string
+): Promise<FetchedSkill> {
+  const upstreamSha = await resolveSha(ident, fetcher, token);
+  if (!upstreamSha) {
+    throw new Error(
+      `GitHub SHA resolution failed for ${ident.owner}/${ident.repo}@${ident.ref}; refusing to fetch from a mutable ref. Pin to a 40-char commit SHA.`
+    );
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "autovault"
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const paths = await discoverSkillPaths({
+    fetcher,
+    headers,
+    owner: ident.owner,
+    repo: ident.repo,
+    ref: upstreamSha,
+    scopePath: ident.scopePath
+  });
+  if (paths.length === 0) {
+    throw new GitHubSkillNotFoundError(`${ident.owner}/${ident.repo}`, ident.scopePath);
+  }
+  if (paths.length > MAX_GITHUB_SKILL_CANDIDATES) {
+    throw new Error(
+      `Found ${paths.length} skills in ${ident.owner}/${ident.repo}; narrow the import with a tree URL.`
+    );
+  }
+
+  const candidates = await hydrateSkillCandidates({
+    fetcher,
+    headers,
+    owner: ident.owner,
+    repo: ident.repo,
+    ref: upstreamSha,
+    originalRef: ident.ref,
+    paths
+  });
+
+  if (candidates.length > 1) {
+    throw new GitHubSkillCandidatesError(`${ident.owner}/${ident.repo}`, candidates);
+  }
+
+  return fetchExactSkill(
+    {
+      kind: "exact",
+      owner: ident.owner,
+      repo: ident.repo,
+      ref: ident.ref,
+      filePath: candidates[0].path,
+      resolvedIdentifier: candidates[0].identifier
+    },
+    fetcher,
+    token,
+    upstreamSha
+  );
+}
+
+async function discoverSkillPaths(args: {
+  fetcher: typeof fetch;
+  headers: Record<string, string>;
+  owner: string;
+  repo: string;
+  ref: string;
+  scopePath?: string;
+}): Promise<string[]> {
+  const treeUrl = `https://api.github.com/repos/${args.owner}/${args.repo}/git/trees/${encodeURIComponent(
+    args.ref
+  )}?recursive=1`;
+  const response = await fetchWithDeadline(args.fetcher, treeUrl, { headers: args.headers }, treeUrl);
+  if (!response.ok) {
+    throw new Error(`GitHub tree fetch failed: ${response.status} ${response.statusText} (${treeUrl})`);
+  }
+  assertContentLength(treeUrl, response.headers.get("content-length"), MAX_GITHUB_TREE_API_BYTES);
+  const body = await readBoundedText(response, MAX_GITHUB_TREE_API_BYTES, treeUrl);
+  let data: {
+    tree?: Array<{ path?: string; type?: string }>;
+    truncated?: boolean;
+  };
+  try {
+    data = JSON.parse(body) as {
+      tree?: Array<{ path?: string; type?: string }>;
+      truncated?: boolean;
+    };
+  } catch {
+    throw new Error(`GitHub tree fetch returned invalid JSON (${treeUrl})`);
+  }
+  if (data.truncated) {
+    throw new Error(
+      `GitHub tree listing for ${args.owner}/${args.repo} was truncated; import an exact SKILL.md identifier or blob URL instead of relying on a recursive tree listing.`
+    );
+  }
+  if (!Array.isArray(data.tree)) return [];
+
+  const scope = args.scopePath;
+  const candidates = data.tree
+    .filter((entry) => entry.type === "blob" && typeof entry.path === "string")
+    .map((entry) => canonicalGithubFilePath("tree entry", entry.path as string))
+    .filter((entryPath) => {
+      if (!isSkillMarkdownPath(entryPath)) return false;
+      if (!scope) return true;
+      return entryPath === scope || entryPath.startsWith(`${scope}/`);
+    })
+    .sort((a, b) => a.localeCompare(b));
+
+  return candidates;
+}
+
+async function hydrateSkillCandidates(args: {
+  fetcher: typeof fetch;
+  headers: Record<string, string>;
+  owner: string;
+  repo: string;
+  ref: string;
+  originalRef: string;
+  paths: string[];
+}): Promise<GitHubSkillCandidate[]> {
+  const candidates: GitHubSkillCandidate[] = [];
+  for (const filePath of args.paths) {
+    const url = rawUrl(args.owner, args.repo, args.ref, filePath);
+    const response = await fetchWithDeadline(args.fetcher, url, { headers: args.headers }, url);
+    if (!response.ok) {
+      throw new Error(`GitHub candidate fetch failed: ${response.status} ${response.statusText} (${url})`);
+    }
+    assertContentLength(url, response.headers.get("content-length"), MAX_SKILL_MD_BYTES);
+    const skillMd = await readBoundedText(response, MAX_SKILL_MD_BYTES, url);
+    const metadata = candidateMetadata(skillMd, filePath);
+    candidates.push({
+      ...metadata,
+      path: filePath,
+      identifier: compactGithubIdentifier(args.owner, args.repo, args.originalRef, filePath)
+    });
+  }
+  return candidates;
+}
+
+function candidateMetadata(
+  skillMd: string,
+  filePath: string
+): Pick<GitHubSkillCandidate, "name" | "description"> {
+  try {
+    const { output: normalized } = attemptRepair(skillMd);
+    const data = parseFrontmatter(normalized).data as Record<string, unknown>;
+    return {
+      name: typeof data.name === "string" ? data.name : fallbackCandidateName(filePath),
+      description: typeof data.description === "string" ? data.description : ""
+    };
+  } catch {
+    return { name: fallbackCandidateName(filePath), description: "" };
+  }
+}
+
+function fallbackCandidateName(filePath: string): string {
+  const dir = path.posix.basename(path.posix.dirname(filePath));
+  return dir && dir !== "." ? dir : path.posix.basename(filePath, path.posix.extname(filePath));
+}
+
+async function fetchExactSkill(
+  ident: GithubExactIdentifier,
+  fetcher: typeof fetch,
+  token?: string,
+  resolvedSha?: string
+): Promise<FetchedSkill> {
+  if (!resolvedSha && ident.alternatives && ident.alternatives.length > 0) {
+    let lastError: unknown;
+    for (const alternative of ident.alternatives) {
+      try {
+        return await fetchExactSkillOnce(alternative, fetcher, token);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+  return fetchExactSkillOnce(ident, fetcher, token, resolvedSha);
+}
+
+async function fetchExactSkillOnce(
+  ident: GithubExactAlternative,
+  fetcher: typeof fetch,
+  token?: string,
+  resolvedSha?: string
+): Promise<FetchedSkill> {
   // Canonicalize before SHA resolution so the cheapest reject (no network)
   // catches a hostile identifier; resolveSha is unaffected by filePath but
   // the early check fails fast and keeps the error class crisp.
   const skillFilePath = canonicalGithubFilePath("SKILL.md", ident.filePath);
 
-  const upstreamSha = await resolveSha(ident, fetcher, token);
+  const upstreamSha = resolvedSha ?? (await resolveSha(ident, fetcher, token));
   if (!upstreamSha) {
     throw new Error(
       `GitHub SHA resolution failed for ${ident.owner}/${ident.repo}@${ident.ref}; refusing to fetch from a mutable ref. Pin to a 40-char commit SHA.`
@@ -155,7 +634,13 @@ export async function fetchSkillFromGitHub(
     skillMd
   });
 
-  return { skillMd, upstreamSha, sourceUrl: skillUrl, resources };
+  return {
+    skillMd,
+    upstreamSha,
+    sourceUrl: skillUrl,
+    resolvedIdentifier: ident.resolvedIdentifier,
+    resources
+  };
 }
 
 // `filePath` here is already canonical (no `..`, no leading `/`, no empty

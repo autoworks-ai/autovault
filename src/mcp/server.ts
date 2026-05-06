@@ -58,7 +58,7 @@ export function createServer(): McpServer {
 
   server.tool(
     "install_skill",
-    "Install a skill from an external source (GitHub, agentskills.io registry, or an HTTPS URL) after running it through AutoVault's full validation gate: frontmatter repair, schema checks, security denylist, and capability cross-check. Use when the user asks to add a known-good skill from a published source. For external (non-inline) installs the source adapter fetches resources from upstream at the same commit/URL the SKILL.md came from — caller-supplied `resources[]` is rejected to prevent laundered provenance. To install a skill bundle from caller-held bytes, use the inline path: pass `skill_md` AND `resources[]` together (records source: \"inline\").",
+    "Install a skill from an external source (GitHub, agentskills.io registry, or an HTTPS URL) after running it through AutoVault's full validation gate: frontmatter repair, schema checks, security denylist, and capability cross-check. GitHub identifiers may be compact `owner/repo[@ref][:path/to/SKILL.md]`, blob URLs, or repo-root/tree URLs; repo-root/tree URLs discover SKILL.md candidates and may return `outcome: \"multiple_candidates\"` with exact candidate identifiers. Use when the user asks to add a known-good skill from a published source. For external (non-inline) installs the source adapter fetches resources from upstream at the same commit/URL the SKILL.md came from — caller-supplied `resources[]` is rejected to prevent laundered provenance. To install a skill bundle from caller-held bytes, use the inline path: pass `skill_md` AND `resources[]` together (records source: \"inline\").",
     {
       source: z.enum(["github", "agentskills", "url"]),
       identifier: z.string(),

@@ -320,10 +320,10 @@ V1 ships with two source adapters:
 
 **GitHub URL adapter:**
 
-- Accepts `https://github.com/org/repo/blob/ref/path/SKILL.md`
-- Converts to raw URL, fetches content
-- Also fetches sibling `scripts/`, `references/`, `assets/` directories
-- Resolves current HEAD SHA for drift tracking
+- Accepts `owner/repo[@ref][:path/to/SKILL.md]`, GitHub blob URLs, and GitHub repo-root/tree URLs
+- Repo-root/tree URLs discover `SKILL.md` candidates; one candidate auto-selects, many candidates return a picker payload
+- Fetches `SKILL.md` and declared resources from a resolved commit SHA
+- Resolves current ref SHA for drift tracking
 - Supports `ref` (branch, tag, or commit SHA) for pinning
 
 **agentskills.io adapter:**
