@@ -9,6 +9,7 @@ import {
   skillDir
 } from "../storage/index.js";
 import { withProfileSyncLock, withStorageLock } from "../storage/lock.js";
+import { clearRenderedSkills, materializeRenderedSkillForAgent } from "../transforms/index.js";
 import { log } from "../util/log.js";
 
 export type SyncProfilesInput = {
@@ -215,6 +216,7 @@ async function syncProfilesApply(
   const warnings = [...snapshot.warnings];
 
   const resultProfiles: Record<string, string[]> = {};
+  await clearRenderedSkills();
   const agents = new Set([...await existingDirectoryNames(profileRoot), ...profiles.keys()]);
   for (const agent of agents) {
     if (!ensureAgentUnderRoot(profileRoot, agent)) {
@@ -227,9 +229,19 @@ async function syncProfilesApply(
     const names = profiles.get(agent) ?? [];
     const agentRoot = path.join(profileRoot, agent);
     const keep = new Set(names);
-    await removeManagedLinks(agentRoot, path.resolve(config.storagePath, "skills"), keep);
+    await removeManagedLinks(agentRoot, path.resolve(config.storagePath), keep);
     for (const name of names.sort()) {
-      await replaceSymlink(path.join(agentRoot, name), path.resolve(skillDir(name)));
+      let targetPath = path.resolve(skillDir(name));
+      try {
+        const rendered = await materializeRenderedSkillForAgent(name, agent);
+        targetPath = path.resolve(rendered.path);
+        for (const warning of rendered.warnings) warnings.push(warning);
+      } catch (error) {
+        warnings.push(
+          `Skipping transforms for "${agent}/${name}" — ${String(error)}`
+        );
+      }
+      await replaceSymlink(path.join(agentRoot, name), targetPath);
     }
     if (names.length > 0) resultProfiles[agent] = names.sort();
   }

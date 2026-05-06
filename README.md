@@ -19,6 +19,7 @@ AutoVault is a Node/TypeScript library and compatibility MCP server that:
 - indexes profiles, callers, tool groups, aliases, context rules, and MCP servers in SQLite
 - resolves scoped capabilities through `resolveCapabilities()`
 - generates per-agent skill profile symlinks
+- applies vault-local skill transforms when generating per-agent profiles
 - validates submitted or imported skill content
 - exposes existing skill lifecycle operations over MCP tools
 - tracks where installed skills came from
@@ -43,6 +44,7 @@ AutoVault supports local capability resolution plus the skill lifecycle:
 7. **Install** skills from GitHub, agentskills, or arbitrary HTTPS URLs
 8. **Track provenance** with a per-skill sidecar file and content hash
 9. **Check updates** to detect upstream drift
+10. **Transform** skills per agent/workspace without forking upstream content
 
 ## Why Use It
 
@@ -60,7 +62,7 @@ AutoVault is useful when you want:
 
 ### MCP Tool Surface
 
-AutoVault still exposes 7 MCP tools:
+AutoVault still exposes the core MCP tools:
 
 - `list_skills` - list installed skill summaries
 - `search_skills` - search by name, description, tags, and category
@@ -68,6 +70,9 @@ AutoVault still exposes 7 MCP tools:
 - `read_skill_resource` - read packaged resource files safely
 - `install_skill` - install from `github`, `agentskills`, or `url`
 - `propose_skill` - validate and store a newly proposed skill
+- `propose_skill_transform` - validate and store a vault-local transform overlay
+- `list_skill_transforms` - inspect configured transforms and integrity status
+- `remove_skill_transform` - delete a transform overlay
 - `check_updates` - compare installed content to upstream source state
 
 ### Library Surface
@@ -78,6 +83,8 @@ AutoVault exports an ESM library API:
 - `syncProfiles()` - regenerate per-agent profile symlinks from skill frontmatter
 - `installSkill()` - install and validate a skill from a configured source
 - `proposeSkill()` - validate, deduplicate, and store proposed skill content
+- `proposeSkillTransform()` / `listSkillTransforms()` / `removeSkillTransform()` - manage vault-local skill overlays
+- `renderSkillForAgent()` - preview the generated skill body for one agent
 - `importAutohubCapabilities()` / `ensureAutohubSeeded()` - import legacy AutoHub JSON state into SQLite
 
 Unknown callers fail closed. Register callers explicitly or map unknown users to
@@ -114,7 +121,9 @@ Installed skills are stored with two sidecar files:
 
 `check_updates` uses the content hash to detect upstream drift for remote
 sources and bundled inline skills. Non-bundled inline skills are reported as
-unchecked. The signature detects post-install tampering (log-only warning in V1).
+unchecked. Transform overlays are compared against their pinned base
+`SKILL.md`; changed bases appear in `transform_reviews`. The signature detects
+post-install tampering (log-only warning in V1).
 
 ## Benefits
 
@@ -150,10 +159,54 @@ $AUTOVAULT_STORAGE_PATH/
       .autovault-source.json   # source, hash, timestamps
       .autovault-signature     # detached Ed25519 signature (0600)
       <resources...>
+  transforms/
+    <base-skill>/<transform>/
+      TRANSFORM.md              # vault-local overlay instructions
+      BASE_SKILL.md             # pinned old base snapshot for review
+      .autovault-transform.json # pinned hashes and metadata
+      .autovault-manifest       # signed transform manifest
+  rendered/
+    <agent>/<skill>/            # disposable generated variants
   profiles/
     <agent>/
-      <skill-name> -> ../../skills/<skill-name>
+      <skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
 ```
+
+### Skill Transforms
+
+Transforms let a workspace or agent adjust a skill without forking the upstream
+`SKILL.md`. A transform is stored under the vault, not inside the installed
+skill directory, and profile sync materializes a generated `SKILL.md` only for
+matching agents.
+
+Example `TRANSFORM.md`:
+
+```yaml
+---
+name: perplexity
+base: research-skill
+description: Use Perplexity instead of the default web search path.
+targets:
+  agents: [codex]
+priority: 100
+capability_overrides:
+  network: true
+  tools:
+    add: [mcp__perplexity__search]
+    remove: [web_search]
+metadata:
+  version: "1.0.0"
+---
+
+Use `mcp__perplexity__search` instead of `web_search` for research.
+```
+
+Transforms are deterministic compose overlays: AutoVault appends the transform
+instructions to the base skill and applies declared capability metadata
+overrides. It does not call an LLM during sync. When the base skill changes,
+`check_updates` continues rendering the transform but returns
+`transform_reviews` with the pinned old base `SKILL.md` so the delta can be
+reviewed.
 
 ## Quick Start
 

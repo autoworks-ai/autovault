@@ -47,7 +47,9 @@ AutoVault's primary interface is filesystem-native profile sync:
 ```text
 $AUTOVAULT_STORAGE_PATH/
   skills/SKILL_NAME/SKILL.md
-  profiles/AGENT/SKILL_NAME points to ../../skills/SKILL_NAME
+  transforms/SKILL_NAME/TRANSFORM_NAME/TRANSFORM.md
+  rendered/AGENT/SKILL_NAME/SKILL.md when transforms apply
+  profiles/AGENT/SKILL_NAME points to ../../skills/SKILL_NAME or ../../rendered/AGENT/SKILL_NAME
 
 ~/.claude/skills/SKILL_NAME points to ~/.autovault/profiles/claude-code/SKILL_NAME
 ~/.codex/skills/SKILL_NAME points to ~/.autovault/profiles/codex/SKILL_NAME
@@ -72,13 +74,14 @@ these tools if `mcp__autovault__*` tools are actually present in the current
 session. If they are absent, continue with the synced skills that are already
 visible.
 
-The compatibility server exposes seven MCP tools:
+The compatibility server exposes these MCP tools:
 
 - `list_skills` - returns metadata for every installed skill.
 - `search_skills(query, top_k?)` - text search across name, description,
   tags, and category. Returns ranked matches with scores.
-- `get_skill(name)` - returns the full SKILL.md plus parsed metadata,
-  capabilities, required secrets, and source provenance.
+- `get_skill(name, agent?)` - returns the full SKILL.md plus parsed metadata,
+  capabilities, required secrets, and source provenance. Pass `agent` to see
+  the generated variant with matching transforms applied.
 - `read_skill_resource(skill_name, resource_path)` - reads a file packaged
   alongside a skill. Path traversal is blocked.
 - `install_skill({source, identifier, version?, skill_md?})` - installs
@@ -92,9 +95,17 @@ The compatibility server exposes seven MCP tools:
 - `propose_skill({skill_md, resources?, source_session?})` - validates and
   installs a new skill. Outcome is one of `accepted`, `duplicate`,
   `invalid`, or `security_blocked`.
+- `propose_skill_transform({transform_md, replace?})` - validates and stores a
+  vault-local transform overlay for an installed base skill. The base skill is
+  not modified.
+- `list_skill_transforms({base?})` - lists transform overlays and integrity
+  status.
+- `remove_skill_transform({base, name})` - deletes a transform overlay and
+  refreshes generated profiles.
 - `check_updates(skill?)` - compares installed content hash against the
   recorded source. Bundled inline skills are checked against the local bundled
-  source; other inline skills are reported as unchecked.
+  source; other inline skills are reported as unchecked. Changed transform
+  bases appear in `transform_reviews` with the pinned old base content.
 
 ## Optional MCP workflow
 
@@ -108,7 +119,10 @@ The compatibility server exposes seven MCP tools:
      value (`keep_existing`, `replace`, `merge`, `keep_both`).
    - `invalid` - fix the listed schema errors and resubmit.
    - `security_blocked` - rewrite the content to remove flagged patterns.
-4. Periodically call `check_updates` to detect drift for skills installed from a remote source or as a bundled inline skill.
+4. Use `propose_skill_transform` instead of forking a skill when the user wants
+   an agent/workspace-specific variant such as different research tools or
+   output channels.
+5. Periodically call `check_updates` to detect drift for skills installed from a remote source, bundled inline skills, or transforms pinned to an older base.
 
 Skip this workflow entirely when the MCP tools are not connected. Missing MCP
 tools are not an error for filesystem-synced skills.

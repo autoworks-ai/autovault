@@ -74,7 +74,10 @@ capability cross-check). If any skill is rejected, the gate will explain why.
 
 Installed skills stay in `$AUTOVAULT_STORAGE_PATH/skills/<name>/SKILL.md`.
 Profile sync reads each skill's `agents` frontmatter and creates symlinks under
-`$AUTOVAULT_STORAGE_PATH/profiles/<agent>/`.
+`$AUTOVAULT_STORAGE_PATH/profiles/<agent>/`. If a vault-local transform matches
+that agent, sync first materializes a disposable generated variant under
+`$AUTOVAULT_STORAGE_PATH/rendered/<agent>/<name>/` and links the profile to
+that rendered directory.
 
 ```bash
 npm run sync:profiles
@@ -91,8 +94,9 @@ node dist/cli.js sync-profiles \
 
 This creates or updates managed links inside those roots and leaves unrelated
 system or manually installed skills intact.
-Set `AUTOVAULT_PROFILE_LINKS` to make `install_skill`, `propose_skill`, and
-plain `sync-profiles` refresh those roots automatically.
+Set `AUTOVAULT_PROFILE_LINKS` to make `install_skill`, `propose_skill`,
+`propose_skill_transform`, `remove_skill_transform`, and plain `sync-profiles`
+refresh those roots automatically.
 
 ## 5. Configure your MCP host
 
@@ -120,8 +124,9 @@ Add to your project's `.mcp.json` (or `~/.claude/mcp.json` for global):
 ```
 
 Reload Claude Code. The `list_skills`, `search_skills`, `get_skill`,
-`read_skill_resource`, `install_skill`, `propose_skill`, and `check_updates`
-tools should all appear.
+`read_skill_resource`, `install_skill`, `propose_skill`,
+`propose_skill_transform`, `list_skill_transforms`, `remove_skill_transform`,
+and `check_updates` tools should all appear.
 
 ### Cursor
 
@@ -258,6 +263,8 @@ AutoVault can detect when an installed skill has drifted from its source:
 - Skills installed from `github`, `agentskills`, or `url` are compared against the current upstream content.
 - Bundled inline skills are checked against the repo's `skills/<name>/SKILL.md`.
 - Other inline skills have no upstream to compare and are reported as unchecked.
+- Transforms are compared against their pinned base `SKILL.md`; changed bases
+  appear in `transform_reviews` with the old pinned base content for review.
 
 ```
 check_updates                 # all skills

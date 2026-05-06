@@ -12,6 +12,7 @@ import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
 import { fetchSkillFromGitHub } from "../sources/github.js";
 import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
+import { listTransformReviews, type TransformReview } from "../transforms/index.js";
 import { bundleHash, type HashedResource } from "../util/hash.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair } from "../validation/frontmatter.js";
@@ -98,6 +99,7 @@ export async function checkUpdates(
   up_to_date: string[];
   unchecked: UncheckedEntry[];
   errors: Array<{ name: string; error: string }>;
+  transform_reviews: TransformReview[];
 }> {
   if (skill !== undefined) assertSafeSkillName(skill);
   const names = skill ? [skill] : await listInstalledSkillNames();
@@ -105,8 +107,15 @@ export async function checkUpdates(
   const upToDate: string[] = [];
   const unchecked: UncheckedEntry[] = [];
   const errors: Array<{ name: string; error: string }> = [];
+  const transformReviews: TransformReview[] = [];
 
   for (const name of names) {
+    try {
+      transformReviews.push(...await listTransformReviews(name));
+    } catch (error) {
+      errors.push({ name, error: `Transform review failed: ${String(error)}` });
+    }
+
     const installed = await readSkill(name);
     if (!installed) {
       errors.push({ name, error: "Skill not installed" });
@@ -244,5 +253,5 @@ export async function checkUpdates(
     }
   }
 
-  return { drifted, up_to_date: upToDate, unchecked, errors };
+  return { drifted, up_to_date: upToDate, unchecked, errors, transform_reviews: transformReviews };
 }
