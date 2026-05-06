@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
@@ -634,21 +635,27 @@ bin:
     await expect(fs.stat(lockPath)).rejects.toThrow();
   });
 
-  it("recoverOrphanBackups does NOT steal an aged lock held by a live PID", async () => {
+  it("recoverOrphanBackups does NOT steal an aged current-boot lock held by a live PID", async () => {
     // Round 25 finding: an earlier draft reclaimed locks older than 5 min even
     // when isOwnerAlive(owner) returned true. That meant a slow, paused, or
     // debugger-stopped writer could have its lock yanked out from under it,
     // letting recovery sweep its in-flight `.tmp.*` staging while the real
     // writer thought it still held the lock. Reclaim is now restricted to
     // dead PIDs and unparseable debris; we pin that here by forging a lock
-    // whose startedAt is ~6 min ago but whose pid is process.pid (trivially
-    // alive). Recovery must defer; the staging dir must survive.
+    // whose startedAt is old when the host has enough current-boot uptime, but
+    // whose pid is process.pid (trivially alive). Fresh CI runners can have
+    // less than six minutes of OS uptime; a fixed six-minute offset would
+    // intentionally exercise the pre-boot stale-lock reclaim path instead of
+    // this live-lock guard. Clamp the age so the lock always belongs to the
+    // current boot.
+    const maxCurrentBootAgeMs = Math.max(0, Math.floor(os.uptime() * 1000) - 90_000);
+    const liveLockAgeMs = Math.min(6 * 60_000, maxCurrentBootAgeMs);
     const lockPath = path.join(currentStorageRoot(), ".autovault-write-lock");
     await fs.writeFile(
       lockPath,
       JSON.stringify({
         pid: process.pid,
-        startedAt: Date.now() - 6 * 60_000,
+        startedAt: Date.now() - liveLockAgeMs,
         token: "aged-but-live"
       }),
       { encoding: "utf-8", mode: 0o600 }
