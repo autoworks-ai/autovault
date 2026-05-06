@@ -2,6 +2,16 @@ export { installSkill, type InstallSkillInput } from "./tools/install-skill.js";
 export { proposeSkill, type ProposeSkillInput } from "./tools/propose-skill.js";
 export { syncProfiles, type SyncProfilesInput, type SyncProfilesResult } from "./profiles/sync.js";
 export {
+  proposeSkillTransform,
+  listSkillTransforms,
+  removeSkillTransform,
+  renderSkillForAgent,
+  type ProposeSkillTransformInput,
+  type ProposeSkillTransformResult,
+  type RenderSkillForAgentResult,
+  type SkillTransformSummary
+} from "./transforms/index.js";
+export {
   resolveCapabilities,
   resolve_capabilities,
   exportCapabilityConfig,

@@ -3,9 +3,12 @@ import { z } from "zod";
 import { checkUpdates } from "../tools/check-updates.js";
 import { getSkill } from "../tools/get-skill.js";
 import { installSkill } from "../tools/install-skill.js";
+import { listSkillTransformsTool } from "../tools/list-skill-transforms.js";
 import { listSkills } from "../tools/list-skills.js";
 import { proposeSkill } from "../tools/propose-skill.js";
+import { proposeSkillTransformTool } from "../tools/propose-skill-transform.js";
 import { readSkillResource } from "../tools/read-skill-resource.js";
+import { removeSkillTransformTool } from "../tools/remove-skill-transform.js";
 import { searchSkills } from "../tools/search-skills.js";
 import { log } from "../util/log.js";
 
@@ -43,9 +46,9 @@ export function createServer(): McpServer {
 
   server.tool(
     "get_skill",
-    "Load the full SKILL.md body plus parsed metadata, declared capabilities, required secrets, and source provenance for a specific installed skill. Use after `search_skills` returns a good match, or when the user names a skill directly. The returned skill body is instructions to follow, not code to execute blindly.",
-    { name: z.string() },
-    async ({ name }) => runTool("get_skill", () => getSkill(name))
+    "Load the full SKILL.md body plus parsed metadata, declared capabilities, required secrets, and source provenance for a specific installed skill. Pass `agent` to load the generated variant with any matching AutoVault transforms applied. Use after `search_skills` returns a good match, or when the user names a skill directly. The returned skill body is instructions to follow, not code to execute blindly.",
+    { name: z.string(), agent: z.string().optional() },
+    async ({ name, agent }) => runTool("get_skill", () => getSkill(name, agent))
   );
 
   server.tool(
@@ -89,6 +92,30 @@ export function createServer(): McpServer {
       source_session: z.string().optional()
     },
     async (input) => runTool("propose_skill", () => proposeSkill(input))
+  );
+
+  server.tool(
+    "propose_skill_transform",
+    "Submit a vault-local TRANSFORM.md overlay for an installed base skill. Transforms keep the upstream skill pristine while generated per-agent profile directories receive deterministic overlay instructions and optional capability metadata changes. The generated skill is validated before the transform is stored.",
+    {
+      transform_md: z.string(),
+      replace: z.boolean().optional()
+    },
+    async (input) => runTool("propose_skill_transform", () => proposeSkillTransformTool(input))
+  );
+
+  server.tool(
+    "list_skill_transforms",
+    "List vault-local skill transforms, optionally scoped to one base skill. Reports integrity status so tampered transform files can be reviewed instead of silently applied.",
+    { base: z.string().optional() },
+    async ({ base }) => runTool("list_skill_transforms", () => listSkillTransformsTool(base))
+  );
+
+  server.tool(
+    "remove_skill_transform",
+    "Remove one vault-local skill transform and refresh generated profile directories. This does not modify the upstream base skill.",
+    { base: z.string(), name: z.string() },
+    async (input) => runTool("remove_skill_transform", () => removeSkillTransformTool(input))
   );
 
   server.tool(
