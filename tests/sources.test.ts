@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   fetchSkillFromGitHub,
+  GitHubSkillCandidatesError,
   parseGithubIdentifier
 } from "../src/sources/github.js";
 import { fetchSkillFromAgentSkills } from "../src/sources/agentskills.js";
@@ -44,8 +45,39 @@ describe("github source", () => {
     });
   });
 
+  it("parses GitHub blob URLs as exact skill targets", () => {
+    expect(
+      parseGithubIdentifier("https://github.com/owner/repo/blob/main/skills/foo/SKILL.md")
+    ).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      ref: "main",
+      filePath: "skills/foo/SKILL.md"
+    });
+  });
+
   it("rejects malformed identifiers", () => {
     expect(() => parseGithubIdentifier("nope")).toThrow();
+  });
+
+  it("rejects non-GitHub URLs before network I/O", async () => {
+    const fetcher = vi.fn(async () => makeResponse("never reached")) as unknown as typeof fetch;
+    await expect(
+      fetchSkillFromGitHub("https://raw.githubusercontent.com/owner/repo/main/SKILL.md", {
+        fetch: fetcher
+      })
+    ).rejects.toThrow(/github\.com/);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("rejects traversal in GitHub blob URLs before network I/O", async () => {
+    const fetcher = vi.fn(async () => makeResponse("never reached")) as unknown as typeof fetch;
+    await expect(
+      fetchSkillFromGitHub("https://github.com/owner/repo/blob/main/skills/%2E%2E/SKILL.md", {
+        fetch: fetcher
+      })
+    ).rejects.toThrow(/Unsafe GitHub URL path segment/);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("fetches raw content using a resolved sha", async () => {
@@ -60,6 +92,246 @@ describe("github source", () => {
     const result = await fetchSkillFromGitHub("owner/repo", { fetch: fetcher });
     expect(result.upstreamSha).toBe("1234567890abcdef1234567890abcdef12345678");
     expect(result.sourceUrl).toContain("raw.githubusercontent.com");
+  });
+
+  it("fetches blob URL content pinned to the resolved sha", async () => {
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (u.endsWith("/commits/main")) {
+        return makeResponse(JSON.stringify({ sha: "1234567890abcdef1234567890abcdef12345678" }));
+      }
+      if (u.includes("api.github.com")) {
+        return makeResponse("not found", { ok: false, status: 404 });
+      }
+      return makeResponse("---\nname: x\n---\n");
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub(
+      "https://github.com/owner/repo/blob/main/skills/foo/SKILL.md",
+      { fetch: fetcher }
+    );
+    const raw = requested.find((u) => u.includes("raw.githubusercontent.com"));
+    expect(raw).toContain("/1234567890abcdef1234567890abcdef12345678/skills/foo/SKILL.md");
+    expect(raw).not.toContain("/main/skills/foo/SKILL.md");
+    expect(result.resolvedIdentifier).toBe("owner/repo@main:skills/foo/SKILL.md");
+  });
+
+  it("resolves GitHub blob URLs whose branch names contain slashes", async () => {
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (u.includes("/commits/feature%2Fskill-import")) {
+        return makeResponse(JSON.stringify({ sha: "3".repeat(40) }));
+      }
+      if (u.includes("api.github.com")) {
+        return makeResponse("not found", { ok: false, status: 404 });
+      }
+      if (u.endsWith("/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: x\n---\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub(
+      "https://github.com/owner/repo/blob/feature/skill-import/skills/foo/SKILL.md",
+      { fetch: fetcher }
+    );
+    expect(result.upstreamSha).toBe("3".repeat(40));
+    expect(result.resolvedIdentifier).toBe(
+      "owner/repo@feature/skill-import:skills/foo/SKILL.md"
+    );
+    expect(requested.some((u) => u.includes("/commits/feature%2Fskill-import"))).toBe(true);
+  });
+
+  it("discovers one SKILL.md from a GitHub repo-root URL and auto-selects it", async () => {
+    const skillMd = `---
+name: discovered-skill
+description: This description is intentionally long enough to satisfy schema length checks.
+---
+
+# Body
+`;
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (u.includes("/commits/HEAD")) {
+        return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (u.includes("/git/trees/")) {
+        return makeResponse(
+          JSON.stringify({ tree: [{ path: "skills/foo/SKILL.md", type: "blob" }] })
+        );
+      }
+      if (u.endsWith("/skills/foo/SKILL.md")) {
+        return makeResponse(skillMd);
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub("https://github.com/owner/repo", {
+      fetch: fetcher
+    });
+    expect(result.skillMd).toBe(skillMd);
+    expect(result.upstreamSha).toBe("1".repeat(40));
+    expect(result.resolvedIdentifier).toBe("owner/repo:skills/foo/SKILL.md");
+    expect(requested.some((u) => u.includes("/git/trees/" + "1".repeat(40)))).toBe(true);
+  });
+
+  it("returns candidate metadata when repo-root discovery finds multiple skills", async () => {
+    const skillA = `---
+name: alpha-skill
+description: Alpha skill description long enough for display.
+---
+
+# Alpha
+`;
+    const skillB = `---
+name: beta-skill
+description: Beta skill description long enough for display.
+---
+
+# Beta
+`;
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      if (u.includes("/commits/HEAD")) {
+        return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (u.includes("/git/trees/")) {
+        return makeResponse(
+          JSON.stringify({
+            tree: [
+              { path: "skills/b/SKILL.md", type: "blob" },
+              { path: "skills/a/SKILL.md", type: "blob" }
+            ]
+          })
+        );
+      }
+      if (u.endsWith("/skills/a/SKILL.md")) return makeResponse(skillA);
+      if (u.endsWith("/skills/b/SKILL.md")) return makeResponse(skillB);
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      await fetchSkillFromGitHub("https://github.com/owner/repo", { fetch: fetcher });
+      throw new Error("expected candidates error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(GitHubSkillCandidatesError);
+      expect((error as GitHubSkillCandidatesError).candidates).toEqual([
+        {
+          name: "alpha-skill",
+          description: "Alpha skill description long enough for display.",
+          path: "skills/a/SKILL.md",
+          identifier: "owner/repo:skills/a/SKILL.md"
+        },
+        {
+          name: "beta-skill",
+          description: "Beta skill description long enough for display.",
+          path: "skills/b/SKILL.md",
+          identifier: "owner/repo:skills/b/SKILL.md"
+        }
+      ]);
+    }
+  });
+
+  it("scopes tree URL discovery and accepts lowercase skill.md", async () => {
+    const skillMd = `---
+name: scoped-skill
+description: This description is intentionally long enough to satisfy schema length checks.
+---
+
+# Body
+`;
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      if (u.includes("/commits/main")) {
+        return makeResponse(JSON.stringify({ sha: "2".repeat(40) }));
+      }
+      if (u.includes("/git/trees/")) {
+        return makeResponse(
+          JSON.stringify({
+            tree: [
+              { path: "other/SKILL.md", type: "blob" },
+              { path: "skills/nested/skill.md", type: "blob" }
+            ]
+          })
+        );
+      }
+      if (u.endsWith("/skills/nested/skill.md")) {
+        return makeResponse(skillMd);
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub(
+      "https://github.com/owner/repo/tree/main/skills/nested",
+      { fetch: fetcher }
+    );
+    expect(result.skillMd).toBe(skillMd);
+    expect(result.resolvedIdentifier).toBe("owner/repo@main:skills/nested/skill.md");
+  });
+
+  it("resolves GitHub tree URLs whose branch names contain slashes", async () => {
+    const skillMd = `---
+name: slash-branch-skill
+description: This description is intentionally long enough to satisfy schema length checks.
+---
+
+# Body
+`;
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (u.endsWith("/commits/feature%2Fskill-import")) {
+        return makeResponse(JSON.stringify({ sha: "4".repeat(40) }));
+      }
+      if (u.includes("api.github.com") && u.includes("/commits/")) {
+        return makeResponse("not found", { ok: false, status: 404 });
+      }
+      if (u.includes("/git/trees/")) {
+        return makeResponse(
+          JSON.stringify({
+            tree: [{ path: "skills/nested/SKILL.md", type: "blob" }]
+          })
+        );
+      }
+      if (u.endsWith("/skills/nested/SKILL.md")) {
+        return makeResponse(skillMd);
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub(
+      "https://github.com/owner/repo/tree/feature/skill-import/skills/nested",
+      { fetch: fetcher }
+    );
+    expect(result.skillMd).toBe(skillMd);
+    expect(result.resolvedIdentifier).toBe(
+      "owner/repo@feature/skill-import:skills/nested/SKILL.md"
+    );
+    expect(requested.some((u) => u.includes("/commits/feature%2Fskill-import"))).toBe(true);
+  });
+
+  it("reports a clean error when repo-root discovery finds no skill", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      if (u.includes("/commits/HEAD")) {
+        return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (u.includes("/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [{ path: "README.md", type: "blob" }] }));
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("https://github.com/owner/repo", { fetch: fetcher })
+    ).rejects.toThrow(/No SKILL\.md found in owner\/repo/);
   });
 
   it("throws when raw fetch fails", async () => {

@@ -99,7 +99,7 @@ Every install/propose path goes through a validation pipeline that includes:
 
 AutoVault currently supports:
 
-- `github`: `owner/repo[@ref][:path/to/SKILL.md]`
+- `github`: `owner/repo[@ref][:path/to/SKILL.md]`, GitHub blob URLs, or GitHub repo-root/tree URLs for `SKILL.md` discovery
 - `agentskills`: `slug[@version]`
 - `url`: HTTPS URLs only
 

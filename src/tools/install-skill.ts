@@ -6,7 +6,11 @@ import {
   writeSkill
 } from "../storage/index.js";
 import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
-import { fetchSkillFromGitHub } from "../sources/github.js";
+import {
+  fetchSkillFromGitHub,
+  isGitHubSkillCandidatesError,
+  isGitHubSkillNotFoundError
+} from "../sources/github.js";
 import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
 import { bundleHash } from "../util/hash.js";
@@ -88,6 +92,32 @@ export async function installSkill(
       fetched = await fetchByInput(input, deps);
       skillMd = fetched.skillMd;
     } catch (error) {
+      if (input.source === "github" && isGitHubSkillCandidatesError(error)) {
+        log.info("install_skill.github_candidates", {
+          identifier: input.identifier,
+          count: error.candidates.length
+        });
+        return {
+          success: false,
+          name: "",
+          outcome: "multiple_candidates",
+          validation: {},
+          candidates: error.candidates,
+          warnings: [error.message]
+        };
+      }
+      if (input.source === "github" && isGitHubSkillNotFoundError(error)) {
+        log.info("install_skill.github_no_candidates", {
+          identifier: input.identifier,
+          error: String(error)
+        });
+        return {
+          success: false,
+          name: "",
+          validation: {},
+          warnings: [error.message]
+        };
+      }
       log.warn("install_skill.fetch_failed", {
         source: input.source,
         identifier: input.identifier,
@@ -233,7 +263,7 @@ export async function installSkill(
   // stale source metadata, fooling check_updates' contentHash drift detection.
   const sourceMeta: SkillSource = {
     source: input.skill_md ? "inline" : input.source,
-    identifier: input.identifier,
+    identifier: input.skill_md ? input.identifier : fetched?.resolvedIdentifier ?? input.identifier,
     bundledSkillName: input.bundled_skill_name,
     version: input.version,
     upstreamSha: fetched?.upstreamSha,

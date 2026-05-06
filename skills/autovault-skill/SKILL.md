@@ -82,9 +82,13 @@ The compatibility server exposes seven MCP tools:
 - `read_skill_resource(skill_name, resource_path)` - reads a file packaged
   alongside a skill. Path traversal is blocked.
 - `install_skill({source, identifier, version?, skill_md?})` - installs
-  from `github` (`owner/repo[@ref][:path]`), `agentskills`
-  (`slug[@version]`), or `url` (https only). If `skill_md` is provided,
-  it is treated as inline content; otherwise the source adapter fetches it.
+  from `github`, `agentskills` (`slug[@version]`), or `url` (https only).
+  GitHub identifiers may be `owner/repo[@ref][:path/to/SKILL.md]`, a blob
+  URL, or a repo-root/tree URL. Repo-root/tree URLs discover `SKILL.md`
+  candidates; if there is more than one, the tool returns
+  `outcome: "multiple_candidates"` with exact candidate identifiers. If
+  `skill_md` is provided, it is treated as inline content; otherwise the
+  source adapter fetches it.
 - `propose_skill({skill_md, resources?, source_session?})` - validates and
   installs a new skill. Outcome is one of `accepted`, `duplicate`,
   `invalid`, or `security_blocked`.
