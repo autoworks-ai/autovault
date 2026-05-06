@@ -2,7 +2,7 @@ import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { validateSkillInput } from "../validation/index.js";
 import {
   type SkillSource,
-  validateResourcePath,
+  validateResourcePathShape,
   writeSkill
 } from "../storage/index.js";
 import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
@@ -208,7 +208,14 @@ export async function installSkill(
 
   for (const resource of resources) {
     try {
-      validateResourcePath(name, resource.path);
+      // Round-62: path-shape only. The live-tree variant (validateResourcePath)
+      // probes the existing skill directory's ancestors and rejects if e.g.
+      // bin/ has been left as a symlink to /tmp by a partial-write or
+      // attacker. That's the corruption a reinstall is meant to recover
+      // from, so probing the live tree here wedges the very recovery path.
+      // writeSkill's internal validateStagedResourcePath still probes the
+      // freshly-staged tmp dir to catch staging-side TOCTOU.
+      validateResourcePathShape(resource.path);
     } catch (error) {
       log.warn("install_skill.resource_rejected", { name, error: String(error) });
       return {

@@ -13,7 +13,7 @@ import {
 } from "../util/sign.js";
 import { log } from "../util/log.js";
 import { canonicalRelPath } from "../util/path.js";
-import { MAX_SKILL_MD_BYTES } from "../util/limits.js";
+import { MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES } from "../util/limits.js";
 import { tryWithStorageLock, withStorageLock } from "./lock.js";
 
 const SOURCE_FILE = ".autovault-source.json";
@@ -473,7 +473,18 @@ export type SkillIntegrityStatus =
 export async function verifyInstalledIntegrity(
   name: string
 ): Promise<SkillIntegrityStatus> {
-  return withStorageLock(async () => {
+  return withStorageLock(() => verifyIntegrityLocked(name));
+}
+
+// Round-62: split the integrity walk from its lock acquisition so callers
+// that already hold the storage lock (e.g. readVerifiedSkillResource) can
+// run the same gate without re-entering the lock — the file lock is not
+// reentrant, so a nested withStorageLock would deadlock for 10s and throw.
+// Public callers must continue to use verifyInstalledIntegrity above.
+async function verifyIntegrityLocked(
+  name: string
+): Promise<SkillIntegrityStatus> {
+  {
     const raw = await readManifestRaw(name);
     if (raw === null) return { kind: "no_manifest" };
     const parsed = parseManifest(raw);
@@ -481,25 +492,53 @@ export async function verifyInstalledIntegrity(
     const manifest: SignedManifest = parsed;
     const root = skillDir(name);
     const resolvedRoot = path.resolve(root);
+    const realRoot = realpathIfExists(root) ?? resolvedRoot;
     const mismatches: Array<{ file: string; reason: IntegrityMismatchReason }> = [];
     const verified = new Set<string>();
 
-    async function verifyEntry(filePath: string, contentMaybe: string | null): Promise<void> {
+    async function readManifestEntry(
+      filePath: string,
+      maxBytes: number
+    ): Promise<{ kind: "ok"; content: string } | { kind: "mismatch"; reason: IntegrityMismatchReason }> {
       const target = path.join(root, filePath);
       const resolved = path.resolve(target);
       if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
-        mismatches.push({ file: filePath, reason: "signature_invalid" });
-        return;
+        return { kind: "mismatch", reason: "signature_invalid" };
       }
-      let content = contentMaybe;
-      if (content === null) {
-        try {
-          content = await fs.readFile(target, "utf-8");
-        } catch {
-          mismatches.push({ file: filePath, reason: "missing_on_disk" });
-          return;
-        }
+
+      let stat: fsSync.Stats;
+      try {
+        stat = await fs.lstat(target);
+      } catch {
+        return { kind: "mismatch", reason: "missing_on_disk" };
       }
+
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        return { kind: "mismatch", reason: "unmanifested_file" };
+      }
+      if (stat.size > maxBytes) {
+        return { kind: "mismatch", reason: "signature_invalid" };
+      }
+
+      const realTarget = realpathIfExists(target);
+      if (realTarget !== null && !isWithinRoot(realTarget, realRoot)) {
+        return { kind: "mismatch", reason: "unmanifested_file" };
+      }
+
+      try {
+        return { kind: "ok", content: await fs.readFile(target, "utf-8") };
+      } catch {
+        return { kind: "mismatch", reason: "missing_on_disk" };
+      }
+    }
+
+    async function verifyEntry(filePath: string, maxBytes: number): Promise<string | null> {
+      const read = await readManifestEntry(filePath, maxBytes);
+      if (read.kind === "mismatch") {
+        mismatches.push({ file: filePath, reason: read.reason });
+        return null;
+      }
+      const content = read.content;
       const result = await verifyFile(manifest, name, filePath, content);
       if (!result.present) {
         mismatches.push({ file: filePath, reason: "not_covered" });
@@ -507,20 +546,16 @@ export async function verifyInstalledIntegrity(
         mismatches.push({ file: filePath, reason: "signature_invalid" });
       } else {
         verified.add(filePath);
+        return content;
       }
+      return null;
     }
 
     // Step 1: verify SKILL.md before trusting its frontmatter to derive the
     // required-key set. If SKILL.md is missing, unverified, or unsigned,
     // we fall through to membership checks against a minimal required set
     // (SKILL.md + source.json) so the failure still surfaces.
-    let skillMdContent: string | null = null;
-    try {
-      skillMdContent = await fs.readFile(path.join(root, "SKILL.md"), "utf-8");
-    } catch {
-      // recorded as missing_on_disk via verifyEntry / membership check.
-    }
-    await verifyEntry("SKILL.md", skillMdContent);
+    const skillMdContent = await verifyEntry("SKILL.md", MAX_SKILL_MD_BYTES);
 
     // Step 2: derive the required key set. Only consult SKILL.md frontmatter
     // when its signature verified — otherwise an attacker who tampers
@@ -567,7 +602,10 @@ export async function verifyInstalledIntegrity(
     // produces a missing_on_disk or invalid-bytes mismatch.
     for (const filePath of Object.keys(manifest.files)) {
       if (verified.has(filePath)) continue;
-      await verifyEntry(filePath, null);
+      await verifyEntry(
+        filePath,
+        filePath === "SKILL.md" ? MAX_SKILL_MD_BYTES : MAX_RESOURCE_BYTES
+      );
     }
 
     // Step 5 (round-58/61 hardening): walk the live skill directory and
@@ -613,6 +651,56 @@ export async function verifyInstalledIntegrity(
 
     if (mismatches.length === 0) return { kind: "ok" };
     return { kind: "tampered", mismatches };
+  }
+}
+
+// Round-62: read path now runs the full open-set integrity walk (incl.
+// unmanifested files / dirs / special files) before serving bytes. Earlier
+// the read tool only verified the requested file's signature, so an install
+// with a valid signed resource plus an injected sibling helper / FIFO /
+// control directory would still return the resource as trusted. The MCP
+// caller couldn't tell the install was tampered. Hold one storage lock for
+// the integrity walk + resource verify so the result is from a coherent
+// snapshot — no TOCTOU between gate and read.
+export type ReadVerifiedResourceResult =
+  | { kind: "ok"; content: string }
+  | { kind: "no_manifest" }
+  | { kind: "manifest_corrupt" }
+  | {
+      kind: "tampered";
+      mismatches: Array<{ file: string; reason: IntegrityMismatchReason }>;
+    }
+  | { kind: "not_covered"; resource: string }
+  | { kind: "signature_invalid"; resource: string }
+  | { kind: "missing_on_disk"; resource: string };
+
+export async function readVerifiedSkillResource(
+  name: string,
+  resourcePath: string
+): Promise<ReadVerifiedResourceResult> {
+  // Path-shape + live-probe sanity check before taking the lock. If the live
+  // tree is parent-symlink-corrupted, this throws "escapes skill directory"
+  // before integrity gets a chance — same outcome (refuse), different
+  // message, defense-in-depth above the lock.
+  const fullPath = validateResourcePath(name, resourcePath);
+  const key = canonicalRelPath(resourcePath);
+  return withStorageLock(async () => {
+    const integrity = await verifyIntegrityLocked(name);
+    if (integrity.kind !== "ok") return integrity;
+    const raw = await readManifestRaw(name);
+    if (raw === null) return { kind: "no_manifest" };
+    const manifest = parseManifest(raw);
+    if (!manifest) return { kind: "manifest_corrupt" };
+    let content: string;
+    try {
+      content = await fs.readFile(fullPath, "utf-8");
+    } catch {
+      return { kind: "missing_on_disk", resource: key };
+    }
+    const result = await verifyFile(manifest, name, key, content);
+    if (!result.present) return { kind: "not_covered", resource: key };
+    if (!result.valid) return { kind: "signature_invalid", resource: key };
+    return { kind: "ok", content };
   });
 }
 
@@ -927,7 +1015,14 @@ export function validateStagedResourcePath(
   return realTarget ?? target;
 }
 
-export function validateResourcePath(name: string, resourcePath: string): string {
+// Round-62: path-shape-only check. install_skill / propose_skill use this
+// to preflight incoming resources WITHOUT walking the live skill tree —
+// otherwise a corrupted live install (e.g. `bin -> /tmp` from a partial
+// write or attacker injection) wedges the very reinstall whose staged swap
+// would replace the hostile state. writeSkill's staging validator
+// (validateStagedResourcePath) still probes the freshly-mkdir'd tmp dir for
+// staging-side TOCTOU; this is just the public-input boundary check.
+export function validateResourcePathShape(resourcePath: string): string {
   if (typeof resourcePath !== "string" || resourcePath.length === 0) {
     throw new Error(`Invalid resource path: ${resourcePath}`);
   }
@@ -947,6 +1042,12 @@ export function validateResourcePath(name: string, resourcePath: string): string
   if (hasForbiddenPathSegment(canonical)) {
     throw new Error(`Reserved resource path: ${resourcePath}`);
   }
+  return canonical;
+}
+
+export function validateResourcePath(name: string, resourcePath: string): string {
+  // Shape checks (boundary invariants) — same checks every variant runs.
+  const canonical = validateResourcePathShape(resourcePath);
   const root = path.resolve(skillDir(name));
   // Resolve against the *canonical* relative path. Using the raw `resourcePath`
   // here forks the read and write views: writeSkill stages every file under

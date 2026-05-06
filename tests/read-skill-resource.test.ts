@@ -126,9 +126,36 @@ describe("readSkillResource", () => {
       "data.json"
     );
     await fs.writeFile(resourcePath, "{\"ok\":false}", "utf-8");
+    // Round-62 widened the gate: the full integrity walk catches this as a
+    // signature_invalid before the per-file check. Same outcome — refuse —
+    // either message form is a valid refusal.
     await expect(
       readSkillResource("rsr-tamper", "data.json")
-    ).rejects.toThrow(/signature mismatch/);
+    ).rejects.toThrow(/signature.mismatch|signature_invalid/);
+  });
+
+  it("refuses to read even a clean resource when an unmanifested sibling is present (round-62)", async () => {
+    // Round 62 finding: read_skill_resource used to verify only the requested
+    // file's signature, so an install with a clean signed resource plus an
+    // injected sibling (e.g. lib/helper.sh that bin/setup later sources) was
+    // returned as trusted. The MCP caller couldn't tell the install was
+    // tampered. Now the full open-set integrity walk runs first; any sibling
+    // injection blocks reads of every resource, not just the injected file.
+    await writeSkill("rsr-sibling-injection", skillMd.replace("rsr", "rsr-sibling-injection"), [
+      { path: "data.json", content: "{\"ok\":true}" }
+    ]);
+    const liveRoot = path.join(currentStorageRoot(), "skills", "rsr-sibling-injection");
+    await fs.mkdir(path.join(liveRoot, "lib"));
+    await fs.writeFile(
+      path.join(liveRoot, "lib", "helper.sh"),
+      "#!/usr/bin/env bash\necho injected\n",
+      "utf-8"
+    );
+    // The requested file (data.json) is itself untouched and signed; the read
+    // must still refuse because the install as a whole is no longer clean.
+    await expect(
+      readSkillResource("rsr-sibling-injection", "data.json")
+    ).rejects.toThrow(/integrity check failed.*lib\/helper\.sh|unmanifested_file/);
   });
 
   it("refuses to read a resource not covered by the signed manifest (round-61)", async () => {
@@ -146,8 +173,11 @@ describe("readSkillResource", () => {
       "stray.txt"
     );
     await fs.writeFile(stray, "hello", "utf-8");
+    // Round-62: the integrity walk catches this earlier as
+    // unmanifested_file, before the per-file not_covered branch fires.
+    // Either is a valid refusal — both indicate manifest gap.
     await expect(
       readSkillResource("rsr-uncovered", "stray.txt")
-    ).rejects.toThrow(/not covered by the signed manifest/);
+    ).rejects.toThrow(/not covered by the signed manifest|unmanifested_file/);
   });
 });

@@ -14,6 +14,7 @@ import {
   writeSkillResources
 } from "../src/storage/index.js";
 import { withStorageLock } from "../src/storage/lock.js";
+import { MAX_RESOURCE_BYTES } from "../src/util/limits.js";
 import { currentStorageRoot } from "./setup.js";
 
 const skillMd = `---
@@ -273,6 +274,105 @@ ${resources.length > 0 ? `resources:\n${resources.map((p) => `  - path: ${p}\n  
       const fifo = result.mismatches.find((m) => m.file === "bin/input");
       expect(fifo).toBeDefined();
       expect(fifo?.reason).toBe("unmanifested_file");
+    }
+  });
+
+  it("flags manifested resources replaced by symlinks before reading them", async () => {
+    // Regression for the review finding: the integrity walker must inspect
+    // the manifest entry itself before fs.readFile. A final-component symlink
+    // should be refused as tampering even if it points at regular bytes.
+    await writeSkill(
+      "manifest-symlink",
+      skillMd.replace("parsed-skill", "manifest-symlink"),
+      [{ path: "data.txt", content: "signed\n" }]
+    );
+    const dataPath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "manifest-symlink",
+      "data.txt"
+    );
+    const external = path.join(currentStorageRoot(), "external-data.txt");
+    await fs.writeFile(external, "signed\n", "utf-8");
+    await fs.unlink(dataPath);
+    await fs.symlink(external, dataPath);
+
+    const result = await verifyInstalledIntegrity("manifest-symlink");
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      const mismatch = result.mismatches.find((m) => m.file === "data.txt");
+      expect(mismatch).toBeDefined();
+      expect(mismatch?.reason).toBe("unmanifested_file");
+    }
+  });
+
+  it("flags manifested resources replaced by FIFOs without blocking", async () => {
+    // The old implementation called fs.readFile on every manifest entry.
+    // Replacing a signed resource with a FIFO made verifyInstalledIntegrity
+    // block forever. If that regresses, the timeout branch writes to the FIFO
+    // to unblock the pending read, then fails the test with a clear message.
+    await writeSkill(
+      "manifest-fifo",
+      skillMd.replace("parsed-skill", "manifest-fifo"),
+      [{ path: "data.txt", content: "signed\n" }]
+    );
+    const fifoPath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "manifest-fifo",
+      "data.txt"
+    );
+    await fs.unlink(fifoPath);
+    const mkfifoResult = spawnSync("mkfifo", [fifoPath]);
+    if (mkfifoResult.status !== 0) {
+      return;
+    }
+
+    const verification = verifyInstalledIntegrity("manifest-fifo");
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => {
+        void fs.writeFile(fifoPath, "unblock\n", "utf-8").catch(() => {});
+        resolve("timeout");
+      }, 250);
+    });
+    const result = await Promise.race([verification, timeout]);
+    if (timer) clearTimeout(timer);
+    if (result === "timeout") {
+      const final = await verification;
+      throw new Error(
+        `verifyInstalledIntegrity blocked on manifested FIFO; final result after unblock: ${JSON.stringify(final)}`
+      );
+    }
+
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      const mismatch = result.mismatches.find((m) => m.file === "data.txt");
+      expect(mismatch).toBeDefined();
+      expect(mismatch?.reason).toBe("unmanifested_file");
+    }
+  });
+
+  it("flags oversized manifested resources before opening them", async () => {
+    await writeSkill(
+      "manifest-oversize",
+      skillMd.replace("parsed-skill", "manifest-oversize"),
+      [{ path: "data.txt", content: "signed\n" }]
+    );
+    const dataPath = path.join(
+      currentStorageRoot(),
+      "skills",
+      "manifest-oversize",
+      "data.txt"
+    );
+    await fs.writeFile(dataPath, "x".repeat(MAX_RESOURCE_BYTES + 1), "utf-8");
+
+    const result = await verifyInstalledIntegrity("manifest-oversize");
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      const mismatch = result.mismatches.find((m) => m.file === "data.txt");
+      expect(mismatch).toBeDefined();
+      expect(mismatch?.reason).toBe("signature_invalid");
     }
   });
 

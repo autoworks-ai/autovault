@@ -4,7 +4,7 @@ import {
   listInstalledSkillNames,
   readSkill,
   skillDir,
-  validateResourcePath,
+  validateResourcePathShape,
   writeSkill
 } from "../storage/index.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
@@ -243,7 +243,9 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
   if (input.resources && input.resources.length > 0) {
     for (const resource of input.resources) {
       try {
-        validateResourcePath(nextName, resource.path);
+        // Round-62: path-shape only. See install_skill for rationale —
+        // probing the live tree here wedges reinstall-over-corruption.
+        validateResourcePathShape(resource.path);
       } catch (error) {
         log.warn("propose_skill.resource_rejected", { name: nextName, error: String(error) });
         return {
