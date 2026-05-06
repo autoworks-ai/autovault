@@ -115,7 +115,7 @@ but any action name (`verify`, `doctor`, `uninstall`, `rotate-key`, …) is fine
 | `command` | Path to a script under the skill directory. Validated via the same path-safety check that `resources[]` uses — no traversal, no absolute paths. |
 | `args` | Optional array of strings passed verbatim to `execve`. No shell parsing, no globbing. |
 | `description` | One-line summary printed by `autovault skill list` (planned). |
-| `requires-tty` | Defaults to `true`. When true, the CLI refuses to run if stdin is not an interactive terminal. |
+| `requires-tty` | Declarative metadata for the action. The current CLI always requires an interactive terminal for every bin action, even when this is `false`. |
 
 Files referenced by `command` must be supplied as resources (in
 `propose_skill({ resources: [...] })` or fetched alongside SKILL.md by the
