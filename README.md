@@ -211,17 +211,16 @@ reviewed.
 ## Quick Start
 
 ```bash
-cp .env.example .env
-npm ci
-npm run build
-node scripts/bootstrap-skills.mjs   # seed the bundled skills into ~/.autovault
-npm run sync:profiles               # generate ~/.autovault/profiles/<agent> links
+curl -fsSL https://autovault.sh | sh
+export PATH="$HOME/.autovault/bin:$PATH"
+autovault skill list
 ```
 
 Note: `node dist/index.js` is meant to be **spawned by an MCP host**, not used
-as a long-running interactive CLI. Use `npx autovault sync-profiles` or
-`node dist/cli.js sync-profiles` for profile sync. See [`INSTALL.md`](INSTALL.md)
-for complete setup instructions.
+as a long-running interactive CLI. The installer builds the Node app under
+`~/.autovault/app`, keeps installed skills and signatures under `~/.autovault`,
+and exposes the user-facing CLI as `~/.autovault/bin/autovault`. See
+[`INSTALL.md`](INSTALL.md) for manual clone and MCP host setup instructions.
 
 For development:
 
@@ -266,6 +265,16 @@ All config is environment-based and validated at startup.
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `GITHUB_TOKEN` | _unset_ | Optional. Used for GitHub API rate-limit headroom. |
 | `AUTOVAULT_AGENTSKILLS_BASE` | `https://agentskills.io/api/v1` | Override the agentskills base URL. |
+
+Installer-only variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUTOVAULT_HOME` | `~/.autovault` | Install root for the app, shim, and default storage. |
+| `AUTOVAULT_BIN_DIR` | `$AUTOVAULT_HOME/bin` | Directory where the `autovault` shim is written. |
+| `AUTOVAULT_REF` | `main` | GitHub branch or tag downloaded by `autovault.sh`. |
+| `AUTOVAULT_TARBALL_URL` | _derived from `AUTOVAULT_REF`_ | Fully override the source archive URL. |
+| `AUTOVAULT_NO_BOOTSTRAP` | `0` | Set to `1` to skip bundled-skill bootstrap. |
 
 ## Security Model
 

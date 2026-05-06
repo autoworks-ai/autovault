@@ -34,3 +34,98 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
+
+  docs-drift-dispatch:
+    needs: [build-test, audit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed
+        run: |
+          BEFORE="${{ github.event.before }}"
+          AFTER="${{ github.sha }}"
+
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            BEFORE=$(git rev-list --max-parents=0 "$AFTER")
+          fi
+
+          FILES=$(git diff --name-only "$BEFORE" "$AFTER" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Check website file-doc mapping
+        id: check
+        env:
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+          GH_TOKEN: ${{ secrets.DOCS_DRIFT_TOKEN }}
+        run: |
+          AUTH_HEADER=()
+          if [ -n "${GH_TOKEN:-}" ]; then
+            AUTH_HEADER=(-H "Authorization: Bearer $GH_TOKEN")
+          fi
+
+          if ! MAP=$(curl -sf --connect-timeout 10 --max-time 30 --retry 2 --retry-connrefused \
+            "${AUTH_HEADER[@]}" \
+            "https://raw.githubusercontent.com/autoworks-ai/autovault-website/main/scripts/file-doc-map.json"); then
+            echo "::warning::Failed to fetch file-doc-map.json, dispatching docs audit anyway"
+            echo "affected=unknown" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          AFFECTED=$(echo "$MAP" | jq -r --arg repo "${{ github.event.repository.name }}" --argjson changed "$CHANGED_FILES" '
+            def matches_pattern($file; $pattern):
+              if ($pattern | endswith("/**")) then
+                ($file | startswith($pattern[0:-2]))
+              else
+                $file == $pattern
+              end;
+
+            .[$repo] // {} | to_entries | map(
+              select(.key as $pattern | $changed | any(. as $file | matches_pattern($file; $pattern)))
+            ) | map(.value) | flatten | unique | .[]
+          ')
+
+          if [ -z "$AFFECTED" ]; then
+            echo "No website docs pages affected by this push"
+            echo "affected=none" >> "$GITHUB_OUTPUT"
+          else
+            AFFECTED_JSON=$(echo "$AFFECTED" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+            echo "Affected website pages: $AFFECTED_JSON"
+            echo "affected=$AFFECTED_JSON" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Dispatch docs drift workflow
+        if: steps.check.outputs.affected != 'none'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_DRIFT_TOKEN }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::DOCS_DRIFT_TOKEN is required to dispatch autovault-website docs drift"
+            exit 1
+          fi
+
+          jq -n \
+            --arg event_type "docs-drift" \
+            --arg source_repo "${{ github.event.repository.full_name }}" \
+            --arg source_sha "${{ github.sha }}" \
+            --arg source_branch "${{ github.ref_name }}" \
+            --arg changed_files '${{ steps.changed.outputs.files }}' \
+            --arg affected_docs '${{ steps.check.outputs.affected }}' \
+            --arg compare_url "${{ github.event.compare }}" \
+            --arg reason "CI passed for ${{ github.sha }} on ${{ github.ref_name }}" \
+            '{
+              event_type: $event_type,
+              client_payload: {
+                source_repo: $source_repo,
+                source_sha: $source_sha,
+                source_branch: $source_branch,
+                changed_files: ($changed_files | fromjson),
+                affected_docs: (try ($affected_docs | fromjson) catch $affected_docs),
+                compare_url: $compare_url,
+                reason: $reason
+              }
+            }' | gh api repos/autoworks-ai/autovault-website/dispatches --input -
