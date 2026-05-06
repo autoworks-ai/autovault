@@ -100,7 +100,10 @@ export function migrateCapabilityDb(db: CapabilityDb): void {
       pattern TEXT NOT NULL,
       priority INTEGER NOT NULL DEFAULT 0,
       groups_json TEXT NOT NULL DEFAULT '[]',
-      servers_json TEXT NOT NULL DEFAULT '[]'
+      servers_json TEXT NOT NULL DEFAULT '[]',
+      profiles_json TEXT NOT NULL DEFAULT '[]',
+      exclude_profiles_json TEXT NOT NULL DEFAULT '[]',
+      grant_server_tools INTEGER NOT NULL DEFAULT 1
     );
 
     CREATE TABLE IF NOT EXISTS always_enabled (
@@ -136,6 +139,29 @@ export function migrateCapabilityDb(db: CapabilityDb): void {
     CREATE INDEX IF NOT EXISTS idx_group_servers_group ON group_servers(group_name);
     CREATE INDEX IF NOT EXISTS idx_context_rules_priority ON context_rules(priority DESC);
   `);
+
+  const contextRuleColumns = new Set(
+    (
+      db.prepare("PRAGMA table_info(context_rules)").all() as Array<{
+        name: string;
+      }>
+    ).map((column) => column.name)
+  );
+  if (!contextRuleColumns.has("profiles_json")) {
+    db.prepare(
+      "ALTER TABLE context_rules ADD COLUMN profiles_json TEXT NOT NULL DEFAULT '[]'"
+    ).run();
+  }
+  if (!contextRuleColumns.has("exclude_profiles_json")) {
+    db.prepare(
+      "ALTER TABLE context_rules ADD COLUMN exclude_profiles_json TEXT NOT NULL DEFAULT '[]'"
+    ).run();
+  }
+  if (!contextRuleColumns.has("grant_server_tools")) {
+    db.prepare(
+      "ALTER TABLE context_rules ADD COLUMN grant_server_tools INTEGER NOT NULL DEFAULT 1"
+    ).run();
+  }
 
   db.prepare(
     "INSERT INTO meta(key, value) VALUES ('schema_version', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value"

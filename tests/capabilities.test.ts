@@ -36,8 +36,10 @@ describe("capability import and resolver", () => {
         {
           id: "github-intent",
           pattern: "\\b(pull request|pr)\\b",
+          profiles: ["owner-auto"],
           enableGroups: ["github_read"],
           startServers: ["github"],
+          grantServerTools: false,
           priority: 5
         }
       ],
@@ -117,6 +119,13 @@ describe("capability import and resolver", () => {
     expect(owner.mcp_servers.find((server) => server.name === "github")?.env_required).toEqual(["GITHUB_TOKEN"]);
     expect(JSON.stringify(owner.mcp_servers)).not.toContain("literal-secret-token");
 
+    const guestPr = await resolveCapabilities({
+      caller_id: "guest",
+      platform: "slack",
+      query: "pull request"
+    });
+    expect(guestPr.matched_groups).not.toContain("github_read");
+
     const alias = await resolveCapabilities({
       caller_id: "guest",
       platform: "cli",
@@ -127,7 +136,14 @@ describe("capability import and resolver", () => {
     const exported = exportCapabilityConfig(openCapabilityDb());
     expect(exported).toMatchObject({
       profiles: expect.objectContaining({ auto: expect.any(Object) }),
-      toolGroups: expect.objectContaining({ essential: ["memory.recall_memory"] })
+      toolGroups: expect.objectContaining({ essential: ["memory.recall_memory"] }),
+      contextRules: expect.arrayContaining([
+        expect.objectContaining({
+          id: "github-intent",
+          profiles: ["owner-auto"],
+          grantServerTools: false
+        })
+      ])
     });
 
     saveCapabilityConfig({

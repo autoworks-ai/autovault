@@ -67,6 +67,9 @@ type ContextRuleRow = {
   priority: number;
   groups_json: string;
   servers_json: string;
+  profiles_json: string;
+  exclude_profiles_json: string;
+  grant_server_tools: number;
 };
 
 type McpServerRow = {
@@ -153,13 +156,26 @@ function matchQueryGroups(db: CapabilityDb, query: string): Array<{ group: strin
   return groups;
 }
 
-function matchContextRules(db: CapabilityDb, query: string, noIntentExpansion: boolean): Array<{ group: string; scope: string; servers: string[] }> {
+function matchContextRules(
+  db: CapabilityDb,
+  query: string,
+  noIntentExpansion: boolean,
+  profileId: string
+): Array<{ group: string; scope: string; servers: string[] }> {
   if (noIntentExpansion || !query) return [];
   const rows = db
-    .prepare("SELECT id, pattern, priority, groups_json, servers_json FROM context_rules ORDER BY priority DESC")
+    .prepare(
+      `SELECT id, pattern, priority, groups_json, servers_json, profiles_json,
+              exclude_profiles_json, grant_server_tools
+       FROM context_rules
+       ORDER BY priority DESC`
+    )
     .all() as ContextRuleRow[];
   const matches: Array<{ group: string; scope: string; servers: string[] }> = [];
   for (const row of rows) {
+    const profiles = parseJsonArray(row.profiles_json);
+    if (profiles.length > 0 && !profiles.includes(profileId)) continue;
+    if (parseJsonArray(row.exclude_profiles_json).includes(profileId)) continue;
     const regex = parseContextPattern(row.pattern);
     if (!regex) continue;
     regex.lastIndex = 0;
@@ -338,7 +354,7 @@ export async function resolveCapabilities(
   }
 
   const extraServers: string[] = [];
-  for (const match of matchContextRules(db, input.query, Boolean(profile.no_intent_expansion))) {
+  for (const match of matchContextRules(db, input.query, Boolean(profile.no_intent_expansion), profile.id)) {
     addGroup(groupScopes, match.group, match.scope);
     extraServers.push(...match.servers);
   }
@@ -387,14 +403,30 @@ export function exportCapabilityConfig(db: CapabilityDb = openCapabilityDb()): R
     toolGroupMeta[row.name] = { description: row.description, tags: parseJsonArray(row.tags_json) };
   }
 
-  const contextRules = (db.prepare("SELECT id, pattern, priority, groups_json, servers_json FROM context_rules ORDER BY priority DESC").all() as ContextRuleRow[])
-    .map((rule) => ({
+  const contextRules = (
+    db
+      .prepare(
+        `SELECT id, pattern, priority, groups_json, servers_json, profiles_json,
+                exclude_profiles_json, grant_server_tools
+         FROM context_rules
+         ORDER BY priority DESC`
+      )
+      .all() as ContextRuleRow[]
+  ).map((rule) => {
+    const exported: Record<string, unknown> = {
       id: rule.id,
       pattern: rule.pattern,
       priority: rule.priority,
       enableGroups: parseJsonArray(rule.groups_json),
       startServers: parseJsonArray(rule.servers_json)
-    }));
+    };
+    const profiles = parseJsonArray(rule.profiles_json);
+    const excludeProfiles = parseJsonArray(rule.exclude_profiles_json);
+    if (profiles.length > 0) exported.profiles = profiles;
+    if (excludeProfiles.length > 0) exported.excludeProfiles = excludeProfiles;
+    if (!rule.grant_server_tools) exported.grantServerTools = false;
+    return exported;
+  });
 
   const aliases: Record<string, string[]> = {};
   for (const row of db.prepare("SELECT alias, group_name FROM group_aliases").all() as Array<{ alias: string; group_name: string }>) {
@@ -546,14 +578,26 @@ export function saveCapabilityConfig(config: Record<string, unknown>, db: Capabi
 
     db.prepare("DELETE FROM context_rules").run();
     const insertRule = db.prepare(
-      `INSERT INTO context_rules(id, pattern, priority, groups_json, servers_json)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO context_rules(
+        id, pattern, priority, groups_json, servers_json, profiles_json,
+        exclude_profiles_json, grant_server_tools
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const contextRules = Array.isArray(config.contextRules) ? config.contextRules : [];
     for (const ruleValue of contextRules) {
       const rule = asRecord(ruleValue);
       const id = typeof rule.id === "string" ? rule.id : `rule-${String(rule.pattern ?? "").slice(0, 32)}`;
-      insertRule.run(id, String(rule.pattern ?? ""), Number(rule.priority ?? 0), jsonArray(rule.enableGroups), jsonArray(rule.startServers));
+      insertRule.run(
+        id,
+        String(rule.pattern ?? ""),
+        Number(rule.priority ?? 0),
+        jsonArray(rule.enableGroups),
+        jsonArray(rule.startServers),
+        jsonArray(rule.profiles),
+        jsonArray(rule.excludeProfiles),
+        rule.grantServerTools === false ? 0 : 1
+      );
     }
 
     db.prepare("DELETE FROM always_enabled").run();
