@@ -239,6 +239,25 @@ body`;
     expect(result.errors.join(" ")).toMatch(/unsafe/);
   });
 
+  it("rejects Windows drive-qualified bin command paths", () => {
+    const skill = `---
+name: bin-skill
+description: This description is intentionally long enough to satisfy schema length checks.
+metadata:
+  version: "1.0.0"
+bin:
+  setup:
+    command: C:temp/setup.sh
+---
+
+body`;
+    const result = validateSkillInput(skill, [
+      { path: "C:temp/setup.sh", content: "x" }
+    ]);
+    expect(result.valid).toBe(false);
+    expect(result.errors.join(" ")).toMatch(/unsafe/);
+  });
+
   it("rejects bin actions whose name violates the regex", () => {
     const skill = `---
 name: bin-skill

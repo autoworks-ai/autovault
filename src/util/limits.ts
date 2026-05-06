@@ -6,7 +6,7 @@
 export const MAX_RESOURCES = 50;
 export const MAX_RESOURCE_BYTES = 1 * 1024 * 1024; // 1 MiB per resource
 export const MAX_SKILL_MD_BYTES = 256 * 1024; // 256 KiB SKILL.md
-export const MAX_TOTAL_BYTES = 5 * 1024 * 1024; // 5 MiB across all resources
+export const MAX_TOTAL_BYTES = 5 * 1024 * 1024; // 5 MiB across SKILL.md + resources
 
 // Round-50 fix: short-circuit on cardinality + cumulative byte caps. The
 // previous implementation kept iterating a hostile resources array even after

@@ -930,7 +930,7 @@ export async function writeSkill(
 
 
 function isAbsoluteLikePath(input: string): boolean {
-  return path.isAbsolute(input) || /^[a-zA-Z]:[\\/]/.test(input) || input.startsWith("\\\\");
+  return path.isAbsolute(input) || /^[a-zA-Z]:/.test(input) || input.startsWith("\\\\");
 }
 
 function hasTraversalSegment(input: string): boolean {

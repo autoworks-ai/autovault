@@ -27,7 +27,9 @@ type GithubIdentifier = {
 };
 
 export function parseGithubIdentifier(identifier: string): GithubIdentifier {
-  const [repoPart, pathPart] = identifier.split(":");
+  const pathSep = identifier.indexOf(":");
+  const repoPart = pathSep === -1 ? identifier : identifier.slice(0, pathSep);
+  const pathPart = pathSep === -1 ? undefined : identifier.slice(pathSep + 1);
   const [ownerRepo, refRaw] = repoPart.split("@");
   const [owner, repo] = ownerRepo.split("/");
   if (!owner || !repo) {

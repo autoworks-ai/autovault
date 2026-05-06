@@ -79,6 +79,9 @@ describe("storage", () => {
     await expect(
       writeSkillResources("res-skill", [{ path: "/etc/passwd", content: "x" }])
     ).rejects.toThrow();
+    await expect(
+      writeSkillResources("res-skill", [{ path: "C:temp/setup.sh", content: "x" }])
+    ).rejects.toThrow();
   });
 
   // Defense-in-depth for the round-13 codex critical: even if a future code

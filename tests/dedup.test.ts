@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyDedup, scoreSimilarity } from "../src/validation/dedup.js";
+import {
+  buildSimilarityCorpus,
+  classifyDedup,
+  scoreSimilarity
+} from "../src/validation/dedup.js";
 
 describe("scoreSimilarity", () => {
   it("returns 1 for identical content", () => {
@@ -14,6 +18,16 @@ describe("scoreSimilarity", () => {
     const score = scoreSimilarity("alpha bravo charlie", "bravo charlie delta");
     expect(score).toBeGreaterThan(0);
     expect(score).toBeLessThan(1);
+  });
+});
+
+describe("buildSimilarityCorpus", () => {
+  it("canonicalizes and sorts resource paths before appending them", () => {
+    const corpus = buildSimilarityCorpus("# Skill", [
+      { path: "zeta\\tool.sh", content: "z" },
+      { path: "./alpha/./guide.md", content: "a" }
+    ]);
+    expect(corpus).toBe("# Skill\nalpha/guide.md\na\nzeta/tool.sh\nz");
   });
 });
 

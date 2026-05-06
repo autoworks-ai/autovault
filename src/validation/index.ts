@@ -12,7 +12,7 @@ export type ValidationResource = { path: string; content: string };
 
 function isUnsafeBinPath(p: string): boolean {
   if (typeof p !== "string" || p.length === 0) return true;
-  if (/^\//.test(p) || /^[a-zA-Z]:[\\/]/.test(p)) return true;
+  if (/^\//.test(p) || /^[a-zA-Z]:/.test(p)) return true;
   if (p.split(/[\\/]+/).some((segment) => segment === "..")) return true;
   return false;
 }

@@ -1,3 +1,5 @@
+import { canonicalRelPath } from "../util/path.js";
+
 export type DedupTier = "exact" | "near_exact" | "functional" | "novel";
 
 export type DedupCandidate = {
@@ -40,7 +42,12 @@ export function buildSimilarityCorpus(
   resources: Array<{ path: string; content: string }> = []
 ): string {
   if (resources.length === 0) return skillMd;
-  const sorted = [...resources].sort((a, b) => a.path.localeCompare(b.path));
+  const sorted = resources
+    .map((resource) => ({
+      path: canonicalRelPath(resource.path),
+      content: resource.content
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
   const parts = [skillMd];
   for (const resource of sorted) {
     parts.push(resource.path, resource.content);

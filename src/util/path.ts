@@ -15,6 +15,11 @@ import path from "node:path";
 export function canonicalRelPath(input: string): string {
   if (typeof input !== "string" || input.length === 0) return "";
   const slashed = input.replace(/\\/g, "/").replace(/\/+/g, "/");
+  // Windows drive-qualified paths are absolute (`C:/x`) or drive-relative
+  // (`C:x`) on Windows even though path.posix treats them as plain relative
+  // strings. Reject them here so every caller that relies on the shared
+  // canonicalizer gets the same portability boundary as the storage layer.
+  if (/^[a-zA-Z]:/.test(slashed)) return "";
   let normalized = path.posix.normalize(slashed);
   while (normalized.startsWith("./")) normalized = normalized.slice(2);
   if (normalized.length === 0 || normalized === "." || normalized === "..") {

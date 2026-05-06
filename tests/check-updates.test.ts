@@ -19,10 +19,20 @@ metadata:
 
 const skillMdV2 = skillMd.replace("# Body", "# Body v2");
 
-async function writeBundledSkill(name: string, body: string): Promise<string> {
+async function writeBundledSkill(
+  name: string,
+  body: string,
+  resources: Array<{ path: string; content: string }> = []
+): Promise<string> {
   const bundledRoot = path.join(currentStorageRoot(), "bundled-skills");
-  await fs.mkdir(path.join(bundledRoot, name), { recursive: true });
-  await fs.writeFile(path.join(bundledRoot, name, "SKILL.md"), body, "utf-8");
+  const skillRoot = path.join(bundledRoot, name);
+  await fs.mkdir(skillRoot, { recursive: true });
+  await fs.writeFile(path.join(skillRoot, "SKILL.md"), body, "utf-8");
+  for (const resource of resources) {
+    const target = path.join(skillRoot, resource.path);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, resource.content, "utf-8");
+  }
   return bundledRoot;
 }
 
@@ -72,6 +82,38 @@ describe("checkUpdates", () => {
       bundled_skill_name: "drift-skill",
       skill_md: skillMd
     });
+    const result = await checkUpdates(undefined, { bundledSkillsDir });
+    expect(result.up_to_date).toContain("drift-skill");
+    expect(result.drifted).toHaveLength(0);
+    expect(result.unchecked).toHaveLength(0);
+  });
+
+  it("ignores bundled .autovault metadata when comparing inline bundles", async () => {
+    const skillWithResource = `---
+name: drift-skill
+description: A description that is intentionally long enough to satisfy the schema length check.
+metadata:
+  version: "1.0.0"
+resources:
+  - path: references/notes.md
+    type: file
+---
+
+# Body
+`;
+    const resources = [{ path: "references/notes.md", content: "# notes\n" }];
+    const bundledSkillsDir = await writeBundledSkill("drift-skill", skillWithResource, [
+      ...resources,
+      { path: ".autovault-manifest", content: "{}" }
+    ]);
+    await installSkill({
+      source: "url",
+      identifier: "drift-skill",
+      bundled_skill_name: "drift-skill",
+      skill_md: skillWithResource,
+      resources
+    });
+
     const result = await checkUpdates(undefined, { bundledSkillsDir });
     expect(result.up_to_date).toContain("drift-skill");
     expect(result.drifted).toHaveLength(0);

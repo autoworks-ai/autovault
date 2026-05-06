@@ -45,7 +45,7 @@ async function bundledResources(skillDir) {
       const rel = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) {
         await walk(abs, rel);
-      } else if (entry.name !== "SKILL.md") {
+      } else if (entry.name !== "SKILL.md" && !entry.name.startsWith(".autovault-")) {
         const content = await fs.readFile(abs, "utf-8");
         resources.push({ path: rel, content });
       }

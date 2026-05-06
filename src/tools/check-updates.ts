@@ -64,7 +64,7 @@ async function readBundledInlineBundle(
       const rel = relative ? `${relative}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
         await walk(abs, rel);
-      } else if (entry.name !== "SKILL.md") {
+      } else if (entry.name !== "SKILL.md" && !entry.name.startsWith(".autovault-")) {
         const content = await fs.readFile(abs, "utf-8");
         resources.push({ path: rel, content });
       }

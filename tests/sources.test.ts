@@ -36,6 +36,12 @@ describe("github source", () => {
       ref: "v1",
       filePath: "skills/foo/SKILL.md"
     });
+    expect(parseGithubIdentifier("owner/repo@v1:skills/foo:name/SKILL.md")).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      ref: "v1",
+      filePath: "skills/foo:name/SKILL.md"
+    });
   });
 
   it("rejects malformed identifiers", () => {
@@ -445,6 +451,14 @@ ${lines.join("\n")}
     const fetcher = vi.fn(async () => makeResponse("never reached")) as unknown as typeof fetch;
     await expect(
       fetchSkillFromGitHub(`owner/repo@${"a".repeat(40)}:/etc/passwd`, { fetch: fetcher })
+    ).rejects.toThrow(/unsafe GitHub/);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Windows drive-qualified SKILL.md path before any fetch", async () => {
+    const fetcher = vi.fn(async () => makeResponse("never reached")) as unknown as typeof fetch;
+    await expect(
+      fetchSkillFromGitHub(`owner/repo@${"a".repeat(40)}:C:/temp/SKILL.md`, { fetch: fetcher })
     ).rejects.toThrow(/unsafe GitHub/);
     expect(fetcher).not.toHaveBeenCalled();
   });
