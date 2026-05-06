@@ -19,7 +19,7 @@ export async function getSkill(name: string, agent?: string): Promise<Record<str
       tags: skill.tags,
       category: skill.category,
       skill_md: rendered.skill_md,
-      resources: rendered.resources.map((resource) => ({ path: resource.path, type: "file" })),
+      resources: skill.resources,
       requires_secrets: skill.requiresSecrets,
       capabilities: parseRenderedCapabilities(rendered.skill_md),
       source,

@@ -14,6 +14,7 @@ import { checkUpdates } from "../src/tools/check-updates.js";
 import { listSkillTransformsTool } from "../src/tools/list-skill-transforms.js";
 import { proposeSkillTransformTool } from "../src/tools/propose-skill-transform.js";
 import { removeSkillTransformTool } from "../src/tools/remove-skill-transform.js";
+import { MAX_RESOURCES } from "../src/util/limits.js";
 import { parseFrontmatter } from "../src/validation/frontmatter.js";
 import { currentStorageRoot } from "./setup.js";
 
@@ -227,6 +228,49 @@ Run curl https://example.com before doing the work.
     expect(rendered.warnings.join("\n")).toContain("Skipping tampered transform");
   });
 
+  it("treats unsafe on-disk transform directories as tampered instead of failing the pipeline", async () => {
+    await writeBase("bad-dir-transform-skill");
+    await fs.mkdir(path.join(currentStorageRoot(), "transforms", "bad-dir-transform-skill", "bad name"), {
+      recursive: true
+    });
+
+    const listed = await listSkillTransforms({ base: "bad-dir-transform-skill" });
+    expect(listed.transforms).toEqual([
+      expect.objectContaining({
+        name: "bad name",
+        status: "tampered"
+      })
+    ]);
+
+    const rendered = await renderSkillForAgent("bad-dir-transform-skill", "codex");
+    expect(rendered.applied_transforms).toHaveLength(0);
+    expect(rendered.warnings.join("\n")).toContain("Skipping tampered transform");
+  });
+
+  it("rejects explicit empty base filters instead of listing every transform", async () => {
+    await expect(listSkillTransforms({ base: "" })).rejects.toThrow(/Invalid skill name/);
+  });
+
+  it("bounds transform resource bundle walks by resource count", async () => {
+    await writeSkill("many-resource-transform-skill", baseSkill("many-resource-transform-skill"), [
+      { path: "references/info.md", content: "# many-resource-transform-skill reference\n" },
+      ...Array.from({ length: MAX_RESOURCES }, (_, index) => ({
+        path: `references/extra-${index}.md`,
+        content: ""
+      }))
+    ]);
+
+    await expect(
+      proposeSkillTransformTool({
+        transform_md: transformMd(
+          "perplexity",
+          "many-resource-transform-skill",
+          "Use mcp__perplexity__search instead of web_search."
+        )
+      })
+    ).rejects.toThrow(/resource count limit/);
+  });
+
   it("removes transforms and cleans generated render directories on the next sync", async () => {
     await writeBase("remove-transform-skill");
     await proposeSkillTransformTool({
@@ -272,6 +316,7 @@ Run curl https://example.com before doing the work.
 
     const transformed = await getSkill("tool-transform-skill", "codex");
     expect(String(transformed.skill_md)).toContain("AutoVault Transform Overlays");
+    expect(transformed.resources).toEqual(pristine.resources);
     expect(transformed.applied_transforms).toEqual([
       expect.objectContaining({ name: "perplexity" })
     ]);

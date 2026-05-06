@@ -10,7 +10,7 @@ import {
 } from "../storage/index.js";
 import { withStorageLock } from "../storage/lock.js";
 import type { ValidationResult } from "../types.js";
-import { MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES, MAX_TOTAL_BYTES } from "../util/limits.js";
+import { MAX_RESOURCES, MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES, MAX_TOTAL_BYTES } from "../util/limits.js";
 import { canonicalRelPath } from "../util/path.js";
 import { parseManifest, signFiles, verifyFile } from "../util/sign.js";
 import { sha256 } from "../util/hash.js";
@@ -203,6 +203,15 @@ function renderIdentity(agent: string, name: string): string {
 function validateAgentName(agent: string): void {
   if (!AGENT_NAME_PATTERN.test(agent)) {
     throw new Error(`Invalid agent name: ${agent}`);
+  }
+}
+
+function isSafeSkillName(name: string): boolean {
+  try {
+    assertSafeSkillName(name);
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -403,6 +412,9 @@ async function readResourceBundleUnlocked(name: string): Promise<ValidationResou
         continue;
       }
       if (!entry.isFile()) continue;
+      if (resources.length >= MAX_RESOURCES) {
+        throw new Error(`Rendered resource bundle exceeds resource count limit: ${MAX_RESOURCES}`);
+      }
       const stat = await fs.lstat(abs);
       if (!stat.isFile() || stat.size > MAX_RESOURCE_BYTES) continue;
       totalBytes += stat.size;
@@ -428,8 +440,15 @@ async function readTransformStatus(
   base: string,
   name: string
 ): Promise<{ status: "ok"; transform: SkillTransform } | { status: "tampered"; summary: SkillTransformSummary }> {
-  assertSafeSkillName(base);
-  assertSafeSkillName(name);
+  try {
+    assertSafeSkillName(base);
+    assertSafeSkillName(name);
+  } catch (error) {
+    return {
+      status: "tampered",
+      summary: { base, name, status: "tampered", error: String(error) }
+    };
+  }
   const dir = skillTransformDir(base, name);
   const manifestRaw = await fs.readFile(path.join(dir, TRANSFORM_MANIFEST_FILE), "utf-8").catch(() => null);
   if (manifestRaw === null) {
@@ -540,7 +559,7 @@ async function baseNamesWithTransforms(): Promise<string[]> {
   try {
     const entries = await fs.readdir(transformsRoot(), { withFileTypes: true });
     return entries
-      .filter((entry) => entry.isDirectory() && !entry.name.includes("."))
+      .filter((entry) => entry.isDirectory() && !entry.name.includes(".") && isSafeSkillName(entry.name))
       .map((entry) => entry.name)
       .sort();
   } catch {
@@ -555,7 +574,10 @@ async function readTransformsForBase(base: string): Promise<{
   const transforms: SkillTransform[] = [];
   const summaries: SkillTransformSummary[] = [];
   for (const name of await transformNamesForBase(base)) {
-    const status = await readTransformStatus(base, name);
+    const status = await readTransformStatus(base, name).catch((error) => ({
+      status: "tampered" as const,
+      summary: { base, name, status: "tampered" as const, error: String(error) }
+    }));
     if (status.status === "ok") {
       transforms.push(status.transform);
       summaries.push(transformSummary(status.transform, "ok"));
@@ -703,8 +725,14 @@ export async function proposeSkillTransform(
     updatedAt: now
   };
 
+  let duplicateFoundUnderLock = false;
   await withStorageLock(async () => {
     const dir = skillTransformDir(transform.base, transform.name);
+    const existingPresentUnderLock = await fs.lstat(dir).then(() => true).catch(() => false);
+    if (existingPresentUnderLock && !input.replace) {
+      duplicateFoundUnderLock = true;
+      return;
+    }
     const tmpDir = `${dir}.tmp.${Date.now()}.${Math.random().toString(36).slice(2)}`;
     try {
       await fs.mkdir(tmpDir, { recursive: true });
@@ -731,6 +759,15 @@ export async function proposeSkillTransform(
     }
   });
 
+  if (duplicateFoundUnderLock) {
+    return {
+      outcome: "duplicate",
+      base: proposedBase,
+      name: proposedName,
+      errors: [`Transform already exists: ${proposedBase}/${proposedName}`]
+    };
+  }
+
   return {
     outcome: "accepted",
     base: transform.base,
@@ -744,7 +781,7 @@ export async function proposeSkillTransform(
 export async function listSkillTransforms(input: { base?: string } = {}): Promise<{
   transforms: SkillTransformSummary[];
 }> {
-  const bases = input.base ? [input.base] : await baseNamesWithTransforms();
+  const bases = input.base !== undefined ? [input.base] : await baseNamesWithTransforms();
   const summaries: SkillTransformSummary[] = [];
   for (const base of bases) {
     assertSafeSkillName(base);
@@ -761,9 +798,12 @@ export async function removeSkillTransform(input: { base: string; name: string }
 }> {
   assertSafeSkillName(input.base);
   assertSafeSkillName(input.name);
-  const dir = skillTransformDir(input.base, input.name);
-  const existed = await fs.lstat(dir).then(() => true).catch(() => false);
-  await fs.rm(dir, { recursive: true, force: true });
+  let existed = false;
+  await withStorageLock(async () => {
+    const dir = skillTransformDir(input.base, input.name);
+    existed = await fs.lstat(dir).then(() => true).catch(() => false);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
   return { removed: existed, base: input.base, name: input.name };
 }
 
@@ -910,8 +950,35 @@ export async function clearRenderedSkills(): Promise<void> {
   await fs.rm(renderedRoot(), { recursive: true, force: true });
 }
 
+export async function pruneRenderedSkills(keep: Set<string>): Promise<void> {
+  const root = renderedRoot();
+  const agents = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const agentEntry of agents) {
+    const agentPath = path.join(root, agentEntry.name);
+    if (!agentEntry.isDirectory()) {
+      await fs.rm(agentPath, { recursive: true, force: true }).catch(() => {});
+      continue;
+    }
+    const skills = await fs.readdir(agentPath, { withFileTypes: true }).catch(() => []);
+    for (const skillEntry of skills) {
+      const skillPath = path.join(agentPath, skillEntry.name);
+      if (!skillEntry.isDirectory()) {
+        await fs.rm(skillPath, { recursive: true, force: true }).catch(() => {});
+        continue;
+      }
+      if (!keep.has(`${agentEntry.name}/${skillEntry.name}`)) {
+        await fs.rm(skillPath, { recursive: true, force: true });
+      }
+    }
+    const remaining = await fs.readdir(agentPath).catch(() => []);
+    if (remaining.length === 0) {
+      await fs.rmdir(agentPath).catch(() => {});
+    }
+  }
+}
+
 export async function listTransformReviews(base?: string): Promise<TransformReview[]> {
-  const bases = base ? [base] : await baseNamesWithTransforms();
+  const bases = base !== undefined ? [base] : await baseNamesWithTransforms();
   const reviews: TransformReview[] = [];
   for (const baseName of bases) {
     assertSafeSkillName(baseName);
