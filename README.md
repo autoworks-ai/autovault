@@ -207,6 +207,7 @@ All config is environment-based and validated at startup.
 | `AUTOVAULT_MODE` | `local` | Reserved for future modes. |
 | `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
 | `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite path for capability metadata. |
+| `AUTOVAULT_PROFILE_LINKS` | _unset_ | Comma-separated `agent=/skills/root` links to refresh during profile sync, e.g. `codex=~/.codex/skills,claude-code=~/.claude/skills`. |
 | `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
 | `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently `text` only). |
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
@@ -215,15 +216,19 @@ All config is environment-based and validated at startup.
 
 ## Security Model
 
-AutoVault is a storage-and-validation service, not a sandbox or execution engine.
+AutoVault has two distinct surfaces with different execution properties.
 
-- It **does not execute** skill content.
-- It treats remote sources as **untrusted input**.
-- It blocks common unsafe patterns via a denylist.
-- It validates paths to prevent traversal.
-- It writes diagnostics to **stderr** so stdout stays reserved for MCP framing.
+**The MCP server** (`dist/index.js`, spawned by Claude Code / Cursor / Codex over stdio) is a storage-and-validation service. It never executes skill content. Agents call its tools to install, propose, search, and read skills; the bytes sit on disk afterward. Remote sources are treated as untrusted input, validated through the schema/security/capability pipeline, and rejected (or, in non-strict mode, warned about) before any write. Path inputs are checked to prevent traversal, and all diagnostics go to stderr so stdout stays reserved for MCP framing.
 
-For the full threat model, see [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+**The `autovault skill <action>` CLI** (e.g. `autovault skill setup <name>`) is a separate, user-invoked surface that *does* execute the bin resources a skill declares in its `bin:` frontmatter block. It is the explicit "user runs this in their own terminal" path for skills that need out-of-band setup (registering MCP servers, writing host config, prompting for secrets). The CLI runs the script as the invoking user, with the user's full filesystem and network access. Three guarantees apply before exec:
+
+- **Manifest signature verification, hard-fail.** Every byte of SKILL.md and every declared bin resource is signed at install time. If either has been mutated post-install, the CLI refuses to run and exits non-zero. This is hard enforcement, not log-only — but the trust root is the keypair at `$AUTOVAULT_STORAGE_PATH/.signing-key.json`, which lives inside the directory the manifest is protecting. The verification therefore detects tampering by callers *outside* the storage-root trust domain (the MCP API, which exposes no key-write tool; accidental corruption; weaker-privilege processes that can read but not write the storage tree). It does **not** defend against a same-uid attacker who already has storage-root writes — they can rewrite the keypair and re-sign tampered bytes. Treat storage-root write access as full vault compromise; see `docs/THREAT-MODEL.md` for the deliberate v1 trade and the v2 keychain lift.
+- **Storage-root only.** The CLI execs from `$AUTOVAULT_STORAGE_PATH/skills/<name>/`, never from a synced host mirror (`~/.claude/skills/`, `~/.cursor/skills/`). Mirrors are read-only copies maintained by `sync-profiles`; only the storage root carries the manifest the CLI was authored against.
+- **Interactive-TTY gate (defense-in-depth).** `bin.<action>.requires-tty` is accepted as declarative metadata, but the CLI currently requires an interactive TTY for every bin action regardless of that value. The gate is unconditional — no environment variable disables it. **Treat the TTY check as advisory, not as proof a human is present**: an agent that can allocate a pseudo-terminal (Node `pty`, Python `pexpect`) will satisfy `process.stdin.isTTY` without any user review. The gate raises the bar against the simplest exfiltration path (`echo $SECRET | autovault skill setup foo`) but does not, on its own, walls off agents from invoking signed bin scripts. The hard boundary is install-time validation + manifest signing, not TTY presence at exec time. See `docs/THREAT-MODEL.md` for the full discussion.
+
+Residual risks the CLI does not protect against: (a) a malicious skill that passes the install-time security scan and then runs legitimately-shaped commands (the user is the gate of last resort — `autovault skill which <name> <action>` prints the resolved script path and full signed argv for review); (b) within-boot PID reuse interacting with a stalled writer (documented in `docs/THREAT-MODEL.md` — manual `.autovault-write-lock` removal is the recourse); (c) an attacker who already holds write access to `$AUTOVAULT_STORAGE_PATH` (same-uid compromise is out of scope for v1 manifest verification).
+
+For the full threat model, including trust boundaries and accepted risks, see [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
 ## Backup and Restore
 

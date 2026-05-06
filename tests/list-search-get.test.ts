@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { listSkills } from "../src/tools/list-skills.js";
 import { searchSkills } from "../src/tools/search-skills.js";
 import { getSkill } from "../src/tools/get-skill.js";
-import { writeSkill, writeSkillSource } from "../src/storage/index.js";
+import { writeSkill } from "../src/storage/index.js";
 
 const md = (name: string) => `---
 name: ${name}
@@ -44,8 +44,7 @@ describe("list/search/get tools", () => {
   });
 
   it("getSkill returns the full record plus source metadata when available", async () => {
-    await writeSkill("alpha-skill", md("alpha-skill"));
-    await writeSkillSource("alpha-skill", {
+    await writeSkill("alpha-skill", md("alpha-skill"), [], {
       source: "github",
       identifier: "owner/repo",
       fetchedAt: new Date().toISOString(),

@@ -58,6 +58,11 @@ requires-secrets:
   - name: GITHUB_TOKEN
     description: Required for gh CLI calls.
     required: true
+bin:
+  setup:
+    command: bin/setup
+    description: Configure secrets in the host keychain.
+    requires-tty: true
 ```
 
 ### How to think about `capabilities`
@@ -76,6 +81,50 @@ surface area, understating will get the skill blocked at install time.
 If your skill contains `curl` but you declare `network: false`, AutoVault
 will reject the install. Same for `python` commands under a `tools: [Bash]`
 declaration, or `echo foo > ~/.bashrc` under `filesystem: readonly`.
+
+`capabilities.{network, filesystem, tools}` describes the **whole bundle** —
+SKILL.md AND every resource file (including `bin/` scripts). The cross-check
+runs the network/filesystem/tools patterns over each shipped file, so a skill
+whose `bin/setup` makes HTTP calls must declare `network: true` even if the
+agent itself never makes a network call. The reason: at install time the user
+has no practical way to audit every line of every script before running setup,
+and a silent capability gap turns the declaration into a UX trap (a skill
+declaring `network: false` while shipping a `bin/setup` that fetches and pipes
+a remote installer into a shell is exactly what this would have hidden).
+Declare honestly for what runs end-to-end; the agent is still responsible for
+confirming the action surface at use time.
+
+## How to think about `bin`
+
+Use a `bin` block when the skill needs out-of-band setup that handles secrets
+(API keys, OAuth tokens, host config files). Each entry declares a script that
+the user invokes from their own terminal:
+
+```
+autovault skill setup my-skill
+autovault skill verify my-skill
+autovault skill rotate-key my-skill
+```
+
+The agent never sees the secret — it just instructs the user to run the
+command. Action names follow `^[a-z][a-z0-9-]*$`. `setup` is the convention,
+but any action name (`verify`, `doctor`, `uninstall`, `rotate-key`, …) is fine.
+
+| Field | Meaning |
+|---|---|
+| `command` | Path to a script under the skill directory. Validated via the same path-safety check that `resources[]` uses — no traversal, no absolute paths. |
+| `args` | Optional array of strings passed verbatim to `execve`. No shell parsing, no globbing. |
+| `description` | One-line summary printed by `autovault skill list` (planned). |
+| `requires-tty` | Declarative metadata for the action. The current CLI always requires an interactive terminal for every bin action, even when this is `false`. |
+
+Files referenced by `command` must be supplied as resources (in
+`propose_skill({ resources: [...] })` or fetched alongside SKILL.md by the
+GitHub adapter). Declared bin commands are written with mode `0o755` and
+covered by the same Ed25519 signature manifest as SKILL.md — the CLI verifies
+the signature before exec and refuses to run on mismatch.
+
+`requires-secrets` should describe secrets only when **the agent itself** needs
+them. When the bin script is the only consumer, leave `requires-secrets: []`.
 
 ## Full template
 
@@ -136,6 +185,10 @@ Things the skill should NOT do, so readers don't over-apply it.
       evaluation of shell variables, verification-bypass flags on git or
       TLS, setuid/setgid chmod, or obfuscated (base64/hex) shell
       execution. See `scripts/security/patterns.json` for the full list.
+      The same denylist applies to every file in `resources[]` — including
+      bin scripts.
+- [ ] If a `bin` block is declared, every `bin.<action>.command` resolves to
+      a file shipped in `resources[]`.
 - [ ] A "when to use" section explains triggers.
 - [ ] An "anti-patterns" or "when NOT to use" section prevents misapplication.
 

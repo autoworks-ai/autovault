@@ -45,7 +45,7 @@ async function bundledResources(skillDir) {
       const rel = path.posix.join(relative, entry.name);
       if (entry.isDirectory()) {
         await walk(abs, rel);
-      } else if (entry.name !== "SKILL.md") {
+      } else if (entry.name !== "SKILL.md" && !entry.name.startsWith(".autovault-")) {
         const content = await fs.readFile(abs, "utf-8");
         resources.push({ path: rel, content });
       }
@@ -92,18 +92,12 @@ async function main() {
           source: "url",
           identifier: skill.dir,
           bundled_skill_name: skill.dir,
-          skill_md: skill.body
+          skill_md: skill.body,
+          resources
         }
       })
     );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-
-    if (resources.length > 0 && result.success) {
-      process.stdout.write(
-        `note: ${resources.length} resource file(s) detected for ${skill.dir}; they are not uploaded via install_skill. ` +
-          `Use propose_skill for resource bundling, or copy them manually if needed.\n`
-      );
-    }
   }
 
   process.stdout.write("\n--- list_skills ---\n");

@@ -246,18 +246,33 @@ export async function importAutohubCapabilities(input: ImportAutohubInput): Prom
     }
 
     const insertRule = db.prepare(
-      `INSERT INTO context_rules(id, pattern, priority, groups_json, servers_json)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO context_rules(
+        id, pattern, priority, groups_json, servers_json, profiles_json,
+        exclude_profiles_json, grant_server_tools
+      )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          pattern = excluded.pattern,
          priority = excluded.priority,
          groups_json = excluded.groups_json,
-         servers_json = excluded.servers_json`
+         servers_json = excluded.servers_json,
+         profiles_json = excluded.profiles_json,
+         exclude_profiles_json = excluded.exclude_profiles_json,
+         grant_server_tools = excluded.grant_server_tools`
     );
     for (const ruleValue of Array.isArray(toolFilters.contextRules) ? toolFilters.contextRules : []) {
       const rule = asRecord(ruleValue);
       const id = typeof rule.id === "string" ? rule.id : `rule-${String(rule.pattern ?? "").slice(0, 32)}`;
-      insertRule.run(id, String(rule.pattern ?? ""), Number(rule.priority ?? 0), jsonArray(rule.enableGroups), jsonArray(rule.startServers));
+      insertRule.run(
+        id,
+        String(rule.pattern ?? ""),
+        Number(rule.priority ?? 0),
+        jsonArray(rule.enableGroups),
+        jsonArray(rule.startServers),
+        jsonArray(rule.profiles),
+        jsonArray(rule.excludeProfiles),
+        rule.grantServerTools === false ? 0 : 1
+      );
     }
 
     const insertAlways = db.prepare("INSERT OR IGNORE INTO always_enabled(pattern) VALUES (?)");

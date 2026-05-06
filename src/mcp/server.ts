@@ -58,13 +58,24 @@ export function createServer(): McpServer {
 
   server.tool(
     "install_skill",
-    "Install a skill from an external source (GitHub, agentskills.io registry, or an HTTPS URL) after running it through AutoVault's full validation gate: frontmatter repair, schema checks, security denylist, and capability cross-check. Use when the user asks to add a known-good skill from a published source.",
+    "Install a skill from an external source (GitHub, agentskills.io registry, or an HTTPS URL) after running it through AutoVault's full validation gate: frontmatter repair, schema checks, security denylist, and capability cross-check. Use when the user asks to add a known-good skill from a published source. For external (non-inline) installs the source adapter fetches resources from upstream at the same commit/URL the SKILL.md came from — caller-supplied `resources[]` is rejected to prevent laundered provenance. To install a skill bundle from caller-held bytes, use the inline path: pass `skill_md` AND `resources[]` together (records source: \"inline\").",
     {
       source: z.enum(["github", "agentskills", "url"]),
       identifier: z.string(),
       version: z.string().optional(),
-      skill_md: z.string().optional(),
-      bundled_skill_name: z.string().optional()
+      skill_md: z
+        .string()
+        .optional()
+        .describe(
+          "Inline SKILL.md bytes. When set, this is an inline install: the source adapter is NOT consulted, and `resources[]` (if any) is honored. Provenance is recorded as source: 'inline'."
+        ),
+      bundled_skill_name: z.string().optional(),
+      resources: z
+        .array(z.object({ path: z.string(), content: z.string() }))
+        .optional()
+        .describe(
+          "Non-SKILL.md files (bin scripts, references, assets). ONLY honored on inline installs (when `skill_md` is set). Rejected on external installs because the source adapter fetches resources from upstream at the same SHA/URL — accepting caller bytes there would let a caller substitute their own bin/setup while keeping the recorded source pointing at a trusted repo."
+        )
     },
     async (input) => runTool("install_skill", () => installSkill(input))
   );
