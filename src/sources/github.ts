@@ -503,7 +503,7 @@ async function discoverSkillPaths(args: {
   }
   if (data.truncated) {
     throw new Error(
-      `GitHub tree listing for ${args.owner}/${args.repo} was truncated; narrow the import with a tree URL.`
+      `GitHub tree listing for ${args.owner}/${args.repo} was truncated; import an exact SKILL.md identifier or blob URL instead of relying on a recursive tree listing.`
     );
   }
   if (!Array.isArray(data.tree)) return [];
