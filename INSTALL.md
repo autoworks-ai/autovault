@@ -7,8 +7,34 @@ local agent host.
 ## Prerequisites
 
 - Node.js **>= 20.0.0** (use `node --version` to confirm)
+- `curl`, `tar`, and `npm`
 - An MCP-compatible host (Claude Code, Cursor, Codex, etc.)
-- Git (for cloning the repo)
+- Git, if you choose the manual clone path
+
+## Quick install
+
+```bash
+curl -fsSL https://autovault.sh | sh
+```
+
+The installer downloads the AutoVault source release, builds the Node app under
+`~/.autovault/app`, preserves the rest of `~/.autovault/` as vault storage, and
+creates a shim at `~/.autovault/bin/autovault`.
+
+Useful installer overrides:
+
+```bash
+AUTOVAULT_HOME=~/.local/share/autovault curl -fsSL https://autovault.sh | sh
+AUTOVAULT_BIN_DIR=~/bin curl -fsSL https://autovault.sh | sh
+AUTOVAULT_NO_BOOTSTRAP=1 curl -fsSL https://autovault.sh | sh
+AUTOVAULT_REF=v0.3.0 curl -fsSL https://autovault.sh | sh
+```
+
+If `~/.autovault/bin` is not already on your `PATH`, add it:
+
+```bash
+export PATH="$HOME/.autovault/bin:$PATH"
+```
 
 ## 1. Clone and build
 
@@ -240,6 +266,14 @@ node scripts/probe.mjs
 Both scripts spawn `dist/index.js` via stdio and exercise the tool surface.
 
 ## Updating AutoVault
+
+If you installed with `autovault.sh`, rerun the installer:
+
+```bash
+curl -fsSL https://autovault.sh | sh
+```
+
+For a manual clone:
 
 ```bash
 git pull
