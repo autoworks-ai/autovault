@@ -1,6 +1,7 @@
 import { readSkill, readSkillSource } from "../storage/index.js";
 import { renderSkillForAgent } from "../transforms/index.js";
 import type { SkillRecord } from "../types.js";
+import { canonicalRelPath } from "../util/path.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
 import { readSkillResource } from "./read-skill-resource.js";
@@ -61,9 +62,13 @@ export async function getSkill(
 
 function resourcePathsForSkill(skill: SkillRecord): string[] {
   const paths = new Set<string>();
-  for (const resource of skill.resources) paths.add(resource.path);
+  const addPath = (candidate: string): void => {
+    const canonical = canonicalRelPath(candidate);
+    if (canonical.length > 0) paths.add(canonical);
+  };
+  for (const resource of skill.resources) addPath(resource.path);
   for (const action of Object.values(skill.bin)) {
-    if (action.command.length > 0) paths.add(action.command);
+    if (action.command.length > 0) addPath(action.command);
   }
   return [...paths].sort();
 }

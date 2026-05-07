@@ -40,8 +40,18 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
     }
     const bundle = await collectLocalSkillBundle(input.skill_dir);
     const bundleName = skillNameFromMarkdown(bundle.skillMd);
-    if (bundleName !== input.name) {
-      return nameMismatch(input.name, bundleName);
+    if (bundleName.error) {
+      return {
+        success: false,
+        name: input.name,
+        validation: {},
+        warnings: [
+          `Update refused: candidate skill frontmatter could not be parsed: ${bundleName.error}`
+        ]
+      };
+    }
+    if (bundleName.name !== input.name) {
+      return nameMismatch(input.name, bundleName.name);
     }
     return addLocalSkill({
       skillDir: input.skill_dir,
@@ -119,10 +129,17 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
   };
 }
 
-function skillNameFromMarkdown(skillMd: string): string {
-  const { output } = attemptRepair(skillMd);
-  const { data } = parseFrontmatter(output);
-  return typeof data.name === "string" ? data.name : "";
+function skillNameFromMarkdown(skillMd: string): { name: string; error?: string } {
+  try {
+    const { output } = attemptRepair(skillMd);
+    const { data } = parseFrontmatter(output);
+    return { name: typeof data.name === "string" ? data.name : "" };
+  } catch (error) {
+    return {
+      name: "",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 function nameMismatch(expected: string, actual: string): Record<string, unknown> {

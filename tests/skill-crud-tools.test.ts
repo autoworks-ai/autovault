@@ -65,6 +65,87 @@ describe("skill CRUD MCP tool handlers", () => {
     expect(JSON.stringify(mismatch)).toContain("does not match");
   });
 
+  it("returns structured failures for malformed local update frontmatter", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundle("malformed-update-skill", "Before")
+    });
+
+    const malformed = path.join(currentStorageRoot(), "malformed-update-bundle");
+    await fs.mkdir(malformed, { recursive: true });
+    await fs.writeFile(
+      path.join(malformed, "SKILL.md"),
+      `---
+name: [unterminated
+description: A description that is intentionally long enough to satisfy schema checks.
+metadata:
+  version: "1.0.0"
+---
+
+# Broken
+`,
+      "utf-8"
+    );
+
+    const result = await updateSkill({
+      name: "malformed-update-skill",
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: malformed
+    });
+    expect(result).toMatchObject({
+      success: false,
+      name: "malformed-update-skill",
+      validation: {}
+    });
+    expect(JSON.stringify(result)).toContain("frontmatter could not be parsed");
+    await expect(getSkill("malformed-update-skill")).resolves.toMatchObject({
+      skill_md: expect.stringContaining("# Before")
+    });
+  });
+
+  it("returns canonical resource contents paths without duplicates", async () => {
+    const bundle = path.join(currentStorageRoot(), "canonical-resource-bundle");
+    await fs.mkdir(path.join(bundle, "bin"), { recursive: true });
+    await fs.writeFile(
+      path.join(bundle, "SKILL.md"),
+      `---
+name: canonical-resource-skill
+description: A description that is intentionally long enough to satisfy schema checks.
+metadata:
+  version: "1.0.0"
+resources:
+  - path: ./bin/setup
+    type: file
+bin:
+  setup:
+    command: bin/./setup
+    args: []
+    description: Run setup.
+    requires-tty: false
+---
+
+# Canonical Resource
+`,
+      "utf-8"
+    );
+    await fs.writeFile(path.join(bundle, "bin", "setup"), "echo setup\n", "utf-8");
+
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: bundle
+    });
+
+    const loaded = await getSkill("canonical-resource-skill", undefined, {
+      includeResources: true
+    });
+    expect(loaded.resource_contents).toEqual([
+      expect.objectContaining({ path: "bin/setup", content: "echo setup\n" })
+    ]);
+  });
+
   it("deletes skills and profile sync prunes the vault entry", async () => {
     await addSkill({
       source: "local",

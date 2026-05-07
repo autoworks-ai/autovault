@@ -51,3 +51,12 @@ export {
   resetCapabilityDbForTests,
   type CapabilityDb
 } from "./capabilities/db.js";
+export {
+  auditRepo,
+  formatAuditRepoMarkdown,
+  type AuditClassification,
+  type AuditRepoInput,
+  type AuditRepoItem,
+  type AuditRepoResult,
+  type AuditRisk
+} from "./audit/repo.js";

@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+action="${1:-doctor}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+repo="."
+task=""
+target="local"
+mode="sidecar"
+dry_run="false"
+json="false"
+passthrough=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      repo="${2:?--repo requires a path}"
+      shift 2
+      ;;
+    --task)
+      task="${2:?--task requires a value}"
+      shift 2
+      ;;
+    --target)
+      target="${2:?--target requires local or remote}"
+      shift 2
+      ;;
+    --mode)
+      mode="${2:?--mode requires a value}"
+      shift 2
+      ;;
+    --dry-run)
+      dry_run="true"
+      shift
+      ;;
+    --json)
+      json="true"
+      shift
+      ;;
+    --)
+      shift
+      passthrough+=("$@")
+      break
+      ;;
+    *)
+      passthrough+=("$1")
+      shift
+      ;;
+  esac
+done
+
+repo="$(cd "$repo" && pwd)"
+
+emit() {
+  if [[ "$json" == "true" ]]; then
+    printf '{"skill":"cloudflare-ops","action":"%s","repo":"%s","message":"%s"}\n' "$action" "$repo" "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+run_cmd() {
+  if [[ "$dry_run" == "true" || "$action" == "dry-run" ]]; then
+    printf 'dry-run:'
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  (cd "$repo" && "$@")
+}
+
+require_file() {
+  if [[ ! -f "$repo/$1" ]]; then
+    emit "missing $1 in $repo"
+    exit 1
+  fi
+}
+
+case "$action" in
+  setup|doctor)
+    require_file package.json
+    if command -v wrangler >/dev/null 2>&1; then
+      emit "wrangler available"
+    else
+      emit "wrangler not found on PATH"
+    fi
+    if command -v cloudflared >/dev/null 2>&1; then
+      emit "cloudflared available"
+    else
+      emit "cloudflared not found on PATH"
+    fi
+    ;;
+  run|dry-run)
+    case "$task" in
+      deploy-pages)
+        require_file scripts/deploy-pages-site.js
+        run_cmd node "$repo/scripts/deploy-pages-site.js" "${passthrough[@]}"
+        ;;
+      setup-d1)
+        if [[ -f "$repo/scripts/setup-cloudflare-d1.js" ]]; then
+          run_cmd node "$repo/scripts/setup-cloudflare-d1.js" "${passthrough[@]}"
+        else
+          require_file scripts/setup-cloudflare-d1.sh
+          run_cmd bash "$repo/scripts/setup-cloudflare-d1.sh" "${passthrough[@]}"
+        fi
+        ;;
+      tunnel-setup)
+        require_file cloudflare-tunnel/setup.sh
+        run_cmd bash "$repo/cloudflare-tunnel/setup.sh" "${passthrough[@]}"
+        ;;
+      tunnel-start)
+        require_file cloudflare-tunnel/start-tunnel.sh
+        run_cmd bash "$repo/cloudflare-tunnel/start-tunnel.sh" "${passthrough[@]}"
+        ;;
+      *)
+        emit "unknown --task '$task'"
+        exit 1
+        ;;
+    esac
+    ;;
+  migrate)
+    require_file scripts/run-d1-migrations.ts
+    case "$target" in
+      local|remote)
+        run_cmd node --experimental-strip-types "$repo/scripts/run-d1-migrations.ts" "$target" "${passthrough[@]}"
+        ;;
+      *)
+        emit "--target must be local or remote"
+        exit 1
+        ;;
+    esac
+    ;;
+  sync)
+    case "$mode" in
+      sidecar)
+        require_file scripts/run-d1-sync-sidecar.js
+        run_cmd node "$repo/scripts/run-d1-sync-sidecar.js" "${passthrough[@]}"
+        ;;
+      daemon)
+        require_file scripts/run-d1-sync-daemon.js
+        run_cmd node "$repo/scripts/run-d1-sync-daemon.js" "${passthrough[@]}"
+        ;;
+      backfill)
+        require_file scripts/d1-backfill.js
+        run_cmd node "$repo/scripts/d1-backfill.js" "${passthrough[@]}"
+        ;;
+      parity)
+        require_file scripts/d1-parity-check.js
+        run_cmd node "$repo/scripts/d1-parity-check.js" "${passthrough[@]}"
+        ;;
+      *)
+        emit "--mode must be sidecar, daemon, backfill, or parity"
+        exit 1
+        ;;
+    esac
+    ;;
+  *)
+    emit "unknown action '$action'"
+    exit 1
+    ;;
+esac

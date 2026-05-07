@@ -51,13 +51,21 @@ function remotePolicy(): McpToolPolicy {
   return {
     assertToolAllowed: (toolName, _input, authInfo) => assertRemoteToolAllowed(toolName, authInfo),
     assertCanReadSkill: (skillName, authInfo, context) =>
-      assertRemoteSkillReadable(skillName, authInfo, context?.toolName ?? skillName),
+      assertRemoteSkillReadable(skillName, authInfo, readQueryFor(skillName, context?.input)),
     filterSearchSkills: async (result, authInfo, input) => ({
       matches: await filterSearchResultsForAuth(result.matches, authInfo, input.query)
     }),
     filterCheckUpdates: (result, authInfo, input) =>
       filterCheckUpdatesForAuth(result, authInfo, input.skill)
   };
+}
+
+function readQueryFor(skillName: string, input: unknown): string {
+  if (typeof input === "object" && input !== null && "query" in input) {
+    const query = (input as { query?: unknown }).query;
+    if (typeof query === "string" && query.length > 0) return query;
+  }
+  return skillName;
 }
 
 function allowedHostsFor(config: Config): string[] {
