@@ -1,8 +1,8 @@
 # Installing AutoVault
 
-This guide walks through setting up AutoVault as a local capability library and
-compatibility MCP server for Claude Code, Cursor, Codex, AutoHub, or any other
-local agent host.
+This guide walks through setting up AutoVault as a local capability library,
+stdio MCP server, or remote Streamable HTTP MCP service for Claude Code,
+Cursor, Codex, AutoHub, Railway, Docker, or any other MCP-compatible host.
 
 ## Prerequisites
 
@@ -46,7 +46,8 @@ npm run build
 ```
 
 `npm run build` compiles TypeScript into `dist/`. The library entry point is
-`dist/library.js`; the compatibility MCP server entry point is `dist/index.js`.
+`dist/library.js`; the local stdio MCP entry point is `dist/index.js`; the
+remote HTTP MCP entry point is `dist/remote.js`.
 
 ## 2. Choose a storage path (optional)
 
@@ -185,6 +186,64 @@ env = { AUTOVAULT_STORAGE_PATH = "/Users/you/.autovault", AUTOVAULT_PROFILE_LINK
 
 Check Codex docs for your specific version; the stanza shape may vary.
 
+## 5b. Deploy remote MCP (Docker or Railway)
+
+Remote mode is the shortest path for a team/shared vault or a managed service.
+It exposes MCP at `/mcp`, OAuth discovery at
+`/.well-known/oauth-authorization-server`, and protected-resource metadata at
+`/.well-known/oauth-protected-resource/mcp`.
+
+Local Docker:
+
+```bash
+export AUTOVAULT_ADMIN_EMAIL=admin@example.com
+export AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password
+docker compose up --build
+```
+
+Then connect remote MCP clients to:
+
+```text
+http://localhost:3000/mcp
+```
+
+Railway:
+
+1. Create a Railway service from this repository.
+2. Add a persistent volume mounted at `/data/autovault`.
+3. Set these service variables:
+
+```bash
+AUTOVAULT_MODE=remote
+AUTOVAULT_STORAGE_PATH=/data/autovault
+AUTOVAULT_PUBLIC_URL=https://<service>.up.railway.app
+AUTOVAULT_ADMIN_EMAIL=admin@example.com
+AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password
+AUTOVAULT_SECURITY_STRICT=true
+```
+
+Railway sets `PORT`; AutoVault binds to `0.0.0.0:$PORT`. If your deployment
+does not provide `PORT`, set `AUTOVAULT_HTTP_PORT=3000`.
+
+Remote MCP URL:
+
+```text
+https://<service>.up.railway.app/mcp
+```
+
+First boot seeds an owner account from `AUTOVAULT_ADMIN_EMAIL` and
+`AUTOVAULT_ADMIN_PASSWORD`. OAuth dynamic client registration is enabled; the
+client will register, send you through `/login`, exchange an authorization code
+with PKCE, and then call `/mcp` with a bearer token.
+
+Remote mode intentionally does not run `sync-profiles` against client machines.
+The server cannot create symlinks in a user's `~/.codex/skills`,
+`~/.claude/skills`, or Cursor skill roots over remote MCP. Use direct MCP
+discovery/read calls (`search_skills`, `get_skill`, `read_skill_resource`) for
+remote clients. If filesystem-native host skills are required later, add a
+local mirror helper that pulls the permitted remote skills into the local
+profile roots.
+
 ## 6. Verify
 
 From your MCP host, run:
@@ -264,6 +323,17 @@ node scripts/probe.mjs
 ```
 
 Both scripts spawn `dist/index.js` via stdio and exercise the tool surface.
+
+Remote smoke test:
+
+```bash
+npm run build
+node scripts/remote-smoke.mjs
+```
+
+This starts `dist/remote.js` on an ephemeral localhost port, completes OAuth
+login/token exchange, proposes a skill as the owner, and calls `list_skills`
+through Streamable HTTP MCP.
 
 ## Updating AutoVault
 

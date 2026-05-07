@@ -7,6 +7,7 @@ function usage(): never {
   autovault sync-profiles [--link agent=/path/to/skills]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
+  autovault serve
   autovault skill <action> <name>
   autovault skill list
   autovault skill which <name> [<action>]
@@ -71,6 +72,13 @@ async function main(): Promise<void> {
       channel: readFlag(args, "--channel")
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "serve") {
+    process.env.AUTOVAULT_MODE ??= "remote";
+    const { startRemoteServer } = await import("./remote/server.js");
+    await startRemoteServer();
     return;
   }
 

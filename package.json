@@ -10,12 +10,16 @@
   "exports": {
     ".": "./dist/library.js",
     "./mcp": "./dist/index.js",
+    "./remote": "./dist/remote.js",
     "./cli": "./dist/cli.js"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "start:stdio": "node dist/index.js",
+    "start:remote": "node dist/remote.js",
+    "smoke:remote": "node scripts/remote-smoke.mjs",
     "sync:profiles": "tsx src/cli.ts sync-profiles",
     "import:autohub": "tsx src/cli.ts import-autohub --tool-filters ../autohub/config/tool-filters.json --mcp-servers ../autohub/config/mcp-servers.json --reset",
     "test": "vitest run",
@@ -29,6 +33,7 @@
     "@modelcontextprotocol/sdk": "^1.12.0",
     "better-sqlite3": "^12.9.0",
     "dotenv": "^16.4.5",
+    "express": "^5.2.1",
     "gray-matter": "^4.0.3",
     "minisearch": "^7.1.1",
     "tweetnacl": "^1.0.3",
@@ -36,6 +41,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
     "@types/node": "^22.8.7",
     "@vitest/coverage-v8": "^2.1.9",
     "tsx": "^4.19.1",

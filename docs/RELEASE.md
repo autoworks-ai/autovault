@@ -1,7 +1,8 @@
 # Release Guide
 
 This guide covers the minimum release workflow for AutoVault while the project
-is still pre-1.0 and shipping as a stdio-only MCP server.
+is still pre-1.0 and shipping local stdio plus remote Streamable HTTP MCP
+entry points.
 
 ## Release Preconditions
 
@@ -16,6 +17,7 @@ npm ci
 npm run build
 npm test -- --coverage
 node scripts/smoke.mjs
+node scripts/remote-smoke.mjs
 node scripts/probe.mjs
 docker build -t autoworks/autovault:test .
 ```
@@ -64,8 +66,8 @@ git push origin v0.2.0
 
 ## Rollback
 
-AutoVault is a stdio process with filesystem-backed data, so rollback has two
-parts: code rollback and storage preservation.
+AutoVault is filesystem-backed in both local stdio and remote service modes, so
+rollback has two parts: code rollback and storage preservation.
 
 ### Code rollback
 

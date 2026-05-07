@@ -2,8 +2,8 @@
 
 - Status: v1 (review by 2026-07-01)
 - Owner: AutoVault maintainers
-- Scope: AutoVault MCP server (stdio transport), local storage, and the
-  remote source adapters (`github`, `agentskills`, `url`).
+- Scope: AutoVault MCP servers (stdio and remote Streamable HTTP), storage,
+  OAuth state, and the remote source adapters (`github`, `agentskills`, `url`).
 
 AutoVault stores and serves skill content. It does **not** execute skills.
 The agent that consumes a skill is responsible for sandboxing, capability
@@ -20,6 +20,10 @@ checks, and user confirmation for any actions described in the skill.
 3. **Remote source boundary** - GitHub, agentskills.io, and arbitrary
    `https` URLs are **untrusted** content sources. Their bytes are subject
    to validation before persistence.
+4. **Remote MCP boundary** - `dist/remote.js` exposes `/mcp` over HTTP. Bearer
+   tokens are required, OAuth client/session/token state is stored in SQLite,
+   and non-owner skill visibility is filtered by capability policy. TLS is
+   expected from the deployment platform or reverse proxy.
 
 ## Assets
 
@@ -28,6 +32,7 @@ checks, and user confirmation for any actions described in the skill.
 - Source provenance (`.autovault-source.json`) - integrity matters; used
   for drift checks.
 - Operator credentials (e.g. `GITHUB_TOKEN`) - confidentiality matters.
+- Remote OAuth credentials and tokens - confidentiality and revocation matter.
 
 ## Abuse Cases and Mitigations
 
@@ -47,6 +52,11 @@ checks, and user confirmation for any actions described in the skill.
 | A12 | Resource path escapes via a pre-existing parent symlink | `validateResourcePath` walks parent directories to the closest existing ancestor and rejects when its realpath leaves the skill root, so a leaf that doesn't yet exist still cannot ride a symlinked parent into the host filesystem. |
 | A13 | Cross-skill or per-file signature lift via storage-root write access | Manifest signatures are domain-separated: every entry signs `"autovault-manifest-v2\0" + LP(skillName) + LP(filePath) + LP(content)`. Lifting a signature from skill A's `bin/setup` into skill B's manifest fails verification because the signed message embedded the original `(skillName, filePath)`. The manifest itself records the bound `skill`, so swapping a whole `.autovault-manifest` between directories also fails. Pre-fix v1 manifests are rejected by `parseManifest`; reinstall is the supported migration. |
 | A14 | Source-metadata drift after a partial install | `.autovault-source.json` is written into the staged tmp directory before the rename, so the atomic swap delivers SKILL.md, resources, manifest, and source provenance together. A crash between the swap and a post-swap source write — the pre-fix window — would have left live bytes paired with stale provenance, defeating `check_updates`' content-hash drift signal. |
+| A15 | Unauthenticated remote MCP access | `/mcp` is protected with OAuth bearer auth. Missing/invalid tokens return `401` with protected-resource metadata. |
+| A16 | Cross-origin browser abuse against a remote vault | `AUTOVAULT_ALLOWED_ORIGINS` can restrict browser `Origin` headers. If unset, operators rely on bearer auth and deployment-layer controls. |
+| A17 | Non-owner reads a restricted skill body or bundled resource | Remote policy denies the whole skill/resource when the caller lacks access. There is no partial redaction of `SKILL.md`. |
+| A18 | Remote write by viewer token | Write tools require `autovault:write`; owner tokens carry all scopes, editor tokens carry read/write, viewer tokens carry read only. |
+| A19 | Remote profile sync expectation creates local filesystem confusion | `sync-profiles` remains local-only. Remote docs explicitly state that remote MCP cannot symlink into client machines. |
 
 ## Bin scripts: threat model deltas
 
