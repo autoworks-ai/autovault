@@ -1,15 +1,28 @@
 import { readSkill, readSkillSource } from "../storage/index.js";
 import { renderSkillForAgent } from "../transforms/index.js";
+import type { SkillRecord } from "../types.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
+import { readSkillResource } from "./read-skill-resource.js";
 
-export async function getSkill(name: string, agent?: string): Promise<Record<string, unknown>> {
+export type GetSkillOptions = {
+  includeResources?: boolean;
+};
+
+export async function getSkill(
+  name: string,
+  agent?: string,
+  options: GetSkillOptions = {}
+): Promise<Record<string, unknown>> {
   assertSafeSkillName(name);
   const skill = await readSkill(name);
   if (!skill) {
     throw new Error(`Skill not found: ${name}`);
   }
   const source = await readSkillSource(name);
+  const resourceContents = options.includeResources
+    ? await readResourceContents(name, resourcePathsForSkill(skill))
+    : undefined;
   if (agent) {
     const rendered = await renderSkillForAgent(name, agent);
     return {
@@ -20,12 +33,14 @@ export async function getSkill(name: string, agent?: string): Promise<Record<str
       category: skill.category,
       skill_md: rendered.skill_md,
       resources: skill.resources,
+      bin: skill.bin,
       requires_secrets: skill.requiresSecrets,
       capabilities: parseRenderedCapabilities(rendered.skill_md),
       source,
       agent,
       applied_transforms: rendered.applied_transforms,
-      warnings: rendered.warnings
+      warnings: rendered.warnings,
+      ...(resourceContents ? { resource_contents: resourceContents } : {})
     };
   }
   return {
@@ -36,10 +51,33 @@ export async function getSkill(name: string, agent?: string): Promise<Record<str
     category: skill.category,
     skill_md: skill.skillMd,
     resources: skill.resources,
+    bin: skill.bin,
     requires_secrets: skill.requiresSecrets,
     capabilities: skill.capabilities,
-    source
+    source,
+    ...(resourceContents ? { resource_contents: resourceContents } : {})
   };
+}
+
+function resourcePathsForSkill(skill: SkillRecord): string[] {
+  const paths = new Set<string>();
+  for (const resource of skill.resources) paths.add(resource.path);
+  for (const action of Object.values(skill.bin)) {
+    if (action.command.length > 0) paths.add(action.command);
+  }
+  return [...paths].sort();
+}
+
+async function readResourceContents(
+  skillName: string,
+  paths: string[]
+): Promise<Array<{ path: string; content: string; mime_type: string }>> {
+  const resources = [];
+  for (const resourcePath of paths) {
+    const resource = await readSkillResource(skillName, resourcePath);
+    resources.push({ path: resourcePath, ...resource });
+  }
+  return resources;
 }
 
 function parseRenderedCapabilities(skillMd: string): {

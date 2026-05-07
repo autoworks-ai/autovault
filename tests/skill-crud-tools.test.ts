@@ -1,0 +1,85 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { addSkill } from "../src/tools/add-skill.js";
+import { deleteSkill } from "../src/tools/delete-skill.js";
+import { getSkill } from "../src/tools/get-skill.js";
+import { updateSkill } from "../src/tools/update-skill.js";
+import { readSkill, readSkillSource } from "../src/storage/index.js";
+import { currentStorageRoot } from "./setup.js";
+
+const skillMd = (name: string, body = "Body"): string => `---
+name: ${name}
+description: A description that is intentionally long enough to satisfy schema checks.
+metadata:
+  version: "1.0.0"
+---
+
+# ${body}
+`;
+
+async function writeLocalBundle(dir: string, name: string, body = "Body"): Promise<void> {
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "SKILL.md"), skillMd(name, body), "utf-8");
+}
+
+describe("skill CRUD MCP tool handlers", () => {
+  it("adds local skills using the CLI-shaped source fields", async () => {
+    const bundle = path.join(currentStorageRoot(), "local-add");
+    await writeLocalBundle(bundle, "local-add-skill");
+
+    const result = await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: bundle
+    });
+
+    expect(result).toMatchObject({ success: true, name: "local-add-skill" });
+    const source = await readSkillSource("local-add-skill");
+    expect(source).toMatchObject({ source: "local", identifier: "vendor/repo" });
+  });
+
+  it("updates an existing skill from explicit inline bytes and refuses name drift", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundle("update-inline-skill", "Before")
+    });
+
+    const updated = await updateSkill({
+      name: "update-inline-skill",
+      source: "inline",
+      skill_md: skillMd("update-inline-skill", "After")
+    });
+    expect(updated).toMatchObject({ success: true, name: "update-inline-skill" });
+    await expect(getSkill("update-inline-skill")).resolves.toMatchObject({
+      skill_md: expect.stringContaining("# After")
+    });
+
+    const mismatch = await updateSkill({
+      name: "update-inline-skill",
+      source: "inline",
+      skill_md: skillMd("wrong-name", "Wrong")
+    });
+    expect(mismatch).toMatchObject({ success: false, name: "" });
+    expect(JSON.stringify(mismatch)).toContain("does not match");
+  });
+
+  it("deletes skills and profile sync prunes the vault entry", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundle("delete-me-skill")
+    });
+
+    const deleted = await deleteSkill({ name: "delete-me-skill" });
+    expect(deleted).toMatchObject({ deleted: true, name: "delete-me-skill" });
+    await expect(readSkill("delete-me-skill")).resolves.toBeNull();
+  });
+});
+
+async function localBundle(name: string, body = "Body"): Promise<string> {
+  const dir = path.join(currentStorageRoot(), `bundle-${name}-${body}`);
+  await writeLocalBundle(dir, name, body);
+  return dir;
+}

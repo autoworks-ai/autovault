@@ -66,15 +66,11 @@ AutoVault is useful when you want:
 
 AutoVault still exposes the core MCP tools:
 
-- `list_skills` - list installed skill summaries
-- `search_skills` - search by name, description, tags, and category
-- `get_skill` - fetch the full skill plus parsed metadata and provenance
-- `read_skill_resource` - read packaged resource files safely
-- `install_skill` - install from `github`, `agentskills`, or `url`
+- `get_skill` - search by query or fetch by name, with optional packaged resource contents
+- `add_skill` - add from `github`, `agentskills`, `url`, or a local bundle
+- `update_skill` - refresh or replace an installed skill
+- `delete_skill` - remove an installed skill and refresh generated profiles
 - `propose_skill` - validate and store a newly proposed skill
-- `propose_skill_transform` - validate and store a vault-local transform overlay
-- `list_skill_transforms` - inspect configured transforms and integrity status
-- `remove_skill_transform` - delete a transform overlay
 - `check_updates` - compare installed content to upstream source state
 
 ### Library Surface
@@ -84,6 +80,7 @@ AutoVault exports an ESM library API:
 - `resolveCapabilities()` / `resolve_capabilities()` - resolve tools, skills, and MCP servers for a scoped caller request
 - `syncProfiles()` - regenerate per-agent profile symlinks from skill frontmatter
 - `discoverProfileRoots()` - detect existing native host skill roots
+- `addSkill()` / `updateSkill()` / `deleteSkill()` - CRUD-oriented skill lifecycle helpers
 - `installSkill()` - install and validate a skill from a configured source
 - `addLocalSkill()` - install and validate a local skill bundle with local provenance
 - `proposeSkill()` - validate, deduplicate, and store proposed skill content
@@ -303,10 +300,9 @@ https://<service>.up.railway.app/mcp
 Remote mode cannot create symlinks on client machines. `sync-profiles` remains
 local-only because a remote MCP server has no filesystem access to
 `~/.codex/skills`, `~/.claude/skills`, or other host skill roots. Remote clients
-should discover and read skills directly through `search_skills`, `get_skill`,
-and `read_skill_resource`. A later local mirror helper can pull permitted remote
-skills into local profile directories if filesystem-native host skills are
-required.
+should discover and read skills directly through `get_skill`. A later local
+mirror helper can pull permitted remote skills into local profile directories if
+filesystem-native host skills are required.
 
 ## Using It With Cursor
 

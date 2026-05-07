@@ -131,7 +131,7 @@ describe("remote MCP server", () => {
     );
   });
 
-  it("requires bearer auth for MCP and lets an owner initialize and list skills", async () => {
+  it("requires bearer auth for MCP and lets an owner initialize and search skills", async () => {
     const base = await start();
     await seedSkills();
 
@@ -148,13 +148,17 @@ describe("remote MCP server", () => {
     const tokens = await oauthToken(base, ADMIN_EMAIL, ADMIN_PASSWORD);
     const client = await connectClient(base, tokens.access_token);
     try {
-      const result = await client.callTool({ name: "list_skills", arguments: {} });
+      const result = await client.callTool({
+        name: "get_skill",
+        arguments: { query: "remote", top_k: 5 }
+      });
       const text = textContent(result);
-      expect(JSON.parse(text)).toEqual({
-        skills: expect.arrayContaining([
+      expect(JSON.parse(text)).toMatchObject({
+        matches: expect.arrayContaining([
           expect.objectContaining({ name: "public-remote-skill" }),
           expect.objectContaining({ name: "secret-remote-skill" })
-        ])
+        ]),
+        skill: expect.objectContaining({ skill_md: expect.stringContaining("#") })
       });
     } finally {
       await client.close();
@@ -174,14 +178,17 @@ describe("remote MCP server", () => {
     const viewerTokens = await oauthToken(base, VIEWER_EMAIL, VIEWER_PASSWORD);
     const viewer = await connectClient(base, viewerTokens.access_token);
     try {
-      const listed = await viewer.callTool({ name: "list_skills", arguments: {} });
-      expect(JSON.parse(textContent(listed))).toEqual({
-        skills: [expect.objectContaining({ name: "public-remote-skill" })]
+      const listed = await viewer.callTool({
+        name: "get_skill",
+        arguments: { query: "remote", top_k: 5 }
+      });
+      expect(JSON.parse(textContent(listed))).toMatchObject({
+        matches: [expect.objectContaining({ name: "public-remote-skill" })]
       });
 
       const hidden = await viewer.callTool({
-        name: "read_skill_resource",
-        arguments: { skill_name: "secret-remote-skill", resource_path: "notes.txt" }
+        name: "get_skill",
+        arguments: { name: "secret-remote-skill", include_resources: true }
       });
       expect(hidden.isError).toBe(true);
       expect(textContent(hidden)).toContain("Permission denied");

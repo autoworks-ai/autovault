@@ -90,8 +90,8 @@ Bootstrapping 3 skill(s) into /Users/you/.autovault
 { "success": true, "name": "commit-message", ... }
 --- installing skill-author ---
 { "success": true, "name": "skill-author", ... }
---- list_skills ---
-{ "skills": [ ... ] }
+--- get_skill query ---
+{ "matches": [ ... ], "skill": { ... } }
 ```
 
 Each install runs the full validation gate (schema, security denylist,
@@ -121,9 +121,9 @@ node dist/cli.js sync-profiles \
 
 This creates or updates managed links inside those roots and leaves unrelated
 system or manually installed skills intact.
-Set `AUTOVAULT_PROFILE_LINKS` to make `install_skill`, `propose_skill`,
-`propose_skill_transform`, `remove_skill_transform`, and plain `sync-profiles`
-refresh those roots automatically.
+Set `AUTOVAULT_PROFILE_LINKS` to make `add_skill`, `update_skill`,
+`propose_skill`, `delete_skill`, and plain `sync-profiles` refresh those roots
+automatically.
 
 AutoVault can also discover existing native roots:
 
@@ -206,10 +206,8 @@ Add to your project's `.mcp.json` (or `~/.claude/mcp.json` for global):
 }
 ```
 
-Reload Claude Code. The `list_skills`, `search_skills`, `get_skill`,
-`read_skill_resource`, `install_skill`, `propose_skill`,
-`propose_skill_transform`, `list_skill_transforms`, `remove_skill_transform`,
-and `check_updates` tools should all appear.
+Reload Claude Code. The `get_skill`, `add_skill`, `update_skill`,
+`delete_skill`, `propose_skill`, and `check_updates` tools should all appear.
 
 ### Cursor
 
@@ -294,27 +292,26 @@ with PKCE, and then call `/mcp` with a bearer token.
 
 Remote mode intentionally does not run `sync-profiles` against client machines.
 The server cannot create symlinks in a user's `~/.codex/skills`,
-`~/.claude/skills`, or Cursor skill roots over remote MCP. Use direct MCP
-discovery/read calls (`search_skills`, `get_skill`, `read_skill_resource`) for
-remote clients. If filesystem-native host skills are required later, add a
-local mirror helper that pulls the permitted remote skills into the local
-profile roots.
+`~/.claude/skills`, or Cursor skill roots over remote MCP. Use direct MCP reads
+through `get_skill` for remote clients. If filesystem-native host skills are
+required later, add a local mirror helper that pulls the permitted remote skills
+into the local profile roots.
 
 ## 6. Verify
 
 From your MCP host, run:
 
 ```
-list_skills
+get_skill({ "query": "skill", "top_k": 10 })
 ```
 
 You should see the three seeded skills. Then try:
 
 ```
-search_skills("commit")
-get_skill("commit-message")
-search_skills("author a new skill")
-get_skill("skill-author")
+get_skill({ "query": "commit" })
+get_skill({ "name": "commit-message" })
+get_skill({ "query": "author a new skill" })
+get_skill({ "name": "skill-author" })
 ```
 
 ## 6a. Make the agent reach for the vault (recommended)
@@ -328,10 +325,9 @@ every task, add the following instruction to your project's `AGENTS.md`,
 ## Skill Discovery
 
 Before performing any task the user asks for, call
-`mcp__autovault__search_skills` with a short query describing the task. If
-any result scores highly, call `mcp__autovault__get_skill` and follow the
-returned SKILL.md instead of improvising from scratch. Only skip this step
-if the user has explicitly said not to use AutoVault.
+`mcp__autovault__get_skill` with a short query describing the task. If a skill
+matches, follow the returned SKILL.md instead of improvising from scratch. Only
+skip this step if the user has explicitly said not to use AutoVault.
 ```
 
 For a user-wide default (all projects), put the same block in
@@ -388,7 +384,7 @@ node scripts/remote-smoke.mjs
 ```
 
 This starts `dist/remote.js` on an ephemeral localhost port, completes OAuth
-login/token exchange, proposes a skill as the owner, and calls `list_skills`
+login/token exchange, proposes a skill as the owner, and calls `get_skill`
 through Streamable HTTP MCP.
 
 ## Updating AutoVault
@@ -413,8 +409,8 @@ If the bundled skills have changed, re-run the bootstrap:
 node scripts/bootstrap-skills.mjs
 ```
 
-`install_skill` overwrites existing skills, so re-running bootstrap is safe and
-idempotent.
+`add_skill` overwrites existing local bundled skills, so re-running bootstrap is
+safe and idempotent.
 
 ## Checking for upstream drift
 
@@ -458,7 +454,7 @@ AutoVault signs each skill with an Ed25519 key stored under
 `$AUTOVAULT_STORAGE_PATH/.signing-key.json`. If you hand-edit an installed
 SKILL.md, the signature will stop verifying and AutoVault will log a warning.
 V1 enforcement is log-only; the skill still loads. Re-run bootstrap or
-`install_skill` to re-sign.
+`update_skill` to re-sign.
 
 ### Permission denied on `.signing-key.json`
 

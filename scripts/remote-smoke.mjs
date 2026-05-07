@@ -155,9 +155,12 @@ async function main() {
     );
     process.stdout.write(`${pretty(proposal)}\n`);
 
-    banner("list_skills");
-    const list = unwrap(await client.callTool({ name: "list_skills", arguments: {} }));
-    process.stdout.write(`${pretty(list)}\n`);
+    banner("get_skill query");
+    const found = unwrap(await client.callTool({ name: "get_skill", arguments: { query: "remote smoke" } }));
+    process.stdout.write(`${pretty({
+      ...found,
+      skill: found.skill ? { ...found.skill, skill_md: `<${found.skill.skill_md.length} chars>` } : null
+    })}\n`);
 
     banner("Remote smoke test completed");
   } finally {

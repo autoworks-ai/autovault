@@ -53,12 +53,11 @@ The wedge over Tessl, ClawHub, and every other skill registry: validation gate +
 │   └── Streamable HTTP (remote, OAuth 2.1, Docker-deployed)     │
 │                                                                │
 │   Tools                                                        │
-│   ├── list_skills           metadata only (progressive disc.)  │
-│   ├── search_skills         text search V1, semantic V2        │
-│   ├── get_skill             full SKILL.md + resource manifest  │
-│   ├── read_skill_resource   fetch one bundled file             │
-│   ├── install_skill         from URL/agentskills.io            │
-│   ├── propose_skill         agent-authored, dedup-gated        │
+│   ├── get_skill             query/name read + optional resources│
+│   ├── add_skill             from URL/GitHub/registry/local      │
+│   ├── update_skill          refresh/replace existing skills     │
+│   ├── delete_skill          remove installed skills             │
+│   ├── propose_skill         conversational, dedup-gated         │
 │   └── check_updates         drift detection                    │
 │                                                                │
 │   Validation Gate (inbound)                                    │
@@ -99,59 +98,42 @@ Both modes expose the same tool surface. The only difference is transport and au
 
 Each tool's description targets MCP-compatible agents. All tools return JSON.
 
-**`list_skills`** — List installed skills, metadata only (name, description, version, tags).
+**`get_skill`** — Search and/or load a skill into agent context.
 
 ```
-Input: { category?: string, tag?: string, limit?: number }
-Output: { skills: [{ name, description, version, tags, category }] }
-```
-
-Critical: returns **only metadata**, never SKILL.md bodies. This is what keeps the agent's context lean at scale. A library of 500 skills returns ~500×60 words of metadata = manageable; returning 500 full SKILL.mds would nuke the context window.
-
-**`search_skills`** — Find skills matching a query.
-
-```
-Input: { query: string, top_k?: number }
-Output: { matches: [{ name, description, score, reason }] }
-```
-
-V1: text search (BM25 or equivalent) across name + description + SKILL.md body.
-V2: semantic search via local embeddings model (`nomic-embed-text` via Ollama, not Qdrant — keeps the stack lean).
-
-Matches include an installed skill indicator and, if no installed skill matches well, suggestions from configured marketplaces.
-
-**`get_skill`** — Load a specific skill into agent context.
-
-```
-Input: { name: string }
+Input: { name?: string, query?: string, top_k?: number, include_resources?: boolean }
 Output: {
-  name, description, version,
-  skill_md: string,              // full SKILL.md body
-  resources: [{ path, type }],   // manifest of bundled scripts/references/assets
-  requires_secrets: [{ name, description, required }],
-  capabilities: { network, filesystem, tools }
+  matches?: [{ name, description, score, reason }],
+  skill?: {
+    name, description, version,
+    skill_md: string,
+    resources: [{ path, type }],
+    resource_contents?: [{ path, content, mime_type }],
+    requires_secrets: [{ name, description, required }],
+    capabilities: { network, filesystem, tools }
+  }
 }
 ```
 
-Returns SKILL.md content plus a manifest of bundled resources. Agent loads resources on-demand via `read_skill_resource`. This is the middle tier of progressive disclosure.
+This folds list/search/read into one surface: pass `query` to find and load the best match, pass `name` for exact lookup, and set `include_resources` only when the bundled files are needed.
 
-**`read_skill_resource`** — Fetch a specific bundled file from a skill.
-
-```
-Input: { skill_name: string, resource_path: string }
-Output: { content: string, mime_type: string }
-```
-
-Enables progressive disclosure at the resource level. Agent only loads the script/reference/asset it actually needs.
-
-**`install_skill`** — Install a skill from a configured source.
+**`add_skill`** — Add a skill from a configured source.
 
 ```
-Input: { source: "github" | "agentskills" | "url", identifier: string, version?: string }
+Input: { source: "github" | "agentskills" | "url" | "local", identifier: string, skill_dir?: string }
 Output: { success: boolean, name: string, validation: {...}, warnings: [] }
 ```
 
-Runs the validation gate. Reports any security flags, malformed frontmatter, or dedup matches. If dedup matches an existing skill, returns the existing skill's name + diff rather than installing a duplicate.
+Runs the validation gate. Remote sources fetch their own resources; local bundles mirror the CLI `add-local` arguments.
+
+**`update_skill`** — Refresh or replace an existing skill.
+
+```
+Input: { name: string, source?: "github" | "agentskills" | "url" | "local" | "inline", ... }
+Output: { success: boolean, name: string, validation: {...}, warnings: [] }
+```
+
+With only `name`, refreshes the recorded remote source. Explicit replacements refuse candidates whose frontmatter name does not match.
 
 **`propose_skill`** — Agent-authored skill, for capture-from-session workflows.
 
@@ -188,7 +170,7 @@ Reuses AutoJack's existing `check-drift.js` logic. This is the one piece of the 
 
 ## Validation Gate
 
-This is the differentiator. Every skill that enters AutoVault — via `install_skill` or `propose_skill` — runs through the same pipeline:
+This is the differentiator. Every skill that enters AutoVault — via `add_skill`, `update_skill`, or `propose_skill` — runs through the same pipeline:
 
 ### Step 1: YAML Parse + Auto-Repair
 
@@ -374,7 +356,7 @@ Before writing a new skill from scratch, ALWAYS search AutoVault first:
 
 # via MCP
 
-search_skills(query="what you want to accomplish", top_k=5)
+get_skill(query="what you want to accomplish", top_k=5)
 
 # via HTTP
 
@@ -524,8 +506,8 @@ Explicitly out of scope for V1. Listed here so they don't get lost:
 7. **Implement source adapters:**
    - GitHub URL (fetch + upstream SHA resolution)
    - agentskills.io registry query
-8. **Implement the 7 core MCP tools** — wire them to validation gate + storage.
-9. **Implement the meta-skill** (`autovault-skill/SKILL.md`) — bundle with the repo so it's installable via `install_skill` from a self-reference.
+8. **Implement the 6 core MCP tools** — wire them to validation gate + storage.
+9. **Implement the meta-skill** (`autovault-skill/SKILL.md`) — bundle with the repo so it's installable via `add_skill` from a self-reference.
 10. **Migrate existing autohub skills:**
     - `autofix`, `code-review`, `nightly-review` from `verygoodplugins/autohub/.agents/skills/`
     - Install into AutoVault via the validation gate (they should all pass cleanly)
@@ -536,9 +518,9 @@ Explicitly out of scope for V1. Listed here so they don't get lost:
 
 **Phase 1 acceptance criteria:**
 
-- Claude Code configured with AutoVault MCP can `list_skills`, `search_skills("code review")`, `get_skill("code-review")`, and execute it end-to-end.
-- A skill with malformed YAML passed to `install_skill` returns a repaired version or a clear error.
-- A skill containing `curl -d @~/.ssh/id_rsa` passed to `install_skill` returns `security_blocked`.
+- Claude Code configured with AutoVault MCP can `get_skill({ query: "code review" })`, load a match, and execute it end-to-end.
+- A skill with malformed YAML passed to `add_skill` or `propose_skill` returns a repaired version or a clear error.
+- A skill containing `curl -d @~/.ssh/id_rsa` passed to `add_skill` or `propose_skill` returns `security_blocked`.
 - An agent calling `propose_skill` with a skill near-duplicating `code-review` receives merge options, not a blind install.
 - AutoHub's Codex nightly automation runs successfully against AutoVault-served skills.
 - Jason can clone, install, and point his own agents at AutoVault on his machine.
@@ -547,7 +529,7 @@ Explicitly out of scope for V1. Listed here so they don't get lost:
 
 Only start after V1 is stable in real use for at least 2 weeks.
 
-1. **Semantic search** — local embeddings via `nomic-embed-text` (Ollama), replace text search in `search_skills`. Index on install, cache embeddings in `~/.autovault/cache/embeddings/`.
+1. **Semantic search** — local embeddings via `nomic-embed-text` (Ollama), upgrade query matching inside `get_skill`. Index on install, cache embeddings in `~/.autovault/cache/embeddings/`.
 2. **Description optimization** — port skill-creator's optimization loop. Run on install for skills whose descriptions are below quality threshold.
 3. **Signature verification enforcement** — `get_skill` fails if signature mismatch detected.
 4. **Hermes filesystem watcher** — watch `~/.hermes/skills/` for new skills, post-hoc consolidation via `propose_skill`.
@@ -612,8 +594,8 @@ If the org `autoworks` isn't created yet, Steve's first task is to wait for Jack
 
 ## Timeline (Optimistic)
 
-- **Week 1:** Scaffolding + storage + stdio MCP skeleton + GitHub adapter. Jack can `list_skills` on an empty library.
-- **Week 2:** Validation gate + tools (`install_skill`, `get_skill`, `propose_skill`) + migration of autohub skills. AutoHub Codex nightly automation works end-to-end against AutoVault.
+- **Week 1:** Scaffolding + storage + stdio MCP skeleton + GitHub adapter. Jack can call `get_skill` on an empty library.
+- **Week 2:** Validation gate + tools (`add_skill`, `get_skill`, `update_skill`, `delete_skill`, `propose_skill`) + migration of autohub skills. AutoHub Codex nightly automation works end-to-end against AutoVault.
 - **Week 3:** agentskills.io adapter + meta-skill + tests + docs. V1 ready for Jason/Zack/Daniel to try.
 
 Three weeks is optimistic but achievable for a focused implementer. If Steve hits unexpected complexity on validation or MCP protocol quirks, extend to four.

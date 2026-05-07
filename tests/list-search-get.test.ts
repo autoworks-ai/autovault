@@ -56,6 +56,30 @@ describe("list/search/get tools", () => {
     expect((skill.source as { source: string }).source).toBe("github");
   });
 
+  it("getSkill can inline packaged resources when requested", async () => {
+    await writeSkill("resource-skill", `---
+name: resource-skill
+description: A description that is intentionally long enough to satisfy the schema length checks for resource-skill.
+metadata:
+  version: "0.0.1"
+resources:
+  - path: references/guide.md
+---
+
+# Body
+`, [
+      { path: "references/guide.md", content: "# guide\n" }
+    ]);
+    const skill = await getSkill("resource-skill", undefined, { includeResources: true });
+    expect(skill.resource_contents).toEqual([
+      {
+        path: "references/guide.md",
+        content: "# guide\n",
+        mime_type: "text/markdown"
+      }
+    ]);
+  });
+
   it("getSkill throws when the skill does not exist", async () => {
     await expect(getSkill("missing-skill")).rejects.toThrow(/not found/);
   });

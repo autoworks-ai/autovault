@@ -20,9 +20,7 @@ import {
   assertCanReadSkill as assertRemoteSkillReadable,
   assertRemoteToolAllowed,
   filterCheckUpdatesForAuth,
-  filterSearchResultsForAuth,
-  filterSkillSummariesForAuth,
-  filterSkillTransformsForAuth
+  filterSearchResultsForAuth
 } from "./policy.js";
 
 type RemoteSession = {
@@ -54,16 +52,11 @@ function remotePolicy(): McpToolPolicy {
     assertToolAllowed: (toolName, _input, authInfo) => assertRemoteToolAllowed(toolName, authInfo),
     assertCanReadSkill: (skillName, authInfo, context) =>
       assertRemoteSkillReadable(skillName, authInfo, context?.toolName ?? skillName),
-    filterListSkills: async (result, authInfo) => ({
-      skills: await filterSkillSummariesForAuth(result.skills, authInfo)
-    }),
     filterSearchSkills: async (result, authInfo, input) => ({
       matches: await filterSearchResultsForAuth(result.matches, authInfo, input.query)
     }),
     filterCheckUpdates: (result, authInfo, input) =>
-      filterCheckUpdatesForAuth(result, authInfo, input.skill),
-    filterListSkillTransforms: (result, authInfo, input) =>
-      filterSkillTransformsForAuth(result, authInfo, input.base)
+      filterCheckUpdatesForAuth(result, authInfo, input.skill)
   };
 }
 
