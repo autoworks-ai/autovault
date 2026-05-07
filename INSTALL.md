@@ -131,6 +131,13 @@ AutoVault can also discover existing native roots:
 autovault sync-profiles --discover
 ```
 
+Audit an AutoHub-style repository before migrating local scripts into vault
+skills:
+
+```bash
+autovault audit-repo --repo /path/to/autohub --format markdown
+```
+
 Discovery currently checks:
 
 - `~/.claude/skills` as `claude-code`

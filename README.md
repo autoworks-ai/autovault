@@ -84,6 +84,7 @@ AutoVault exports an ESM library API:
 - `resolveCapabilities()` / `resolve_capabilities()` - resolve tools, skills, and MCP servers for a scoped caller request
 - `syncProfiles()` - regenerate per-agent profile symlinks from skill frontmatter
 - `discoverProfileRoots()` - detect existing native host skill roots
+- `auditRepo()` - classify repo-local scripts, tools, workflows, and shims for migration into AutoVault skills
 - `installSkill()` - install and validate a skill from a configured source
 - `addLocalSkill()` - install and validate a local skill bundle with local provenance
 - `proposeSkill()` - validate, deduplicate, and store proposed skill content
@@ -259,6 +260,20 @@ For development:
 npm run dev
 npm test
 ```
+
+## Repo Tooling Audit
+
+Use `audit-repo` to inventory an AutoHub-style repository before moving local
+scripts and operator workflows into AutoVault:
+
+```bash
+autovault audit-repo --repo ../autohub --format markdown
+autovault audit-repo --repo ../autohub --format json
+```
+
+Each item includes `path`, `kind`, `classification`, `target`, `risk`, and
+`reasons`. Secret-shaped values are never echoed; the audit reports only
+redacted file/key findings.
 
 ## Remote Deploy
 

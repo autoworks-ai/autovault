@@ -64,4 +64,23 @@ describe("bundled skills pass validation", () => {
       ).toBe(true);
     }
   });
+
+  it("repo-touching skill bins execute commands from --repo", async () => {
+    const repoTouchingBins = [
+      "autojack-blog-publisher/bin/autojack-blog",
+      "cloudflare-ops/bin/cloudflare-ops",
+      "code-review/bin/code-review",
+      "home-assistant-operator/bin/home-assistant-operator",
+      "mcp-registry-maintainer/bin/mcp-registry-maintainer",
+      "raycast-autojack/bin/raycast-autojack"
+    ];
+
+    for (const binPath of repoTouchingBins) {
+      const content = await fs.readFile(path.join(skillsRoot, binPath), "utf-8");
+      expect(
+        content,
+        `${binPath} must run repo-owned commands with cwd set to --repo`
+      ).toContain('(cd "$repo" && "$@")');
+    }
+  });
 });

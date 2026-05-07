@@ -2,6 +2,8 @@
 import { runSkillCommand } from "./cli/skill.js";
 import {
   addLocalSkill,
+  auditRepo,
+  formatAuditRepoMarkdown,
   importAutohubCapabilities,
   resolveCapabilities,
   syncProfiles,
@@ -12,6 +14,7 @@ function usage(): never {
   process.stderr.write(`Usage:
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
+  autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
   autovault serve
@@ -145,6 +148,19 @@ async function main(): Promise<void> {
       process.stdout.write(formatAddLocalResult(result, skillDir));
     }
     if (!result.success) process.exit(1);
+    return;
+  }
+
+  if (command === "audit-repo") {
+    const repo = readFlag(args, "--repo");
+    const format = readFlag(args, "--format") ?? "json";
+    if (!repo || !["json", "markdown"].includes(format)) usage();
+    const result = await auditRepo({ repo });
+    if (format === "markdown") {
+      process.stdout.write(formatAuditRepoMarkdown(result));
+    } else {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    }
     return;
   }
 

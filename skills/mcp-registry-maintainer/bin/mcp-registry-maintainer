@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+action="${1:-doctor}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+repo="."
+task=""
+dry_run="false"
+json="false"
+passthrough=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      repo="${2:?--repo requires a path}"
+      shift 2
+      ;;
+    --task)
+      task="${2:?--task requires a value}"
+      shift 2
+      ;;
+    --dry-run)
+      dry_run="true"
+      shift
+      ;;
+    --json)
+      json="true"
+      shift
+      ;;
+    --)
+      shift
+      passthrough+=("$@")
+      break
+      ;;
+    *)
+      passthrough+=("$1")
+      shift
+      ;;
+  esac
+done
+
+repo="$(cd "$repo" && pwd)"
+
+emit() {
+  if [[ "$json" == "true" ]]; then
+    printf '{"skill":"mcp-registry-maintainer","action":"%s","repo":"%s","message":"%s"}\n' "$action" "$repo" "$1"
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+run_cmd() {
+  if [[ "$dry_run" == "true" ]]; then
+    printf 'dry-run:'
+    printf ' %q' "$@"
+    printf '\n'
+    return 0
+  fi
+  (cd "$repo" && "$@")
+}
+
+require_file() {
+  if [[ ! -f "$repo/$1" ]]; then
+    emit "missing $1 in $repo"
+    exit 1
+  fi
+}
+
+case "$action" in
+  doctor)
+    require_file scripts/monitor-mcp-health.js
+    run_cmd node "$repo/scripts/monitor-mcp-health.js" --once "${passthrough[@]}"
+    ;;
+  sync)
+    require_file scripts/scan-mcp-tools.js
+    run_cmd node "$repo/scripts/scan-mcp-tools.js" "${passthrough[@]}"
+    ;;
+  setup)
+    case "$task" in
+      cursor)
+        require_file scripts/sync-cursor-mcp.js
+        run_cmd node "$repo/scripts/sync-cursor-mcp.js" "${passthrough[@]}"
+        ;;
+      migrate)
+        require_file scripts/migrate-mcp-config.js
+        run_cmd node "$repo/scripts/migrate-mcp-config.js" "${passthrough[@]}"
+        ;;
+      repair-npx)
+        require_file scripts/fix-mcp-npx.sh
+        run_cmd bash "$repo/scripts/fix-mcp-npx.sh" "${passthrough[@]}"
+        ;;
+      *)
+        require_file scripts/setup-mcp-config.js
+        run_cmd node "$repo/scripts/setup-mcp-config.js" "${passthrough[@]}"
+        ;;
+    esac
+    ;;
+  audit)
+    require_file scripts/lint-workflows.js
+    run_cmd node "$repo/scripts/lint-workflows.js" "${passthrough[@]}"
+    ;;
+  *)
+    emit "unknown action '$action'"
+    exit 1
+    ;;
+esac
