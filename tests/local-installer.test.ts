@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resetConfigCache } from "../src/config.js";
 import { addLocalSkill } from "../src/installer/local.js";
 import {
   normalizeSkillInstallMode,
@@ -9,6 +10,7 @@ import {
 } from "../src/installer/routing.js";
 import { syncProfiles } from "../src/profiles/sync.js";
 import { readSkillManifest, readSkillSource, writeSkill } from "../src/storage/index.js";
+import { addSkill } from "../src/tools/add-skill.js";
 import { checkUpdates } from "../src/tools/check-updates.js";
 import { MAX_RESOURCE_BYTES } from "../src/util/limits.js";
 import { currentStorageRoot } from "./setup.js";
@@ -201,6 +203,28 @@ describe("local installer", () => {
     expect(parsed.sync?.linkedRoots.codex).toBe(codexRoot);
     await expect(fs.readlink(path.join(codexRoot, "codex-local"))).resolves.toContain(
       path.join("profiles", "codex", "codex-local")
+    );
+  });
+
+  it("MCP local add syncs configured profile roots by default", async () => {
+    const externalRoot = path.join(currentStorageRoot(), "external-codex-skills");
+    process.env.AUTOVAULT_PROFILE_LINKS = `codex=${externalRoot}`;
+    resetConfigCache();
+    const sourceDir = path.join(currentStorageRoot(), "mcp-local-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "mcp-local-default-sync",
+      agents: ["codex"]
+    });
+
+    const result = await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: sourceDir
+    });
+
+    expect(result.success).toBe(true);
+    await expect(fs.readlink(path.join(externalRoot, "mcp-local-default-sync"))).resolves.toContain(
+      path.join("profiles", "codex", "mcp-local-default-sync")
     );
   });
 

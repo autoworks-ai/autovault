@@ -57,7 +57,7 @@ async function main() {
   const client = new Client({ name: "autovault-bootstrap", version: "1.0.0" });
   await client.connect(transport);
 
-  process.stdout.write(`Bootstrapping ${skills.length} skill(s) into ${storagePath}\n`);
+  process.stdout.write(`Bootstrapping ${skills.length} skill(s) into ${storagePath} and syncing profiles\n`);
 
   for (const skill of skills) {
     process.stdout.write(`\n--- installing ${skill.dir} ---\n`);
@@ -67,7 +67,9 @@ async function main() {
         arguments: {
           source: "local",
           identifier: skill.dir,
-          skill_dir: path.join(bundledSkillsDir, skill.dir)
+          skill_dir: path.join(bundledSkillsDir, skill.dir),
+          sync_profiles: true,
+          discover_profile_roots: true
         }
       })
     );

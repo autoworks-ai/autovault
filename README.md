@@ -231,6 +231,9 @@ runs the normal validation/signing pipeline, records `source: "local"`, and
 then optionally syncs rendered profile links. With `--sync-profiles`, AutoVault
 discovers existing native roots such as `~/.claude/skills`, `~/.codex/skills`,
 and `~/.cursor/skills`, while preserving user-managed native files on conflict.
+The MCP `add_skill` local-bundle path syncs configured profile links by default;
+pass `sync_profiles: false` only when a caller intentionally wants storage-only
+install.
 
 Vendors can use the drop-in helper in
 [`scripts/vendor-autovault-install.sh`](scripts/vendor-autovault-install.sh).

@@ -136,7 +136,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "add_skill",
-    "Add a known skill from a source. For GitHub, agentskills, and URL sources, pass `source` plus `identifier`; remote bytes are fetched and validated before storage. For local bundles, pass `source: \"local\"`, `skill_dir`, and `identifier` matching the CLI add-local --source value. Caller-authored SKILL.md bytes should use `propose_skill`, not add_skill.",
+    "Add a known skill from a source. For GitHub, agentskills, and URL sources, pass `source` plus `identifier`; remote bytes are fetched and validated before storage. For local bundles, pass `source: \"local\"`, `skill_dir`, and `identifier` matching the CLI add-local --source value; configured profile links are synced by default unless `sync_profiles: false` is passed. Caller-authored SKILL.md bytes should use `propose_skill`, not add_skill.",
     {
       source: z.enum(["github", "agentskills", "url", "local"]),
       identifier: z.string(),

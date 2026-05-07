@@ -67,13 +67,8 @@ variables.
 
 ## 3. Seed the skill library
 
-AutoVault ships with three skills in `skills/`:
-
-- `autovault-skill` — meta-skill explaining how to discover and propose skills
-- `commit-message` — generic demo: drafts a conventional-commit message from staged changes
-- `skill-author` — generic demo: walks through authoring a valid SKILL.md
-
-Seed them into your storage path:
+AutoVault ships bundled skills in `skills/`. Seed every `skills/*/SKILL.md`
+bundle into your storage path and refresh host-visible profiles:
 
 ```bash
 npm run build            # if you haven't already
@@ -83,19 +78,18 @@ node scripts/bootstrap-skills.mjs
 Expected output (abbreviated):
 
 ```text
-Bootstrapping 3 skill(s) into /Users/you/.autovault
+Bootstrapping N skill(s) into /Users/you/.autovault and syncing profiles
 --- installing autovault-skill ---
 { "success": true, "name": "autovault-skill", ... }
---- installing commit-message ---
-{ "success": true, "name": "commit-message", ... }
---- installing skill-author ---
-{ "success": true, "name": "skill-author", ... }
 --- get_skill query ---
 { "matches": [ ... ], "skill": { ... } }
 ```
 
 Each install runs the full validation gate (schema, security denylist,
-capability cross-check). If any skill is rejected, the gate will explain why.
+capability cross-check). Bootstrap also passes profile sync with native root
+discovery enabled, so existing `~/.claude/skills`, `~/.codex/skills`, and
+`~/.cursor/skills` roots are refreshed automatically. If any skill is rejected,
+the gate will explain why.
 
 ## 4. Generate per-agent skill profiles
 

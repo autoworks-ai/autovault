@@ -46,7 +46,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
     return addLocalSkill({
       skillDir: input.skill_dir,
       source: input.identifier,
-      syncProfiles: input.sync_profiles,
+      syncProfiles: input.sync_profiles ?? true,
       profileRoots: input.profile_roots,
       discoverProfileRoots: input.discover_profile_roots
     });

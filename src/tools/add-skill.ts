@@ -24,7 +24,7 @@ export async function addSkill(input: AddSkillInput): Promise<Record<string, unk
     return addLocalSkill({
       skillDir: input.skill_dir,
       source: input.identifier,
-      syncProfiles: input.sync_profiles,
+      syncProfiles: input.sync_profiles ?? true,
       profileRoots: input.profile_roots,
       discoverProfileRoots: input.discover_profile_roots
     });

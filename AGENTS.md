@@ -88,7 +88,7 @@ $AUTOVAULT_STORAGE_PATH/
 
 ## Bundled skills
 
-The repo ships four skills under `skills/` (`autovault-skill`, `autofix`, `code-review`, `nightly-review`). These are source-of-truth content, not installed state. `scripts/bootstrap-skills.mjs` spawns the built server and installs them into `$AUTOVAULT_STORAGE_PATH` via the real `install_skill` tool — meaning they go through the same validation gate as any other install. If a bundled skill fails validation after you edit it, the bootstrap will reject it; fix the content, don't bypass.
+The repo ships source-of-truth skill bundles under `skills/`; installed state lives in `$AUTOVAULT_STORAGE_PATH`. `scripts/bootstrap-skills.mjs` spawns the built server, installs every `skills/*/SKILL.md` through the real `add_skill` local-bundle path, and syncs/discovers host profiles so new bundled skills appear in Codex/Claude/Cursor roots. If a bundled skill fails validation after you edit it, the bootstrap will reject it; fix the content, don't bypass.
 
 ## Docs worth knowing
 
