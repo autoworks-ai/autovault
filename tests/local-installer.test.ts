@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { addLocalSkill } from "../src/installer/local.js";
 import {
   normalizeSkillInstallMode,
@@ -10,6 +10,7 @@ import {
 import { syncProfiles } from "../src/profiles/sync.js";
 import { readSkillManifest, readSkillSource, writeSkill } from "../src/storage/index.js";
 import { checkUpdates } from "../src/tools/check-updates.js";
+import { MAX_RESOURCE_BYTES } from "../src/util/limits.js";
 import { currentStorageRoot } from "./setup.js";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -30,6 +31,31 @@ function runCli(args: string[], env: Record<string, string> = {}): Promise<CliRe
         AUTOVAULT_STORAGE_PATH: currentStorageRoot(),
         AUTOVAULT_LOG_LEVEL: "error",
         AUTOVAULT_SECURITY_STRICT: "true",
+        ...env
+      },
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      resolve({ exitCode: code ?? -1, stdout, stderr });
+    });
+    child.stdin.end();
+  });
+}
+
+function runShell(script: string, env: Record<string, string> = {}): Promise<CliResult> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("/bin/sh", ["-c", script], {
+      env: {
+        ...process.env,
         ...env
       },
       stdio: ["pipe", "pipe", "pipe"]
@@ -213,6 +239,44 @@ metadata:
     expect(skillInstallSteps("native-only", { autovaultAvailable: true })).toEqual(["native"]);
     expect(skillInstallSteps("off", { autovaultAvailable: true })).toEqual([]);
     expect(() => normalizeSkillInstallMode("wat")).toThrow(/Invalid AUTOVAULT_SKILL_INSTALL mode/);
+  });
+
+  it("preflights local resource size before reading resource bytes", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "oversized-resource-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "oversized-local"
+    });
+    const oversizedPath = path.join(sourceDir, "huge.txt");
+    await fs.writeFile(oversizedPath, "x".repeat(MAX_RESOURCE_BYTES + 1), "utf-8");
+
+    const readFileSpy = vi.spyOn(fs, "readFile");
+    try {
+      const result = await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+
+      expect(result.success).toBe(false);
+      expect(result.validation.errors.join("\n")).toMatch(/Resource 'huge\.txt' is/);
+      expect(
+        readFileSpy.mock.calls.some((call) => call[0] === oversizedPath)
+      ).toBe(false);
+    } finally {
+      readFileSpy.mockRestore();
+    }
+  });
+
+  it("vendor helper both mode falls back to native when autovault is unavailable", async () => {
+    const scriptPath = path.join(REPO_ROOT, "scripts", "vendor-autovault-install.sh");
+    const result = await runShell(
+      `. "${scriptPath}"
+install_native() { printf 'native\\n'; }
+autovault_install_skill_bundle "/tmp/source" "vendor/repo" install_native`,
+      {
+        AUTOVAULT_SKILL_INSTALL: "both",
+        PATH: "/usr/bin:/bin"
+      }
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("native\n");
   });
 
   it("prints deterministic non-json terminal output", async () => {

@@ -10,7 +10,13 @@ import {
   type WrittenResource
 } from "../storage/index.js";
 import { bundleHash } from "../util/hash.js";
-import { checkBundleLimits } from "../util/limits.js";
+import {
+  MAX_RESOURCE_BYTES,
+  MAX_RESOURCES,
+  MAX_SKILL_MD_BYTES,
+  MAX_TOTAL_BYTES,
+  checkBundleLimits
+} from "../util/limits.js";
 import { canonicalRelPath } from "../util/path.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { validateSkillInput } from "../validation/index.js";
@@ -51,6 +57,12 @@ function shouldSkipEntry(name: string): boolean {
   return name.startsWith(".autovault-");
 }
 
+class LocalBundleLimitError extends Error {
+  constructor(readonly errors: string[]) {
+    super(errors.join("; "));
+  }
+}
+
 export async function collectLocalSkillBundle(skillDirInput: string): Promise<LocalSkillBundle> {
   const root = path.resolve(skillDirInput);
   const rootStat = await fs.lstat(root);
@@ -66,9 +78,15 @@ export async function collectLocalSkillBundle(skillDirInput: string): Promise<Lo
   if (!skillMdStat.isFile()) {
     throw new Error(`Local skill directory must contain a regular SKILL.md: ${skillMdPath}`);
   }
+  if (skillMdStat.size > MAX_SKILL_MD_BYTES) {
+    throw new LocalBundleLimitError([
+      `SKILL.md is ${skillMdStat.size} bytes (> ${MAX_SKILL_MD_BYTES})`
+    ]);
+  }
 
-  const skillMd = await fs.readFile(skillMdPath, "utf-8");
-  const resources: LocalSkillResource[] = [];
+  const candidates: Array<{ path: string; absolute: string }> = [];
+  const seen = new Set<string>();
+  let totalBytes = skillMdStat.size;
 
   async function walk(current: string, relative: string): Promise<void> {
     const entries = await fs.readdir(current, { withFileTypes: true });
@@ -91,29 +109,61 @@ export async function collectLocalSkillBundle(skillDirInput: string): Promise<Lo
       }
       if (rel === "SKILL.md") continue;
       const canonical = validateResourcePathShape(rel);
-      resources.push({
-        path: canonical,
-        content: await fs.readFile(absolute, "utf-8")
-      });
+      if (seen.has(canonical)) {
+        throw new Error(`Duplicate local resource path after normalization: ${canonical}`);
+      }
+      seen.add(canonical);
+      if (candidates.length + 1 > MAX_RESOURCES) {
+        throw new LocalBundleLimitError([`Too many resources: ${candidates.length + 1} > ${MAX_RESOURCES}`]);
+      }
+      if (stat.size > MAX_RESOURCE_BYTES) {
+        throw new LocalBundleLimitError([
+          `Resource '${canonical}' is ${stat.size} bytes (> ${MAX_RESOURCE_BYTES})`
+        ]);
+      }
+      totalBytes += stat.size;
+      if (totalBytes > MAX_TOTAL_BYTES) {
+        throw new LocalBundleLimitError([`Bundle total bytes ${totalBytes} > ${MAX_TOTAL_BYTES}`]);
+      }
+      candidates.push({ path: canonical, absolute });
     }
   }
 
   await walk(root, "");
 
-  const seen = new Set<string>();
-  for (const resource of resources) {
-    const canonical = canonicalRelPath(resource.path);
-    if (seen.has(canonical)) {
-      throw new Error(`Duplicate local resource path after normalization: ${resource.path}`);
-    }
-    seen.add(canonical);
+  const skillMd = await fs.readFile(skillMdPath, "utf-8");
+  const resources: LocalSkillResource[] = [];
+  for (const candidate of candidates) {
+    resources.push({
+      path: canonicalRelPath(candidate.path),
+      content: await fs.readFile(candidate.absolute, "utf-8")
+    });
   }
 
   return { root, skillMd, resources };
 }
 
 export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocalSkillResult> {
-  const bundle = await collectLocalSkillBundle(input.skillDir);
+  let bundle: LocalSkillBundle;
+  try {
+    bundle = await collectLocalSkillBundle(input.skillDir);
+  } catch (error) {
+    if (error instanceof LocalBundleLimitError) {
+      return {
+        success: false,
+        name: "",
+        validation: {
+          valid: false,
+          repaired: false,
+          errors: error.errors,
+          warnings: [],
+          securityFlags: []
+        },
+        warnings: []
+      };
+    }
+    throw error;
+  }
 
   const limitErrors = checkBundleLimits(bundle.skillMd, bundle.resources);
   if (limitErrors.length > 0) {

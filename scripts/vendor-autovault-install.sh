@@ -33,7 +33,11 @@ autovault_install_skill_bundle() {
       av_autovault_status=$?
       av_run_native
       av_native_status=$?
-      [ "$av_autovault_status" -eq 0 ] && [ "$av_native_status" -eq 0 ]
+      if [ "$av_autovault_status" -eq 127 ]; then
+        [ "$av_native_status" -eq 0 ]
+      else
+        [ "$av_autovault_status" -eq 0 ] && [ "$av_native_status" -eq 0 ]
+      fi
       ;;
     native)
       av_run_native && return 0
