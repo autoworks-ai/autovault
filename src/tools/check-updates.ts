@@ -87,6 +87,7 @@ async function fetchForSource(
     case "url":
       return (deps.fetchers?.url ?? fetchSkillFromUrl)(source.identifier);
     case "inline":
+    case "local":
       return null;
   }
 }
@@ -209,6 +210,16 @@ export async function checkUpdates(
         } else {
           upToDate.push(name);
         }
+        continue;
+      }
+
+      if (source.source === "local") {
+        unchecked.push({
+          name,
+          source: source.source,
+          identifier: source.identifier,
+          reason: "local bundle install has no checkable upstream; rerun the vendor installer to update"
+        });
         continue;
       }
 

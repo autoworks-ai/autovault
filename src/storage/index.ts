@@ -65,7 +65,7 @@ export function isReservedResourcePath(canonical: string): boolean {
 }
 
 export type SkillSource = {
-  source: "github" | "agentskills" | "url" | "inline";
+  source: "github" | "agentskills" | "url" | "inline" | "local";
   identifier: string;
   bundledSkillName?: string;
   version?: string;

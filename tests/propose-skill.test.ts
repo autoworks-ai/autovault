@@ -480,16 +480,11 @@ ${"x".repeat(300 * 1024)}`;
     readFileSpy.mockRestore();
   });
 
-  it("returns accepted with a warning when profile sync fails post-commit (vault committed)", async () => {
+  it("returns accepted with a warning when profile sync preserves a conflict", async () => {
     // Round 29 finding: writeSkill commits the proposed skill before
-    // syncProfiles is called. If sync throws — external profile root has a
-    // non-symlink directory at the skill name, permission denial on the link
-    // root, etc. — the caller used to see a hard failure even though the
-    // SKILL.md, manifest, and source provenance were already on disk. That
-    // breaks idempotency: a retry would hit dedup, never the underlying
-    // conflict. Mirror the install_skill regression: pre-create a regular
-    // FILE at the symlink target path so replaceSymlink throws, and assert
-    // the wrapper catches it, surfaces a warning, and returns accepted.
+    // syncProfiles is called. External profile roots can contain
+    // user-managed native directories at the same skill name. Profile sync
+    // must preserve those paths, surface a warning, and return accepted.
     const externalRoot = path.join(currentStorageRoot(), "external-codex-blocked-propose");
     await fs.mkdir(externalRoot, { recursive: true });
     await fs.mkdir(path.join(externalRoot, "propose-sync-conflict"), { recursive: true });
@@ -518,8 +513,8 @@ metadata:
     // Vault was committed — manifest + SKILL.md exist.
     const stored = await readSkill("propose-sync-conflict");
     expect(stored).not.toBeNull();
-    // Caller gets a warning describing the post-commit sync failure.
+    // Caller gets a warning describing the preserved user-managed conflict.
     const warningsText = ((result.warnings as string[]) ?? []).join(" | ");
-    expect(warningsText).toMatch(/Profile sync failed after propose/i);
+    expect(warningsText).toMatch(/user-managed path already exists/i);
   });
 });

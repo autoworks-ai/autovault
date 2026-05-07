@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { loadConfig } from "../config.js";
+import { discoverProfileRoots } from "./discovery.js";
 import {
   listInstalledSkillNamesUnlocked,
   readSkillUnlocked,
@@ -14,6 +15,7 @@ import { log } from "../util/log.js";
 
 export type SyncProfilesInput = {
   profileRoots?: Record<string, string>;
+  discover?: boolean;
 };
 
 export type SyncProfilesResult = {
@@ -88,6 +90,9 @@ async function replaceSymlink(
     await fs.unlink(linkPath);
   } catch (error) {
     if (await pathExists(linkPath)) {
+      if (managedPrefix !== undefined) {
+        return { replaced: false, reason: "user-managed", current: linkPath };
+      }
       throw new Error(`Refusing to replace non-symlink path: ${linkPath}`);
     }
   }
@@ -172,7 +177,12 @@ export async function syncProfiles(input: SyncProfilesInput = {}): Promise<SyncP
 
     const config = loadConfig();
     const profileRoot = path.join(config.storagePath, "profiles");
-    const profileRoots = { ...config.profileRoots, ...(input.profileRoots ?? {}) };
+    const discoveredProfileRoots = input.discover ? await discoverProfileRoots() : {};
+    const profileRoots = {
+      ...discoveredProfileRoots,
+      ...config.profileRoots,
+      ...(input.profileRoots ?? {})
+    };
     await fs.mkdir(profileRoot, { recursive: true });
 
     type Snapshot = { profiles: Map<string, string[]>; warnings: string[] };
@@ -276,7 +286,7 @@ async function syncProfilesApply(
       );
       if (result.replaced === false && result.reason === "user-managed") {
         warnings.push(
-          `Skipping external profile link for "${agent}/${name}" — a user-managed symlink already exists at "${path.join(externalRoot, name)}" pointing to "${result.current}". Remove it manually if you want AutoVault to manage this name.`
+          `Skipping external profile link for "${agent}/${name}" — a user-managed path already exists at "${path.join(externalRoot, name)}" (${result.current}). Remove it manually if you want AutoVault to manage this name.`
         );
       }
     }

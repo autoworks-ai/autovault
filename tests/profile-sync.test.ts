@@ -83,16 +83,16 @@ describe("profile sync", () => {
     );
   });
 
-  it("refuses to overwrite non-symlink external skill conflicts", async () => {
+  it("preserves non-symlink external skill conflicts with warnings", async () => {
     await ensureStorage();
     await writeSkill("conflict", skill("conflict", ["claude-code"]));
 
     const externalRoot = path.join(currentStorageRoot(), "external-conflict");
     await fs.mkdir(path.join(externalRoot, "conflict"), { recursive: true });
 
-    await expect(syncProfiles({ profileRoots: { "claude-code": externalRoot } })).rejects.toThrow(
-      /Refusing to replace non-symlink path/
-    );
+    const result = await syncProfiles({ profileRoots: { "claude-code": externalRoot } });
+    expect(result.warnings.join("\n")).toMatch(/user-managed path already exists/);
+    await expect(fs.stat(path.join(externalRoot, "conflict"))).resolves.toBeTruthy();
   });
 
   // Round-41 finding: profile sync used to blindly replace any external symlink
@@ -126,7 +126,7 @@ describe("profile sync", () => {
     // And the warning must name the conflict so the user can investigate.
     expect(
       result.warnings.some(
-        (w) => w.includes("user-managed symlink") && w.includes("conflict-skill")
+        (w) => w.includes("user-managed path") && w.includes("conflict-skill")
       )
     ).toBe(true);
   });
