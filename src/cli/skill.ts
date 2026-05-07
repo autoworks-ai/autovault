@@ -58,7 +58,8 @@ async function assertCleanIntegrity(name: string, surface: "exec" | "print"): Pr
 
 function usage(): never {
   process.stderr.write(`Usage:
-  autovault skill <action> <name>     # run bin.<action> declared by skill <name>
+  autovault skill <action> <name> [args...]
+                                      # run bin.<action> declared by skill <name>
   autovault skill list                # list installed skills and their declared bin actions
   autovault skill which <name> [<action>]
                                        # print resolved script path(s) without running
@@ -258,11 +259,6 @@ function shellEscape(token: string): string {
 }
 
 async function runAction(action: string, name: string, extraArgs: string[]): Promise<void> {
-  if (extraArgs.length > 0) {
-    fail(
-      `Extra arguments are not accepted; bin.<action>.args is authoritative. Got: ${extraArgs.join(" ")}`
-    );
-  }
   assertSafeSkillName(name);
 
   const storageRoot = loadConfig().storagePath;
@@ -373,7 +369,7 @@ async function runAction(action: string, name: string, extraArgs: string[]): Pro
   }
 
   await new Promise<void>((resolve) => {
-    const child = spawn(target, entry.args, {
+    const child = spawn(target, [...entry.args, ...extraArgs], {
       stdio: "inherit",
       cwd: skillDir(name)
     });
