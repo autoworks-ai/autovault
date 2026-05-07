@@ -357,16 +357,13 @@ metadata:
     // caller used to see a hard failure even though SKILL.md, the manifest,
     // and the source provenance were already on disk. That breaks
     // idempotency: a retry would hit dedup, never the underlying conflict.
-    // We block syncProfiles here by pre-creating a NON-SYMLINK regular file
-    // at the symlink target path; replaceSymlink's swap-via-rename will fail
-    // because EBUSY/EEXIST/ENOTEMPTY semantics differ across platforms but
-    // all surface as a thrown error. The wrapper must catch it, surface a
-    // warning, and return success since the vault is correct.
+    // We block external profile replacement here by pre-creating a
+    // user-managed native directory at the symlink target path. Profile sync
+    // must preserve it, surface a warning, and return success since the vault
+    // is correct.
     const externalRoot = path.join(currentStorageRoot(), "external-codex-blocked");
     await fs.mkdir(externalRoot, { recursive: true });
-    // Drop a regular FILE (not a symlink, not a dir) where the symlink will
-    // try to land. replaceSymlink's removal step expects a symlink-or-absent;
-    // a directory or regular file there triggers a thrown error.
+    // Drop a native directory where the symlink will try to land.
     await fs.mkdir(path.join(externalRoot, "sync-conflict-skill"), { recursive: true });
     await fs.writeFile(
       path.join(externalRoot, "sync-conflict-skill", "blocker"),
@@ -395,9 +392,9 @@ metadata:
     // The vault was committed — manifest + SKILL.md exist.
     const stored = await readSkill("sync-conflict-skill");
     expect(stored).not.toBeNull();
-    // Caller gets a warning describing the post-install sync failure.
+    // Caller gets a warning describing the preserved user-managed conflict.
     const warningsText = (result.warnings ?? []).join(" | ");
-    expect(warningsText).toMatch(/Profile sync failed after install/i);
+    expect(warningsText).toMatch(/user-managed path already exists/i);
   });
 
   it("succeeds when AUTOVAULT_STORAGE_PATH is a symlink and the skill ships a bin resource (round-46)", async () => {

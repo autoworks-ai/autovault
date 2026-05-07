@@ -1,6 +1,20 @@
 export { installSkill, type InstallSkillInput } from "./tools/install-skill.js";
 export { proposeSkill, type ProposeSkillInput } from "./tools/propose-skill.js";
 export { syncProfiles, type SyncProfilesInput, type SyncProfilesResult } from "./profiles/sync.js";
+export { discoverProfileRoots, type DiscoverProfileRootsInput } from "./profiles/discovery.js";
+export {
+  addLocalSkill,
+  collectLocalSkillBundle,
+  type AddLocalSkillInput,
+  type AddLocalSkillResult,
+  type LocalSkillBundle
+} from "./installer/local.js";
+export {
+  normalizeSkillInstallMode,
+  skillInstallSteps,
+  type SkillInstallMode,
+  type SkillInstallStep
+} from "./installer/routing.js";
 export {
   proposeSkillTransform,
   listSkillTransforms,

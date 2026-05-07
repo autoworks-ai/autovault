@@ -125,6 +125,62 @@ Set `AUTOVAULT_PROFILE_LINKS` to make `install_skill`, `propose_skill`,
 `propose_skill_transform`, `remove_skill_transform`, and plain `sync-profiles`
 refresh those roots automatically.
 
+AutoVault can also discover existing native roots:
+
+```bash
+autovault sync-profiles --discover
+```
+
+Discovery currently checks:
+
+- `~/.claude/skills` as `claude-code`
+- `~/.codex/skills` as `codex`
+- `~/.cursor/skills` as `cursor`
+
+## 4b. Add a local skill bundle
+
+Third-party installers should use `add-local` when they already have a local
+skill directory on disk:
+
+```bash
+autovault add-local ./skills/railway --source railway/skills --sync-profiles
+```
+
+The command requires `SKILL.md`, walks sibling resources in deterministic
+order, skips AutoVault metadata files, refuses symlinks, runs the same
+validation/signing pipeline as other install paths, and records honest
+`source: "local"` provenance. Local installs are reported as unchecked by
+`check_updates`; rerun the vendor installer to refresh them.
+
+Machine-readable output:
+
+```bash
+autovault add-local ./skills/railway --source railway/skills --sync-profiles --json
+```
+
+Vendor drop-in pattern:
+
+```sh
+. ./scripts/vendor-autovault-install.sh
+
+install_native() {
+  # vendor's existing copied-directory install
+  :
+}
+
+autovault_install_skill_bundle "$source_dir" "$REPO" install_native
+```
+
+`AUTOVAULT_SKILL_INSTALL` controls routing:
+
+| Mode | Behavior |
+|------|----------|
+| unset, `prefer`, `prefer-autovault` | AutoVault first, native fallback. |
+| `both` | AutoVault and native. |
+| `native` | Native first, AutoVault fallback. |
+| `native-only` | Native only. |
+| `off` | Skip skill installation. |
+
 ## 5. Configure your MCP host
 
 AutoVault's primary interface is the library package. The compatibility MCP

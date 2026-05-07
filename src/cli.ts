@@ -1,10 +1,17 @@
 #!/usr/bin/env node
 import { runSkillCommand } from "./cli/skill.js";
-import { importAutohubCapabilities, resolveCapabilities, syncProfiles } from "./library.js";
+import {
+  addLocalSkill,
+  importAutohubCapabilities,
+  resolveCapabilities,
+  syncProfiles,
+  type AddLocalSkillResult
+} from "./library.js";
 
 function usage(): never {
   process.stderr.write(`Usage:
-  autovault sync-profiles [--link agent=/path/to/skills]
+  autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
+  autovault sync-profiles [--discover] [--link agent=/path/to/skills]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
   autovault serve
@@ -25,6 +32,58 @@ function hasFlag(args: string[], name: string): boolean {
   return args.includes(name);
 }
 
+function parseProfileLink(value: string | undefined): [string, string] {
+  if (!value || !value.includes("=")) usage();
+  const [agent, root] = value.split("=", 2);
+  if (!agent || !root) usage();
+  return [agent, root];
+}
+
+function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): string {
+  const lines: string[] = [];
+  lines.push("=============================");
+  lines.push("AutoVault local installer");
+  lines.push("=============================");
+  lines.push("");
+  lines.push(`scan      ${skillDir}`);
+  lines.push(`validate  ${result.validation.valid ? "passed" : "failed"}`);
+  if (result.success) {
+    lines.push(`sign      ${result.name}`);
+    if (result.paths) {
+      lines.push(`storage   ${result.paths.skill}`);
+    }
+    if (result.source) {
+      lines.push(`source    ${result.source.identifier}`);
+    }
+    if (result.sync) {
+      lines.push("");
+      lines.push("profile sync");
+      const linkedEntries = Object.entries(result.sync.linkedRoots);
+      if (linkedEntries.length === 0) {
+        lines.push("  no external profile roots linked");
+      } else {
+        for (const [agent, root] of linkedEntries) {
+          const count = result.sync.profiles[agent]?.length ?? 0;
+          lines.push(`  ${agent}: ${root} (${count} skill${count === 1 ? "" : "s"})`);
+        }
+      }
+    }
+    if (result.warnings.length > 0) {
+      lines.push("");
+      lines.push("warnings");
+      for (const warning of result.warnings) lines.push(`  - ${warning}`);
+    }
+    lines.push("");
+    lines.push("restart any agent host that caches filesystem skills");
+  } else {
+    lines.push("");
+    lines.push("errors");
+    for (const error of result.validation.errors) lines.push(`  - ${error}`);
+    for (const warning of result.warnings) lines.push(`  - ${warning}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h") usage();
@@ -34,12 +93,58 @@ async function main(): Promise<void> {
     for (let i = 0; i < args.length; i += 1) {
       if (args[i] !== "--link") continue;
       const value = args[i + 1];
-      if (!value || !value.includes("=")) usage();
-      const [agent, root] = value.split("=", 2);
+      const [agent, root] = parseProfileLink(value);
       profileRoots[agent] = root;
       i += 1;
     }
-    process.stdout.write(`${JSON.stringify(await syncProfiles({ profileRoots }), null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify(
+        await syncProfiles({ profileRoots, discover: hasFlag(args, "--discover") }),
+        null,
+        2
+      )}\n`
+    );
+    return;
+  }
+
+  if (command === "add-local") {
+    let skillDir: string | undefined;
+    let source: string | undefined;
+    const profileRoots: Record<string, string> = {};
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i];
+      if (arg === "--source") {
+        source = args[i + 1];
+        if (!source) usage();
+        i += 1;
+        continue;
+      }
+      if (arg === "--link") {
+        const value = args[i + 1];
+        const [agent, root] = parseProfileLink(value);
+        profileRoots[agent] = root;
+        i += 1;
+        continue;
+      }
+      if (arg === "--sync-profiles" || arg === "--json") continue;
+      if (arg.startsWith("-")) usage();
+      if (skillDir) usage();
+      skillDir = arg;
+    }
+    if (!skillDir || !source) usage();
+    const result = await addLocalSkill({
+      skillDir,
+      source,
+      syncProfiles: hasFlag(args, "--sync-profiles"),
+      profileRoots,
+      discoverProfileRoots: hasFlag(args, "--sync-profiles")
+    });
+    if (hasFlag(args, "--json")) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      process.stdout.write(formatAddLocalResult(result, skillDir));
+    }
+    if (!result.success) process.exit(1);
     return;
   }
 

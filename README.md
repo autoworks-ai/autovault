@@ -43,9 +43,10 @@ AutoVault supports local capability resolution plus the skill lifecycle:
 5. **Read** resource files packaged alongside a skill
 6. **Propose** new skills with validation, dedup, and security gating
 7. **Install** skills from GitHub, agentskills, or arbitrary HTTPS URLs
-8. **Track provenance** with a per-skill sidecar file and content hash
-9. **Check updates** to detect upstream drift
-10. **Transform** skills per agent/workspace without forking upstream content
+8. **Add local bundles** from third-party installers with `autovault add-local`
+9. **Track provenance** with a per-skill sidecar file and content hash
+10. **Check updates** to detect upstream drift
+11. **Transform** skills per agent/workspace without forking upstream content
 
 ## Why Use It
 
@@ -82,7 +83,9 @@ AutoVault exports an ESM library API:
 
 - `resolveCapabilities()` / `resolve_capabilities()` - resolve tools, skills, and MCP servers for a scoped caller request
 - `syncProfiles()` - regenerate per-agent profile symlinks from skill frontmatter
+- `discoverProfileRoots()` - detect existing native host skill roots
 - `installSkill()` - install and validate a skill from a configured source
+- `addLocalSkill()` - install and validate a local skill bundle with local provenance
 - `proposeSkill()` - validate, deduplicate, and store proposed skill content
 - `proposeSkillTransform()` / `listSkillTransforms()` / `removeSkillTransform()` - manage vault-local skill overlays
 - `renderSkillForAgent()` - preview the generated skill body for one agent
@@ -217,6 +220,33 @@ export PATH="$HOME/.autovault/bin:$PATH"
 autovault skill list
 ```
 
+## Install Once, Render Everywhere
+
+Third-party installers can hand AutoVault a local skill bundle instead of
+copying the same files into every host-specific skill directory:
+
+```bash
+autovault add-local ./skills/railway --source railway/skills --sync-profiles
+```
+
+`add-local` requires `SKILL.md`, collects sibling resources, refuses symlinks,
+runs the normal validation/signing pipeline, records `source: "local"`, and
+then optionally syncs rendered profile links. With `--sync-profiles`, AutoVault
+discovers existing native roots such as `~/.claude/skills`, `~/.codex/skills`,
+and `~/.cursor/skills`, while preserving user-managed native files on conflict.
+
+Vendors can use the drop-in helper in
+[`scripts/vendor-autovault-install.sh`](scripts/vendor-autovault-install.sh).
+The routing mode is controlled by `AUTOVAULT_SKILL_INSTALL`:
+
+| Mode | Behavior |
+|------|----------|
+| unset, `prefer`, `prefer-autovault` | Use AutoVault when available, otherwise native install. |
+| `both` | Install through AutoVault and the vendor's native path. |
+| `native` | Try native first, then AutoVault as fallback. |
+| `native-only` | Only run the native path. |
+| `off` | Skip skill installation. |
+
 Note: `node dist/index.js` is meant to be **spawned by an MCP host**, not used
 as a long-running interactive CLI. The installer builds the Node app under
 `~/.autovault/app`, keeps installed skills and signatures under `~/.autovault`,
@@ -309,6 +339,7 @@ All config is environment-based and validated at startup.
 | `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
 | `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite path for capability metadata. |
 | `AUTOVAULT_PROFILE_LINKS` | _unset_ | Comma-separated `agent=/skills/root` links to refresh during profile sync, e.g. `codex=~/.codex/skills,claude-code=~/.claude/skills`. |
+| `AUTOVAULT_SKILL_INSTALL` | `prefer-autovault` | Vendor installer routing contract for local skill bundles: `prefer-autovault`, `both`, `native`, `native-only`, or `off`. |
 | `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
 | `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently `text` only). |
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
