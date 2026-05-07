@@ -50,7 +50,7 @@ The wedge over Tessl, ClawHub, and every other skill registry: validation gate +
 │                                                                │
 │   MCP Server                                                   │
 │   ├── stdio (local, zero-config for Claude Code/Cursor/Codex)  │
-│   └── HTTP+SSE (remote, OAuth 2.1, Docker-deployed)            │
+│   └── Streamable HTTP (remote, OAuth 2.1, Docker-deployed)     │
 │                                                                │
 │   Tools                                                        │
 │   ├── list_skills           metadata only (progressive disc.)  │
@@ -91,7 +91,7 @@ The wedge over Tessl, ClawHub, and every other skill registry: validation gate +
 
 **Local mode (default):** stdio-based MCP server. Zero-config for Claude Code, Cursor, Codex — they drop AutoVault into their `mcpServers` config and it works. This is the primary usage path for V1.
 
-**Remote mode:** HTTP + SSE transport with OAuth 2.1 auth. Docker-deployed. Intended for users who want their skill library accessible across multiple machines (mobile + laptop, personal + work, etc.) or for eventual team-shared libraries.
+**Remote mode:** Streamable HTTP transport with OAuth 2.1 auth. Docker-deployed. Intended for users who want their skill library accessible across multiple machines (mobile + laptop, personal + work, etc.) or for eventual team-shared libraries.
 
 Both modes expose the same tool surface. The only difference is transport and auth.
 
@@ -446,7 +446,7 @@ CMD ["node", "src/server.js"]
 
 Environment variables:
 
-- `AUTOVAULT_MODE` — `local` (stdio) or `remote` (HTTP+SSE)
+- `AUTOVAULT_MODE` — `local` (stdio) or `remote` (Streamable HTTP)
 - `AUTOVAULT_STORAGE_PATH` — defaults to `/data/autovault` in remote mode
 - `AUTOVAULT_OAUTH_ISSUER` — OAuth provider URL
 - `AUTOVAULT_OAUTH_CLIENT_ID` + `AUTOVAULT_OAUTH_CLIENT_SECRET`
@@ -551,7 +551,7 @@ Only start after V1 is stable in real use for at least 2 weeks.
 2. **Description optimization** — port skill-creator's optimization loop. Run on install for skills whose descriptions are below quality threshold.
 3. **Signature verification enforcement** — `get_skill` fails if signature mismatch detected.
 4. **Hermes filesystem watcher** — watch `~/.hermes/skills/` for new skills, post-hoc consolidation via `propose_skill`.
-5. **Remote HTTP+SSE mode** — OAuth 2.1, Docker image, `docker-compose.yml`.
+5. **Remote Streamable HTTP mode** — OAuth 2.1, Docker image, `docker-compose.yml`.
 6. **Secret resolver** — after brainstorm with Jack + Jason.
 7. **Additional source adapters** — ClawHub, LobeHub, Tessl.
 

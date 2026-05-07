@@ -135,9 +135,54 @@ export function migrateCapabilityDb(db: CapabilityDb): void {
       disabled INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS remote_users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
+      caller_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS remote_oauth_clients (
+      client_id TEXT PRIMARY KEY,
+      client_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS remote_oauth_codes (
+      code TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES remote_users(id) ON DELETE CASCADE,
+      redirect_uri TEXT NOT NULL,
+      code_challenge TEXT NOT NULL,
+      scopes_json TEXT NOT NULL DEFAULT '[]',
+      resource TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS remote_oauth_tokens (
+      token TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id TEXT NOT NULL REFERENCES remote_users(id) ON DELETE CASCADE,
+      type TEXT NOT NULL,
+      scopes_json TEXT NOT NULL DEFAULT '[]',
+      resource TEXT,
+      expires_at INTEGER NOT NULL,
+      revoked_at INTEGER,
+      created_at TEXT NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_group_tools_group ON group_tools(group_name);
     CREATE INDEX IF NOT EXISTS idx_group_servers_group ON group_servers(group_name);
     CREATE INDEX IF NOT EXISTS idx_context_rules_priority ON context_rules(priority DESC);
+    CREATE INDEX IF NOT EXISTS idx_remote_oauth_codes_expires ON remote_oauth_codes(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_remote_oauth_tokens_user ON remote_oauth_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_remote_oauth_tokens_expires ON remote_oauth_tokens(expires_at);
   `);
 
   const contextRuleColumns = new Set(

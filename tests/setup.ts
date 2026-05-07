@@ -14,6 +14,11 @@ beforeEach(() => {
   process.env.AUTOVAULT_STORAGE_PATH = tempRoot;
   delete process.env.AUTOVAULT_DB_PATH;
   delete process.env.AUTOVAULT_PROFILE_LINKS;
+  delete process.env.AUTOVAULT_PUBLIC_URL;
+  delete process.env.AUTOVAULT_HTTP_PORT;
+  delete process.env.AUTOVAULT_ALLOWED_ORIGINS;
+  delete process.env.AUTOVAULT_ADMIN_EMAIL;
+  delete process.env.AUTOVAULT_ADMIN_PASSWORD;
   process.env.AUTOVAULT_SECURITY_STRICT = "true";
   process.env.AUTOVAULT_SEARCH_MODE = "text";
   process.env.AUTOVAULT_LOG_LEVEL = "error";
@@ -27,6 +32,12 @@ afterEach(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
     tempRoot = null;
   }
+  process.env.AUTOVAULT_MODE = "local";
+  delete process.env.AUTOVAULT_PUBLIC_URL;
+  delete process.env.AUTOVAULT_HTTP_PORT;
+  delete process.env.AUTOVAULT_ALLOWED_ORIGINS;
+  delete process.env.AUTOVAULT_ADMIN_EMAIL;
+  delete process.env.AUTOVAULT_ADMIN_PASSWORD;
   resetConfigCache();
   resetCapabilityDbForTests();
   resetSigningCache();

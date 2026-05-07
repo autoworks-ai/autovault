@@ -1,33 +1,34 @@
 # AutoVault
 
-AutoVault is a **local capability library backed by SQLite**, with a stdio
-Model Context Protocol (MCP) server kept as a compatibility wrapper. It gives
-agents and agent hosts a single local place to resolve tools, MCP servers, and
+AutoVault is a **capability library backed by SQLite**, with local stdio and
+remote Streamable HTTP Model Context Protocol (MCP) entry points. It gives
+agents and agent hosts a single place to resolve tools, MCP servers, and
 reusable `SKILL.md` files.
 
-In plain English: AutoVault is the local capability layer. It stores capability
-metadata in SQLite, keeps skills as filesystem-native directories, generates
-per-agent skill profiles, and helps agents reuse curated workflows instead of
-rewriting them from scratch. It does **not** execute skills itself. It validates
-and serves content; the host or downstream agent decides how to use it.
+In plain English: AutoVault is the capability layer. Locally, it stores
+filesystem-native skill directories and can generate per-agent profile symlinks.
+Remotely, it serves the same vault over MCP with OAuth and role-aware access
+checks. It does **not** execute skills itself. It validates and serves content;
+the host or downstream agent decides how to use it.
 
 ## What It Is
 
 AutoVault is a Node/TypeScript library and compatibility MCP server that:
 
-- stores skills on the local filesystem
+- stores skills on the local filesystem or a mounted service volume
 - indexes profiles, callers, tool groups, aliases, context rules, and MCP servers in SQLite
 - resolves scoped capabilities through `resolveCapabilities()`
-- generates per-agent skill profile symlinks
+- generates per-agent skill profile symlinks in local mode
 - applies vault-local skill transforms when generating per-agent profiles
 - validates submitted or imported skill content
 - exposes existing skill lifecycle operations over MCP tools
 - tracks where installed skills came from
 - detects when an installed skill has drifted from its upstream source
 
-The compatibility server runs over **stdio only**. An MCP host can spawn
+The local compatibility server still runs over stdio. An MCP host can spawn
 `node dist/index.js` and communicate over stdin/stdout, while local callers can
-import `@autoworks/autovault` directly.
+import `@autoworks/autovault` directly. Remote deployments use
+`node dist/remote.js` and expose Streamable HTTP MCP at `/mcp`.
 
 See [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md) for the runtime decision.
 
@@ -131,7 +132,7 @@ post-install tampering (log-only warning in V1).
 - **Safer**: malformed or obviously risky content is gated before persistence
 - **Traceable**: imported skills keep source metadata and drift info
 - **Simple**: plain filesystem storage, plain `SKILL.md` files, easy backup
-- **MCP-native**: works naturally with hosts like Cursor that can spawn local stdio servers
+- **MCP-native**: works with local stdio hosts and remote MCP clients
 
 ## Architecture Overview
 
@@ -229,6 +230,54 @@ npm run dev
 npm test
 ```
 
+## Remote Deploy
+
+Remote mode is for a shared or managed vault: Docker, Railway, or any platform
+that can run a Node container with a persistent volume. It serves Streamable
+HTTP MCP at `/mcp`, uses OAuth for client registration/login/token issuance,
+and stores the vault under the mounted `AUTOVAULT_STORAGE_PATH`.
+
+```bash
+npm run build
+AUTOVAULT_MODE=remote \
+AUTOVAULT_PUBLIC_URL=http://localhost:3000 \
+AUTOVAULT_ADMIN_EMAIL=admin@example.com \
+AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \
+npm run start:remote
+```
+
+Docker:
+
+```bash
+AUTOVAULT_ADMIN_EMAIL=admin@example.com \
+AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \
+docker compose up --build
+```
+
+Railway:
+
+1. Create a Railway service from this repository.
+2. Add a volume mounted at `/data/autovault`.
+3. Set `AUTOVAULT_PUBLIC_URL=https://<service>.up.railway.app`.
+4. Set `AUTOVAULT_ADMIN_EMAIL` and `AUTOVAULT_ADMIN_PASSWORD`.
+5. Deploy the included `Dockerfile`; Railway provides `PORT`, and AutoVault
+   binds to `0.0.0.0:$PORT`.
+
+Remote MCP URL:
+
+```text
+http://localhost:3000/mcp
+https://<service>.up.railway.app/mcp
+```
+
+Remote mode cannot create symlinks on client machines. `sync-profiles` remains
+local-only because a remote MCP server has no filesystem access to
+`~/.codex/skills`, `~/.claude/skills`, or other host skill roots. Remote clients
+should discover and read skills directly through `search_skills`, `get_skill`,
+and `read_skill_resource`. A later local mirror helper can pull permitted remote
+skills into local profile directories if filesystem-native host skills are
+required.
+
 ## Using It With Cursor
 
 Cursor supports project-local MCP config via `.cursor/mcp.json`.
@@ -256,13 +305,18 @@ All config is environment-based and validated at startup.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `AUTOVAULT_MODE` | `local` | Reserved for future modes. |
+| `AUTOVAULT_MODE` | `local` | `local` for stdio/library use, `remote` for the HTTP MCP service. |
 | `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
 | `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite path for capability metadata. |
 | `AUTOVAULT_PROFILE_LINKS` | _unset_ | Comma-separated `agent=/skills/root` links to refresh during profile sync, e.g. `codex=~/.codex/skills,claude-code=~/.claude/skills`. |
 | `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
 | `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently `text` only). |
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
+| `AUTOVAULT_PUBLIC_URL` | _required in remote mode_ | Public origin for OAuth metadata and Railway/custom-domain callbacks. |
+| `AUTOVAULT_HTTP_PORT` | `3000` | Local HTTP port when `PORT` is not provided by the platform. |
+| `AUTOVAULT_ALLOWED_ORIGINS` | _unset_ | Optional comma-separated browser origins allowed to call the service. |
+| `AUTOVAULT_ADMIN_EMAIL` | _required until an owner exists_ | Email for the first owner account seeded on remote boot. |
+| `AUTOVAULT_ADMIN_PASSWORD` | _required until an owner exists_ | Password for the first owner account; must be at least 12 characters. |
 | `GITHUB_TOKEN` | _unset_ | Optional. Used for GitHub API rate-limit headroom. |
 | `AUTOVAULT_AGENTSKILLS_BASE` | `https://agentskills.io/api/v1` | Override the agentskills base URL. |
 
@@ -280,7 +334,7 @@ Installer-only variables:
 
 AutoVault has two distinct surfaces with different execution properties.
 
-**The MCP server** (`dist/index.js`, spawned by Claude Code / Cursor / Codex over stdio) is a storage-and-validation service. It never executes skill content. Agents call its tools to install, propose, search, and read skills; the bytes sit on disk afterward. Remote sources are treated as untrusted input, validated through the schema/security/capability pipeline, and rejected (or, in non-strict mode, warned about) before any write. Path inputs are checked to prevent traversal, and all diagnostics go to stderr so stdout stays reserved for MCP framing.
+**The MCP servers** (`dist/index.js` over stdio and `dist/remote.js` over Streamable HTTP) are storage-and-validation services. They never execute skill content. Agents call their tools to install, propose, search, and read skills; the bytes sit on disk afterward. Remote sources are treated as untrusted input, validated through the schema/security/capability pipeline, and rejected (or, in non-strict mode, warned about) before any write. Path inputs are checked to prevent traversal, and all diagnostics go to stderr so stdout stays reserved for MCP framing on the stdio path. Remote mode additionally requires OAuth bearer tokens and filters skill visibility for non-owner users.
 
 **The `autovault skill <action>` CLI** (e.g. `autovault skill setup <name>`) is a separate, user-invoked surface that *does* execute the bin resources a skill declares in its `bin:` frontmatter block. It is the explicit "user runs this in their own terminal" path for skills that need out-of-band setup (registering MCP servers, writing host config, prompting for secrets). The CLI runs the script as the invoking user, with the user's full filesystem and network access. Three guarantees apply before exec:
 
@@ -310,6 +364,7 @@ The project includes:
 
 - unit and integration tests via `vitest`
 - end-to-end smoke verification in `scripts/smoke.mjs`
+- remote HTTP/OAuth smoke verification in `scripts/remote-smoke.mjs`
 - negative-path probing in `scripts/probe.mjs`
 - GitHub Actions CI for build, test, and audit checks
 
@@ -319,21 +374,23 @@ Run locally:
 npm run build
 npm test -- --coverage
 node scripts/smoke.mjs
+node scripts/remote-smoke.mjs
 node scripts/probe.mjs
 ```
 
 ## Docker
 
-Docker is provided for packaging and distribution, but the runtime model is
-still stdio-only.
+Docker defaults to the remote service entry point:
 
 ```bash
-docker compose build
-docker compose run --rm autovault
+AUTOVAULT_ADMIN_EMAIL=admin@example.com \
+AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \
+docker compose up --build
 ```
 
-The image does not expose a network port and is not intended to run as a
-detached HTTP service.
+The compose service maps `localhost:3000` to `/mcp` and persists the vault in
+the `autovault-data` volume mounted at `/data/autovault`. For local stdio use,
+run `node dist/index.js` directly or override the container command.
 
 ## Release Status
 
@@ -352,6 +409,5 @@ Likely next areas of expansion:
 - semantic search via local embeddings
 - description optimization loop (from skill-creator)
 - Hermes-style agent filesystem watchers for post-hoc consolidation
-- remote HTTP+SSE mode with OAuth 2.1
 - additional source adapters (ClawHub, LobeHub, Tessl)
 - secret resolver (brainstorm pending)
