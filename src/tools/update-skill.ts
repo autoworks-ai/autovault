@@ -1,4 +1,4 @@
-import { collectLocalSkillBundle, addLocalSkill } from "../installer/local.js";
+import { collectLocalSkillBundle, addLocalSkill, LocalBundleLimitError } from "../installer/local.js";
 import { readSkill, readSkillSource } from "../storage/index.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
@@ -28,6 +28,14 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
       warnings: [`Skill is not installed: ${input.name}`]
     };
   }
+  if (input.skill_md && input.source !== "inline") {
+    return {
+      success: false,
+      name: input.name,
+      validation: {},
+      warnings: ["skill_md requires source='inline'."]
+    };
+  }
 
   if (input.source === "local") {
     if (!input.skill_dir || !input.identifier) {
@@ -38,7 +46,26 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
         warnings: ["source='local' requires skill_dir and identifier."]
       };
     }
-    const bundle = await collectLocalSkillBundle(input.skill_dir);
+    let bundle: Awaited<ReturnType<typeof collectLocalSkillBundle>>;
+    try {
+      bundle = await collectLocalSkillBundle(input.skill_dir);
+    } catch (error) {
+      if (error instanceof LocalBundleLimitError) {
+        return {
+          success: false,
+          name: input.name,
+          validation: {
+            valid: false,
+            repaired: false,
+            errors: error.errors,
+            warnings: [],
+            securityFlags: []
+          },
+          warnings: []
+        };
+      }
+      throw error;
+    }
     const bundleName = skillNameFromMarkdown(bundle.skillMd);
     if (bundleName.error) {
       return {
@@ -62,7 +89,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
     });
   }
 
-  if (input.source === "inline" || input.skill_md) {
+  if (input.source === "inline") {
     if (!input.skill_md) {
       return {
         success: false,

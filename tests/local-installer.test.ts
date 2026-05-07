@@ -208,24 +208,34 @@ describe("local installer", () => {
 
   it("MCP local add syncs configured profile roots by default", async () => {
     const externalRoot = path.join(currentStorageRoot(), "external-codex-skills");
+    const previousProfileLinks = process.env.AUTOVAULT_PROFILE_LINKS;
     process.env.AUTOVAULT_PROFILE_LINKS = `codex=${externalRoot}`;
     resetConfigCache();
-    const sourceDir = path.join(currentStorageRoot(), "mcp-local-bundle");
-    await writeLocalSkill(sourceDir, {
-      name: "mcp-local-default-sync",
-      agents: ["codex"]
-    });
+    try {
+      const sourceDir = path.join(currentStorageRoot(), "mcp-local-bundle");
+      await writeLocalSkill(sourceDir, {
+        name: "mcp-local-default-sync",
+        agents: ["codex"]
+      });
 
-    const result = await addSkill({
-      source: "local",
-      identifier: "vendor/repo",
-      skill_dir: sourceDir
-    });
+      const result = await addSkill({
+        source: "local",
+        identifier: "vendor/repo",
+        skill_dir: sourceDir
+      });
 
-    expect(result.success).toBe(true);
-    await expect(fs.readlink(path.join(externalRoot, "mcp-local-default-sync"))).resolves.toContain(
-      path.join("profiles", "codex", "mcp-local-default-sync")
-    );
+      expect(result.success).toBe(true);
+      await expect(fs.readlink(path.join(externalRoot, "mcp-local-default-sync"))).resolves.toContain(
+        path.join("profiles", "codex", "mcp-local-default-sync")
+      );
+    } finally {
+      if (previousProfileLinks === undefined) {
+        delete process.env.AUTOVAULT_PROFILE_LINKS;
+      } else {
+        process.env.AUTOVAULT_PROFILE_LINKS = previousProfileLinks;
+      }
+      resetConfigCache();
+    }
   });
 
   it("preserves external native directory conflicts with warnings", async () => {

@@ -4,7 +4,7 @@ import type { SkillRecord } from "../types.js";
 import { canonicalRelPath } from "../util/path.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
-import { readSkillResource } from "./read-skill-resource.js";
+import { readSkillResources } from "./read-skill-resource.js";
 
 export type GetSkillOptions = {
   includeResources?: boolean;
@@ -77,12 +77,7 @@ async function readResourceContents(
   skillName: string,
   paths: string[]
 ): Promise<Array<{ path: string; content: string; mime_type: string }>> {
-  const resources = [];
-  for (const resourcePath of paths) {
-    const resource = await readSkillResource(skillName, resourcePath);
-    resources.push({ path: resourcePath, ...resource });
-  }
-  return resources;
+  return readSkillResources(skillName, paths);
 }
 
 function parseRenderedCapabilities(skillMd: string): {

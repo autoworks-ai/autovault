@@ -6,6 +6,7 @@ import { deleteSkill } from "../src/tools/delete-skill.js";
 import { getSkill } from "../src/tools/get-skill.js";
 import { updateSkill } from "../src/tools/update-skill.js";
 import { readSkill, readSkillSource } from "../src/storage/index.js";
+import { MAX_SKILL_MD_BYTES } from "../src/util/limits.js";
 import { currentStorageRoot } from "./setup.js";
 
 const skillMd = (name: string, body = "Body"): string => `---
@@ -63,6 +64,16 @@ describe("skill CRUD MCP tool handlers", () => {
     });
     expect(mismatch).toMatchObject({ success: false, name: "" });
     expect(JSON.stringify(mismatch)).toContain("does not match");
+
+    const ambiguousInline = await updateSkill({
+      name: "update-inline-skill",
+      skill_md: skillMd("update-inline-skill", "Ambiguous")
+    });
+    expect(ambiguousInline).toMatchObject({
+      success: false,
+      name: "update-inline-skill"
+    });
+    expect(JSON.stringify(ambiguousInline)).toContain("source='inline'");
   });
 
   it("returns structured failures for malformed local update frontmatter", async () => {
@@ -101,6 +112,41 @@ metadata:
     });
     expect(JSON.stringify(result)).toContain("frontmatter could not be parsed");
     await expect(getSkill("malformed-update-skill")).resolves.toMatchObject({
+      skill_md: expect.stringContaining("# Before")
+    });
+  });
+
+  it("returns structured failures for local update bundle limit errors", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundle("oversized-update-skill", "Before")
+    });
+
+    const oversized = path.join(currentStorageRoot(), "oversized-update-bundle");
+    await fs.mkdir(oversized, { recursive: true });
+    await fs.writeFile(
+      path.join(oversized, "SKILL.md"),
+      "x".repeat(MAX_SKILL_MD_BYTES + 1),
+      "utf-8"
+    );
+
+    const result = await updateSkill({
+      name: "oversized-update-skill",
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: oversized
+    });
+    expect(result).toMatchObject({
+      success: false,
+      name: "oversized-update-skill",
+      validation: {
+        valid: false,
+        repaired: false,
+        errors: [expect.stringContaining("SKILL.md is")]
+      }
+    });
+    await expect(getSkill("oversized-update-skill")).resolves.toMatchObject({
       skill_md: expect.stringContaining("# Before")
     });
   });

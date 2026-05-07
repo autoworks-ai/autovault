@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readVerifiedSkillResource } from "../storage/index.js";
+import { readVerifiedSkillResource, readVerifiedSkillResources } from "../storage/index.js";
 import { canonicalRelPath } from "../util/path.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 
@@ -60,4 +60,52 @@ export async function readSkillResource(skillName: string, resourcePath: string)
         `Resource not found: ${result.resource}`
       );
   }
+}
+
+export async function readSkillResources(
+  skillName: string,
+  resourcePaths: string[]
+): Promise<Array<{ path: string; content: string; mime_type: string }>> {
+  assertSafeSkillName(skillName);
+  const result = await readVerifiedSkillResources(skillName, resourcePaths);
+  switch (result.kind) {
+    case "ok":
+      return result.resources.map((resource) => ({
+        ...resource,
+        mime_type: mimeTypeFor(resource.path)
+      }));
+    case "no_manifest":
+      throw new Error(
+        `Refusing to read: no signed manifest for skill '${skillName}'. Reinstall the skill.`
+      );
+    case "manifest_corrupt":
+      throw new Error(
+        `Refusing to read: signed manifest for skill '${skillName}' is corrupt. Reinstall the skill.`
+      );
+    case "tampered": {
+      const detail = result.mismatches
+        .map((m) => `${m.file} (${m.reason})`)
+        .join(", ");
+      throw new Error(
+        `Refusing to read: skill '${skillName}' integrity check failed: ${detail}. Reinstall the skill.`
+      );
+    }
+    case "not_covered":
+      throw new Error(
+        `Refusing to read: '${result.resource}' is not covered by the signed manifest for skill '${skillName}'. Reinstall the skill.`
+      );
+    case "signature_invalid":
+      throw new Error(
+        `Refusing to read: signature mismatch for '${result.resource}' in skill '${skillName}'. The file may have been tampered with — reinstall the skill.`
+      );
+    case "missing_on_disk":
+      throw new Error(
+        `Resource not found: ${result.resource}`
+      );
+  }
+}
+
+function mimeTypeFor(resourcePath: string): string {
+  const ext = path.extname(canonicalRelPath(resourcePath)).toLowerCase();
+  return MIME_BY_EXT[ext] ?? "text/plain";
 }
