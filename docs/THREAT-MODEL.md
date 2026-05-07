@@ -39,7 +39,7 @@ checks, and user confirmation for any actions described in the skill.
 | ID | Abuse Case | Mitigation |
 |----|------------|------------|
 | A1 | Malicious skill includes shell commands intended to exfiltrate or destroy | Security denylist (`scripts/security/patterns.json`); strict mode blocks installs; agent is still responsible for execution decisions. |
-| A2 | Path traversal via `read_skill_resource` or proposed resource paths | Reject absolute paths and `..`; resolve under skill root and re-check prefix. |
+| A2 | Path traversal via `get_skill(include_resources)` or proposed resource paths | Reject absolute paths and `..`; resolve under skill root and re-check prefix. |
 | A3 | Path traversal via skill name (e.g. `../etc`) | Reject names containing `/` or `..` at the tool boundary. |
 | A4 | Source spoofing (a URL or repo serving different bytes on each fetch) | Persist content hash + upstream sha; `check_updates` reports drift. |
 | A5 | Resource exhaustion via huge payloads (any source) | Bundle limits live in `src/util/limits.ts` and are enforced uniformly: declared resource count (50), per-resource bytes (1 MiB), total bundle bytes (5 MiB), SKILL.md size (256 KiB). `validateSkillInput` applies them to inline/propose/url; the GitHub adapter additionally checks `Content-Length` before reading remote bodies. |

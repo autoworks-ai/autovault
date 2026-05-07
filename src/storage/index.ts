@@ -674,16 +674,35 @@ export type ReadVerifiedResourceResult =
   | { kind: "signature_invalid"; resource: string }
   | { kind: "missing_on_disk"; resource: string };
 
+export type ReadVerifiedResourcesResult =
+  | { kind: "ok"; resources: Array<{ path: string; content: string }> }
+  | Exclude<ReadVerifiedResourceResult, { kind: "ok" }>;
+
 export async function readVerifiedSkillResource(
   name: string,
   resourcePath: string
 ): Promise<ReadVerifiedResourceResult> {
+  const result = await readVerifiedSkillResources(name, [resourcePath]);
+  if (result.kind !== "ok") return result;
+  const resource = result.resources[0];
+  if (!resource) {
+    return { kind: "missing_on_disk", resource: canonicalRelPath(resourcePath) };
+  }
+  return { kind: "ok", content: resource.content };
+}
+
+export async function readVerifiedSkillResources(
+  name: string,
+  resourcePaths: string[]
+): Promise<ReadVerifiedResourcesResult> {
   // Path-shape + live-probe sanity check before taking the lock. If the live
   // tree is parent-symlink-corrupted, this throws "escapes skill directory"
   // before integrity gets a chance — same outcome (refuse), different
   // message, defense-in-depth above the lock.
-  const fullPath = validateResourcePath(name, resourcePath);
-  const key = canonicalRelPath(resourcePath);
+  const requests = resourcePaths.map((resourcePath) => ({
+    key: canonicalRelPath(resourcePath),
+    fullPath: validateResourcePath(name, resourcePath)
+  }));
   return withStorageLock(async () => {
     const integrity = await verifyIntegrityLocked(name);
     if (integrity.kind !== "ok") return integrity;
@@ -691,16 +710,20 @@ export async function readVerifiedSkillResource(
     if (raw === null) return { kind: "no_manifest" };
     const manifest = parseManifest(raw);
     if (!manifest) return { kind: "manifest_corrupt" };
-    let content: string;
-    try {
-      content = await fs.readFile(fullPath, "utf-8");
-    } catch {
-      return { kind: "missing_on_disk", resource: key };
+    const resources: Array<{ path: string; content: string }> = [];
+    for (const request of requests) {
+      let content: string;
+      try {
+        content = await fs.readFile(request.fullPath, "utf-8");
+      } catch {
+        return { kind: "missing_on_disk", resource: request.key };
+      }
+      const result = await verifyFile(manifest, name, request.key, content);
+      if (!result.present) return { kind: "not_covered", resource: request.key };
+      if (!result.valid) return { kind: "signature_invalid", resource: request.key };
+      resources.push({ path: request.key, content });
     }
-    const result = await verifyFile(manifest, name, key, content);
-    if (!result.present) return { kind: "not_covered", resource: key };
-    if (!result.valid) return { kind: "signature_invalid", resource: key };
-    return { kind: "ok", content };
+    return { kind: "ok", resources };
   });
 }
 

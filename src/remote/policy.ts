@@ -26,10 +26,10 @@ type TransformListLike = {
 };
 
 const WRITE_TOOLS = new Set([
-  "install_skill",
+  "add_skill",
+  "update_skill",
+  "delete_skill",
   "propose_skill",
-  "propose_skill_transform",
-  "remove_skill_transform"
 ]);
 
 export function isWriteTool(toolName: string): boolean {

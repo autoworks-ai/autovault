@@ -27,6 +27,7 @@ export type InstallSkillInput = {
   skill_md?: string;
   bundled_skill_name?: string;
   resources?: InstallSkillResource[];
+  expected_name?: string;
 };
 
 type InstallDeps = {
@@ -235,6 +236,16 @@ export async function installSkill(
 
   const { data } = parseFrontmatter(normalizedSkillMd);
   const name = typeof data.name === "string" ? data.name : "unnamed-skill";
+  if (input.expected_name && name !== input.expected_name) {
+    return {
+      success: false,
+      name: "",
+      validation,
+      warnings: [
+        `Install refused: fetched skill name '${name}' does not match '${input.expected_name}'.`
+      ]
+    };
+  }
 
   for (const resource of resources) {
     try {

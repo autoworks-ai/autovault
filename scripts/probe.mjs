@@ -59,11 +59,11 @@ metadata:
 `;
   const installed = unwrap(
     await client.callTool({
-      name: "install_skill",
-      arguments: { source: "url", identifier: "https://example.com/x", skill_md: md }
+      name: "propose_skill",
+      arguments: { skill_md: md }
     })
   );
-  process.stdout.write(`installed: ${installed.success}\n`);
+  process.stdout.write(`installed: ${installed.outcome}\n`);
 
   async function expectToolError(label, args, pattern) {
     header(label);
@@ -87,17 +87,17 @@ metadata:
   }
 
   await expectToolError(
-    "read_skill_resource path traversal must error",
+    "get_skill conflicting name/query must error",
     {
-      name: "read_skill_resource",
-      arguments: { skill_name: "probe-skill", resource_path: "../../etc/passwd" }
+      name: "get_skill",
+      arguments: { name: "probe-skill", query: "probe" }
     },
-    /Invalid resource path/
+    /either name or query/
   );
 
   await expectToolError(
-    "read_skill_resource invalid skill name must error",
-    { name: "read_skill_resource", arguments: { skill_name: "../escape", resource_path: "x" } },
+    "delete_skill invalid skill name must error",
+    { name: "delete_skill", arguments: { name: "../escape" } },
     /Invalid skill name/
   );
 

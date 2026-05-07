@@ -71,28 +71,35 @@ async function main() {
   );
   process.stdout.write(`${pretty(proposal)}\n`);
 
-  banner("install_skill (inline)");
+  banner("get_skill (query: smoke)");
+  const search = unwrap(
+    await client.callTool({ name: "get_skill", arguments: { query: "smoke" } })
+  );
+  process.stdout.write(`${pretty({
+    ...search,
+    skill: search.skill ? { ...search.skill, skill_md: `<${search.skill.skill_md.length} chars>` } : null
+  })}\n`);
+
+  const localSkillDir = path.join(tempStorage, "local-smoke-skill");
+  await fs.mkdir(localSkillDir, { recursive: true });
+  await fs.writeFile(
+    path.join(localSkillDir, "SKILL.md"),
+    SAMPLE_SKILL.replace("smoke-skill", "local-smoke-skill"),
+    "utf-8"
+  );
+
+  banner("add_skill (local)");
   const installed = unwrap(
     await client.callTool({
-      name: "install_skill",
+      name: "add_skill",
       arguments: {
-        source: "url",
-        identifier: "https://example.com/SKILL.md",
-        skill_md: SAMPLE_SKILL.replace("smoke-skill", "installed-smoke-skill")
+        source: "local",
+        identifier: "smoke/local",
+        skill_dir: localSkillDir
       }
     })
   );
   process.stdout.write(`${pretty(installed)}\n`);
-
-  banner("list_skills");
-  const list = unwrap(await client.callTool({ name: "list_skills", arguments: {} }));
-  process.stdout.write(`${pretty(list)}\n`);
-
-  banner("search_skills (query: smoke)");
-  const search = unwrap(
-    await client.callTool({ name: "search_skills", arguments: { query: "smoke" } })
-  );
-  process.stdout.write(`${pretty(search)}\n`);
 
   banner("get_skill (smoke-skill)");
   const get = unwrap(

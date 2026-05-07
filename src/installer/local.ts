@@ -57,7 +57,7 @@ function shouldSkipEntry(name: string): boolean {
   return name.startsWith(".autovault-");
 }
 
-class LocalBundleLimitError extends Error {
+export class LocalBundleLimitError extends Error {
   constructor(readonly errors: string[]) {
     super(errors.join("; "));
   }

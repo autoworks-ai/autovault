@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { resetConfigCache } from "../src/config.js";
+import { openCapabilityDb } from "../src/capabilities/db.js";
+import { saveCapabilityConfig } from "../src/capabilities/resolver.js";
 import { proposeSkill } from "../src/tools/propose-skill.js";
 import {
   startRemoteServer,
@@ -13,6 +15,8 @@ const ADMIN_EMAIL = "admin@example.com";
 const ADMIN_PASSWORD = "admin-password-123";
 const VIEWER_EMAIL = "viewer@example.com";
 const VIEWER_PASSWORD = "viewer-password-123";
+const QUERY_VIEWER_EMAIL = "query-viewer@example.com";
+const QUERY_VIEWER_PASSWORD = "query-viewer-password-123";
 const REDIRECT_URI = "http://localhost/callback";
 
 type TokenBundle = {
@@ -131,7 +135,7 @@ describe("remote MCP server", () => {
     );
   });
 
-  it("requires bearer auth for MCP and lets an owner initialize and list skills", async () => {
+  it("requires bearer auth for MCP and lets an owner initialize and search skills", async () => {
     const base = await start();
     await seedSkills();
 
@@ -148,13 +152,17 @@ describe("remote MCP server", () => {
     const tokens = await oauthToken(base, ADMIN_EMAIL, ADMIN_PASSWORD);
     const client = await connectClient(base, tokens.access_token);
     try {
-      const result = await client.callTool({ name: "list_skills", arguments: {} });
+      const result = await client.callTool({
+        name: "get_skill",
+        arguments: { query: "remote", top_k: 5 }
+      });
       const text = textContent(result);
-      expect(JSON.parse(text)).toEqual({
-        skills: expect.arrayContaining([
+      expect(JSON.parse(text)).toMatchObject({
+        matches: expect.arrayContaining([
           expect.objectContaining({ name: "public-remote-skill" }),
           expect.objectContaining({ name: "secret-remote-skill" })
-        ])
+        ]),
+        skill: expect.objectContaining({ skill_md: expect.stringContaining("#") })
       });
     } finally {
       await client.close();
@@ -174,14 +182,17 @@ describe("remote MCP server", () => {
     const viewerTokens = await oauthToken(base, VIEWER_EMAIL, VIEWER_PASSWORD);
     const viewer = await connectClient(base, viewerTokens.access_token);
     try {
-      const listed = await viewer.callTool({ name: "list_skills", arguments: {} });
-      expect(JSON.parse(textContent(listed))).toEqual({
-        skills: [expect.objectContaining({ name: "public-remote-skill" })]
+      const listed = await viewer.callTool({
+        name: "get_skill",
+        arguments: { query: "remote", top_k: 5 }
+      });
+      expect(JSON.parse(textContent(listed))).toMatchObject({
+        matches: [expect.objectContaining({ name: "public-remote-skill" })]
       });
 
       const hidden = await viewer.callTool({
-        name: "read_skill_resource",
-        arguments: { skill_name: "secret-remote-skill", resource_path: "notes.txt" }
+        name: "get_skill",
+        arguments: { name: "secret-remote-skill", include_resources: true }
       });
       expect(hidden.isError).toBe(true);
       expect(textContent(hidden)).toContain("Permission denied");
@@ -194,6 +205,49 @@ describe("remote MCP server", () => {
       });
       expect(write.isError).toBe(true);
       expect(textContent(write)).toContain("autovault:write");
+    } finally {
+      await viewer.close();
+    }
+  });
+
+  it("authorizes query-mode get_skill reads using the user's query", async () => {
+    const base = await start();
+    seedQueryScopedCapabilities();
+    const result = await proposeSkill({
+      skill_md: `---
+name: query-gated-remote-skill
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+metadata:
+  version: "1.0.0"
+capabilities:
+  tools:
+    - mcp__secret__tool
+---
+
+# Query Gated Remote Skill
+
+This skill is readable only when the query grants the matching tool group.
+`
+    });
+    expect(result.outcome).toBe("accepted");
+    await handle!.provider.createUser({
+      email: QUERY_VIEWER_EMAIL,
+      password: QUERY_VIEWER_PASSWORD,
+      role: "viewer",
+      callerId: "remote:query-viewer"
+    });
+
+    const tokens = await oauthToken(base, QUERY_VIEWER_EMAIL, QUERY_VIEWER_PASSWORD);
+    const viewer = await connectClient(base, tokens.access_token);
+    try {
+      const loaded = await viewer.callTool({
+        name: "get_skill",
+        arguments: { query: "query-gated", top_k: 5 }
+      });
+      expect(loaded.isError).not.toBe(true);
+      expect(JSON.parse(textContent(loaded))).toMatchObject({
+        skill: expect.objectContaining({ name: "query-gated-remote-skill" })
+      });
     } finally {
       await viewer.close();
     }
@@ -290,6 +344,36 @@ This skill requires a tool pattern the viewer is not granted.
     resources: [{ path: "notes.txt", content: "secret notes" }]
   });
   expect(secretResult.outcome).toBe("accepted");
+}
+
+function seedQueryScopedCapabilities(): void {
+  saveCapabilityConfig({
+    activeProfile: "auto",
+    profiles: {
+      auto: { description: "Remote viewer profile", groups: [] }
+    },
+    toolGroups: {
+      query_scoped_remote: ["mcp__secret__tool"]
+    },
+    toolGroupMeta: {
+      query_scoped_remote: {
+        description: "Secret remote tool access for query-mode read checks.",
+        tags: ["remote"]
+      }
+    },
+    contextRules: [
+      {
+        id: "query-gated-remote",
+        pattern: "\\bquery-gated\\b",
+        profiles: ["auto"],
+        enableGroups: ["query_scoped_remote"],
+        priority: 10
+      }
+    ]
+  });
+  openCapabilityDb()
+    .prepare("INSERT OR REPLACE INTO callers(id, profile_id, role) VALUES (?, ?, ?)")
+    .run("remote:query-viewer", "auto", "user");
 }
 
 function skillMd(name: string): string {
