@@ -115,6 +115,25 @@ describe("loadConfig", () => {
     }
   });
 
+  it("rejects AUTOVAULT_PUBLIC_URL with a path, query, or fragment", () => {
+    const previous = {
+      mode: process.env.AUTOVAULT_MODE,
+      publicUrl: process.env.AUTOVAULT_PUBLIC_URL
+    };
+    process.env.AUTOVAULT_MODE = "remote";
+    process.env.AUTOVAULT_PUBLIC_URL = "https://vault.example.com/autovault";
+    resetConfigCache();
+    try {
+      expect(() => loadConfig()).toThrow(/AUTOVAULT_PUBLIC_URL must be an origin/);
+    } finally {
+      if (previous.mode === undefined) delete process.env.AUTOVAULT_MODE;
+      else process.env.AUTOVAULT_MODE = previous.mode;
+      if (previous.publicUrl === undefined) delete process.env.AUTOVAULT_PUBLIC_URL;
+      else process.env.AUTOVAULT_PUBLIC_URL = previous.publicUrl;
+      resetConfigCache();
+    }
+  });
+
   it("fails fast on typo'd AUTOVAULT_SECURITY_STRICT instead of silently coercing to false", () => {
     const previous = process.env.AUTOVAULT_SECURITY_STRICT;
     process.env.AUTOVAULT_SECURITY_STRICT = "treu";

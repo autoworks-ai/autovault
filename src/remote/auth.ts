@@ -29,6 +29,7 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const AUTH_CODE_TTL_SECONDS = 10 * 60;
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+const OAUTH_CLEANUP_INTERVAL_SECONDS = 5 * 60;
 
 export const REMOTE_SCOPES = [
   "mcp:tools",
@@ -284,6 +285,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
   readonly clientsStore: OAuthRegisteredClientsStore;
   private readonly publicUrl: URL;
   private readonly secureCookies: boolean;
+  private lastCleanupAt = 0;
 
   private constructor(
     private readonly db: CapabilityDb,
@@ -301,7 +303,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
   static async create(config = loadConfig(), db = openCapabilityDb()): Promise<RemoteOAuthProvider> {
     const provider = new RemoteOAuthProvider(db, await loadOrCreateSessionSecret(config), config);
     await provider.seedAdmin(config);
-    provider.cleanupExpired();
+    provider.cleanupExpired(true);
     return provider;
   }
 
@@ -401,6 +403,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
     params: AuthorizationParams,
     res: Response
   ): Promise<void> {
+    this.cleanupExpired();
     const req = res.req as Request;
     const user = this.sessionUser(req);
     if (!user) {
@@ -457,6 +460,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL
   ): Promise<OAuthTokens> {
+    this.cleanupExpired();
     const row = this.readValidCode(authorizationCode);
     if (row.client_id !== client.client_id) {
       throw new InvalidGrantError("Authorization code was not issued to this client");
@@ -478,6 +482,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
     scopes?: string[],
     resource?: URL
   ): Promise<OAuthTokens> {
+    this.cleanupExpired();
     const row = this.readValidToken(refreshToken, "refresh");
     if (row.client_id !== client.client_id) {
       throw new InvalidGrantError("Refresh token was not issued to this client");
@@ -528,6 +533,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
         "UPDATE remote_oauth_tokens SET revoked_at = ? WHERE token = ? AND client_id = ?"
       )
       .run(nowSeconds(), request.token, client.client_id);
+    this.cleanupExpired(true);
   }
 
   private grantedScopesFor(role: RemoteRole, requested: string[] | undefined): string[] {
@@ -562,6 +568,7 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
     scopes: string[],
     resource: string | null
   ): OAuthTokens {
+    this.cleanupExpired();
     const accessToken = randomToken();
     const refreshToken = randomToken();
     const timestamp = nowIso();
@@ -600,8 +607,10 @@ export class RemoteOAuthProvider implements OAuthServerProvider {
     };
   }
 
-  private cleanupExpired(): void {
+  private cleanupExpired(force = false): void {
     const now = nowSeconds();
+    if (!force && now - this.lastCleanupAt < OAUTH_CLEANUP_INTERVAL_SECONDS) return;
+    this.lastCleanupAt = now;
     this.db.prepare("DELETE FROM remote_oauth_codes WHERE expires_at < ?").run(now);
     this.db
       .prepare("DELETE FROM remote_oauth_tokens WHERE expires_at < ? OR revoked_at IS NOT NULL")

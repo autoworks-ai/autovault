@@ -4,9 +4,12 @@ import { matchesAny } from "../capabilities/match.js";
 import { resolveCapabilities } from "../capabilities/resolver.js";
 import {
   listInstalledSkillNames,
+  listInstalledSkillNamesUnlocked,
   readSkill,
-  readSkillSummary
+  readSkillSummary,
+  readSkillUnlocked
 } from "../storage/index.js";
+import { withStorageLock } from "../storage/lock.js";
 import type { SkillSummary } from "../types.js";
 import { hasScope, isOwner, remoteAuthContext } from "./auth.js";
 
@@ -127,17 +130,19 @@ export async function allowedSkillNames(
   const allowedToolPatterns = resolved.tools.map((tool) => tool.pattern);
   const allowed = new Set<string>();
 
-  for (const name of await listInstalledSkillNames()) {
-    if (explicitSkillNames.has(name)) {
-      allowed.add(name);
-      continue;
+  await withStorageLock(async () => {
+    for (const name of await listInstalledSkillNamesUnlocked()) {
+      if (explicitSkillNames.has(name)) {
+        allowed.add(name);
+        continue;
+      }
+      const record = await readSkillUnlocked(name);
+      if (!record) continue;
+      if (skillToolsAllowed(record.capabilities.tools, allowedToolPatterns)) {
+        allowed.add(name);
+      }
     }
-    const record = await readSkill(name);
-    if (!record) continue;
-    if (skillToolsAllowed(record.capabilities.tools, allowedToolPatterns)) {
-      allowed.add(name);
-    }
-  }
+  });
 
   return allowed;
 }

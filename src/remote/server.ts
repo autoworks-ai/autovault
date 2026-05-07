@@ -28,6 +28,7 @@ import {
 type RemoteSession = {
   transport: StreamableHTTPServerTransport;
   mcpServer: McpServer;
+  lastAccessedMs: number;
 };
 
 export type RemoteServerHandle = {
@@ -43,6 +44,10 @@ export type StartRemoteServerOptions = {
   port?: number;
   host?: string;
 };
+
+const MAX_REMOTE_MCP_SESSIONS = 100;
+const REMOTE_MCP_SESSION_IDLE_MS = 30 * 60 * 1000;
+const REMOTE_MCP_SESSION_SWEEP_MS = 60 * 1000;
 
 function remotePolicy(): McpToolPolicy {
   return {
@@ -122,11 +127,51 @@ function installMcpRoutes(app: Express, provider: RemoteOAuthProvider, config: C
     await Promise.allSettled([session.transport.close(), session.mcpServer.close()]);
   }
 
+  async function closeIdleSessions(): Promise<void> {
+    const cutoff = Date.now() - REMOTE_MCP_SESSION_IDLE_MS;
+    const idleSessionIds = [...sessions.entries()]
+      .filter(([, session]) => session.lastAccessedMs < cutoff)
+      .map(([sessionId]) => sessionId);
+    await Promise.allSettled(idleSessionIds.map((sessionId) => closeSession(sessionId)));
+  }
+
+  async function closeOldestSession(): Promise<void> {
+    let oldest: { sessionId: string; lastAccessedMs: number } | null = null;
+    for (const [sessionId, session] of sessions) {
+      if (!oldest || session.lastAccessedMs < oldest.lastAccessedMs) {
+        oldest = { sessionId, lastAccessedMs: session.lastAccessedMs };
+      }
+    }
+    if (oldest) await closeSession(oldest.sessionId);
+  }
+
+  function touchSession(sessionId: string): RemoteSession | null {
+    const session = sessions.get(sessionId);
+    if (!session) return null;
+    session.lastAccessedMs = Date.now();
+    return session;
+  }
+
+  async function makeRoomForSession(): Promise<void> {
+    await closeIdleSessions();
+    if (sessions.size >= MAX_REMOTE_MCP_SESSIONS) {
+      await closeOldestSession();
+    }
+  }
+
+  const sessionCleanupTimer = setInterval(() => {
+    void closeIdleSessions().catch((error) => {
+      log.warn("remote_mcp.session_cleanup_failed", { error: String(error) });
+    });
+  }, REMOTE_MCP_SESSION_SWEEP_MS);
+  sessionCleanupTimer.unref?.();
+
   async function handlePost(req: Request, res: Response): Promise<void> {
     const sessionId = req.headers["mcp-session-id"];
     try {
-      if (typeof sessionId === "string" && sessions.has(sessionId)) {
-        await sessions.get(sessionId)!.transport.handleRequest(req, res, req.body);
+      const existingSession = typeof sessionId === "string" ? touchSession(sessionId) : null;
+      if (existingSession) {
+        await existingSession.transport.handleRequest(req, res, req.body);
         return;
       }
 
@@ -137,6 +182,16 @@ function installMcpRoutes(app: Express, provider: RemoteOAuthProvider, config: C
             code: -32000,
             message: "Bad Request: no valid MCP session ID provided"
           },
+          id: null
+        });
+        return;
+      }
+
+      await makeRoomForSession();
+      if (sessions.size >= MAX_REMOTE_MCP_SESSIONS) {
+        res.status(503).json({
+          jsonrpc: "2.0",
+          error: { code: -32000, message: "Too many active MCP sessions" },
           id: null
         });
         return;
@@ -159,7 +214,7 @@ function installMcpRoutes(app: Express, provider: RemoteOAuthProvider, config: C
         }
       });
       const mcpServer = createServer({ policy: remotePolicy() });
-      createdSession = { transport, mcpServer };
+      createdSession = { transport, mcpServer, lastAccessedMs: Date.now() };
       transport.onclose = () => {
         const sid = transport.sessionId;
         if (sid) sessions.delete(sid);
@@ -181,20 +236,22 @@ function installMcpRoutes(app: Express, provider: RemoteOAuthProvider, config: C
 
   async function handleGet(req: Request, res: Response): Promise<void> {
     const sessionId = req.headers["mcp-session-id"];
-    if (typeof sessionId !== "string" || !sessions.has(sessionId)) {
+    const session = typeof sessionId === "string" ? touchSession(sessionId) : null;
+    if (!session) {
       res.status(400).send("Invalid or missing MCP session ID");
       return;
     }
-    await sessions.get(sessionId)!.transport.handleRequest(req, res);
+    await session.transport.handleRequest(req, res);
   }
 
   async function handleDelete(req: Request, res: Response): Promise<void> {
     const sessionId = req.headers["mcp-session-id"];
-    if (typeof sessionId !== "string" || !sessions.has(sessionId)) {
+    const session = typeof sessionId === "string" ? touchSession(sessionId) : null;
+    if (!session) {
       res.status(400).send("Invalid or missing MCP session ID");
       return;
     }
-    await sessions.get(sessionId)!.transport.handleRequest(req, res);
+    await session.transport.handleRequest(req, res);
   }
 
   app.post("/mcp", authMiddleware, (req, res) => {
@@ -208,6 +265,7 @@ function installMcpRoutes(app: Express, provider: RemoteOAuthProvider, config: C
   });
 
   app.set("closeMcpSessions", async () => {
+    clearInterval(sessionCleanupTimer);
     await Promise.allSettled([...sessions.keys()].map((sessionId) => closeSession(sessionId)));
   });
 }

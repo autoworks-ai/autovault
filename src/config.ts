@@ -114,6 +114,16 @@ function expandHome(inputPath: string): string {
   return inputPath;
 }
 
+function normalizePublicUrl(input: string): string {
+  const url = new URL(input);
+  if (url.pathname !== "/" || url.search.length > 0 || url.hash.length > 0) {
+    throw new Error(
+      "Invalid AutoVault configuration: AUTOVAULT_PUBLIC_URL must be an origin without path, query, or fragment"
+    );
+  }
+  return url.origin;
+}
+
 let cached: Config | null = null;
 
 export function loadConfig(): Config {
@@ -142,6 +152,9 @@ export function loadConfig(): Config {
   if (parsed.data.AUTOVAULT_MODE === "remote" && !parsed.data.AUTOVAULT_PUBLIC_URL) {
     throw new Error("Invalid AutoVault configuration: AUTOVAULT_PUBLIC_URL is required in remote mode");
   }
+  const publicUrl = parsed.data.AUTOVAULT_PUBLIC_URL
+    ? normalizePublicUrl(parsed.data.AUTOVAULT_PUBLIC_URL)
+    : undefined;
   cached = {
     mode: parsed.data.AUTOVAULT_MODE,
     storagePath,
@@ -152,9 +165,7 @@ export function loadConfig(): Config {
     strictSecurity: parsed.data.AUTOVAULT_SECURITY_STRICT,
     searchMode: parsed.data.AUTOVAULT_SEARCH_MODE,
     logLevel: parsed.data.AUTOVAULT_LOG_LEVEL,
-    publicUrl: parsed.data.AUTOVAULT_PUBLIC_URL
-      ? parsed.data.AUTOVAULT_PUBLIC_URL.replace(/\/+$/, "")
-      : undefined,
+    publicUrl,
     httpPort: parsed.data.AUTOVAULT_HTTP_PORT,
     allowedOrigins: parsed.data.AUTOVAULT_ALLOWED_ORIGINS,
     adminEmail: parsed.data.AUTOVAULT_ADMIN_EMAIL,
