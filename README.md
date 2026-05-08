@@ -224,7 +224,7 @@ Third-party installers can hand AutoVault a local skill bundle instead of
 copying the same files into every host-specific skill directory:
 
 ```bash
-autovault add-local ./skills/railway --source railway/skills --sync-profiles
+autovault add-local ./path/to/your-skill --source vendor/skills --sync-profiles
 ```
 
 `add-local` requires `SKILL.md`, collects sibling resources, refuses symlinks,
