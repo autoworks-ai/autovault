@@ -297,6 +297,109 @@ metadata:
     }
   });
 
+  it("root symlink rejection names the input path and canonical target", async () => {
+    const targetDir = path.join(currentStorageRoot(), "root-symlink-target");
+    await writeLocalSkill(targetDir, {
+      name: "root-symlink-local"
+    });
+    const linkDir = path.join(currentStorageRoot(), "root-symlink-link");
+    await fs.symlink(targetDir, linkDir, "dir");
+    const realTarget = await fs.realpath(targetDir);
+
+    let error: unknown;
+    try {
+      await addLocalSkill({ skillDir: linkDir, source: "vendor/repo" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain(linkDir);
+    expect(message).toContain(realTarget);
+    expect(message).toContain("Use the canonical target path instead.");
+  });
+
+  it("resource symlink rejection names the resource and canonical target", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "resource-symlink-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "resource-symlink-local"
+    });
+    const targetPath = path.join(sourceDir, "SKILL.md");
+    await fs.symlink(targetPath, path.join(sourceDir, "linked.md"));
+    const realTarget = await fs.realpath(targetPath);
+
+    let error: unknown;
+    try {
+      await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    const message = (error as Error).message;
+    expect(message).toContain("linked.md");
+    expect(message).toContain(realTarget);
+  });
+
+  it("ignores known OS metadata files in local bundles", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "metadata-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "metadata-local",
+      resources: {
+        "references/setup.md": "Local setup reference.\n"
+      }
+    });
+    await fs.writeFile(path.join(sourceDir, ".DS_Store"), "finder\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "Thumbs.db"), "thumbs\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "references", ".DS_Store"), "nested finder\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "references", "Thumbs.db"), "nested thumbs\n", "utf-8");
+
+    const result = await addLocalSkill({
+      skillDir: sourceDir,
+      source: "vendor/repo"
+    });
+
+    expect(result.success).toBe(true);
+    const manifest = await readSkillManifest("metadata-local");
+    expect(manifest?.files["references/setup.md"]).toBeDefined();
+    const manifestFiles = Object.keys(manifest?.files ?? {});
+    expect(manifestFiles).not.toContain(".DS_Store");
+    expect(manifestFiles).not.toContain("Thumbs.db");
+    expect(manifestFiles).not.toContain("references/.DS_Store");
+    expect(manifestFiles).not.toContain("references/Thumbs.db");
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", ".DS_Store"))
+    ).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "Thumbs.db"))
+    ).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", ".DS_Store"))
+    ).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", "Thumbs.db"))
+    ).rejects.toBeDefined();
+  });
+
+  it("still treats normal hidden files as local resources", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "hidden-resource-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "hidden-resource-local"
+    });
+    await fs.writeFile(path.join(sourceDir, ".hidden-resource"), "hidden\n", "utf-8");
+
+    const result = await addLocalSkill({
+      skillDir: sourceDir,
+      source: "vendor/repo"
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.validation.errors.join("\n")).toMatch(
+      /Bundle includes undisclosed file '\.hidden-resource'/
+    );
+  });
+
   it("vendor helper both mode falls back to native when autovault is unavailable", async () => {
     const scriptPath = path.join(REPO_ROOT, "scripts", "vendor-autovault-install.sh");
     const result = await runShell(
