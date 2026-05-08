@@ -78,6 +78,10 @@ function runShell(script: string, env: Record<string, string> = {}): Promise<Cli
   });
 }
 
+function escapeRegExp(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 async function writeLocalSkill(
   root: string,
   input: { name: string; agents?: string[]; resources?: Record<string, string> }
@@ -444,15 +448,78 @@ restart any agent host that caches filesystem skills
 `);
   });
 
+  it("refuses root symlinks with the symlink input and canonical target", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "root-symlink-target");
+    await writeLocalSkill(sourceDir, {
+      name: "root-symlink-local"
+    });
+    const linkDir = path.join(currentStorageRoot(), "root-symlink-link");
+    await fs.symlink(sourceDir, linkDir);
+    const canonicalTarget = await fs.realpath(sourceDir);
+
+    await expect(addLocalSkill({ skillDir: linkDir, source: "vendor/repo" })).rejects.toThrow(
+      new RegExp(`${escapeRegExp(linkDir)} -> ${escapeRegExp(canonicalTarget)}`)
+    );
+  });
+
   it("refuses symlinks in local bundles", async () => {
     const sourceDir = path.join(currentStorageRoot(), "symlink-bundle");
     await writeLocalSkill(sourceDir, {
       name: "symlink-local"
     });
-    await fs.symlink(path.join(sourceDir, "SKILL.md"), path.join(sourceDir, "linked.md"));
+    const targetPath = path.join(sourceDir, "target.md");
+    await fs.writeFile(targetPath, "target\n", "utf-8");
+    await fs.mkdir(path.join(sourceDir, "references"), { recursive: true });
+    await fs.symlink(targetPath, path.join(sourceDir, "references", "linked.md"));
+    const canonicalTarget = await fs.realpath(targetPath);
 
     await expect(addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" })).rejects.toThrow(
-      /symlink resource/
+      new RegExp(`symlink resource: references/linked\\.md -> ${escapeRegExp(canonicalTarget)}`)
     );
+  });
+
+  it("ignores known OS metadata files at any bundle depth", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "metadata-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "metadata-local",
+      resources: {
+        "references/setup.md": "Local setup reference.\n"
+      }
+    });
+    await fs.writeFile(path.join(sourceDir, ".DS_Store"), "finder\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "Thumbs.db"), "thumbs\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "references", ".DS_Store"), "nested finder\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "references", "Thumbs.db"), "nested thumbs\n", "utf-8");
+
+    const result = await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+
+    expect(result.success).toBe(true);
+    const manifest = await readSkillManifest("metadata-local");
+    expect(manifest?.files["references/setup.md"]).toBeDefined();
+    expect(manifest?.files[".DS_Store"]).toBeUndefined();
+    expect(manifest?.files["Thumbs.db"]).toBeUndefined();
+    expect(manifest?.files["references/.DS_Store"]).toBeUndefined();
+    expect(manifest?.files["references/Thumbs.db"]).toBeUndefined();
+    await expect(fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", ".DS_Store"))).rejects.toBeDefined();
+    await expect(fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "Thumbs.db"))).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", ".DS_Store"))
+    ).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", "Thumbs.db"))
+    ).rejects.toBeDefined();
+  });
+
+  it("treats normal hidden non-metadata files as resources that must be disclosed", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "hidden-resource-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "hidden-resource-local"
+    });
+    await fs.writeFile(path.join(sourceDir, ".hidden-notes"), "not metadata\n", "utf-8");
+
+    const result = await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+
+    expect(result.success).toBe(false);
+    expect(result.validation.errors.join("\n")).toMatch(/undisclosed file '\.hidden-notes'/);
   });
 });
