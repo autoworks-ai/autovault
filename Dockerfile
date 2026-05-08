@@ -2,7 +2,7 @@
 # `node dist/index.js` over stdio; this container defaults to the Streamable
 # HTTP MCP server at /mcp for Docker/Railway style deployments.
 
-FROM node:20-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm pkg delete scripts.prepare && npm ci
@@ -12,7 +12,7 @@ COPY scripts ./scripts
 COPY skills ./skills
 RUN npm run build
 
-FROM node:20-alpine AS runtime
+FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./

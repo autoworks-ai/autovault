@@ -44,7 +44,7 @@ checks, and user confirmation for any actions described in the skill.
 | A4 | Source spoofing (a URL or repo serving different bytes on each fetch) | Persist content hash + upstream sha; `check_updates` reports drift. |
 | A5 | Resource exhaustion via huge payloads (any source) | Bundle limits live in `src/util/limits.ts` and are enforced uniformly: declared resource count (50), per-resource bytes (1 MiB), total bundle bytes (5 MiB), SKILL.md size (256 KiB). `validateSkillInput` applies them to inline/propose/url; the GitHub adapter additionally checks `Content-Length` before reading remote bodies. |
 | A6 | Credential leakage via logs | Logs are structured stderr only; tokens are never logged; values such as identifiers are logged but never auth headers. |
-| A7 | Dependency supply chain compromise | `npm ci` in CI; `npm audit` gate; pin Node 20 in CI matrix. |
+| A7 | Dependency supply chain compromise | `npm ci` in CI; `npm audit` gate; pin Node 24 in CI. |
 | A8 | Misconfiguration (typo'd env vars) | `loadConfig` uses zod; invalid values fail fast at startup. |
 | A9 | Tampered bin script run via `autovault skill <action>` | Every declared bin file is covered by `.autovault-manifest` (Ed25519). The CLI verifies the signature **before** `execve` and refuses on mismatch. Hard enforcement, not log-only — exec is irreversible. |
 | A10 | Secret leakage through agent tool-call logs during skill setup | Setup that handles secrets ships as a `bin` action. The agent's instruction is uniform (`autovault skill setup <name>`); the user runs the script in their own terminal. The secret never enters the agent transcript or MCP tool-call args. |
