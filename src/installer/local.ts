@@ -63,13 +63,20 @@ export class LocalBundleLimitError extends Error {
   }
 }
 
-export async function collectLocalSkillBundle(skillDirInput: string): Promise<LocalSkillBundle> {
-  const root = path.resolve(skillDirInput);
+export async function collectLocalSkillBundle(
+  skillDirInput: string,
+  options: { followRootSymlink?: boolean } = {}
+): Promise<LocalSkillBundle> {
+  let root = path.resolve(skillDirInput);
   const rootStat = await fs.lstat(root);
   if (rootStat.isSymbolicLink()) {
-    throw new Error(`Refusing to install local bundle through a symlink directory: ${skillDirInput}`);
+    if (!options.followRootSymlink) {
+      throw new Error(`Refusing to install local bundle through a symlink directory: ${skillDirInput}`);
+    }
+    root = await fs.realpath(root);
   }
-  if (!rootStat.isDirectory()) {
+  const resolvedRootStat = rootStat.isSymbolicLink() ? await fs.stat(root) : rootStat;
+  if (!resolvedRootStat.isDirectory()) {
     throw new Error(`Local skill path is not a directory: ${skillDirInput}`);
   }
 
