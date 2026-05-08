@@ -14,6 +14,7 @@ function usage(): never {
   process.stderr.write(`Usage:
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
+  autovault setup [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
@@ -193,6 +194,21 @@ async function main(): Promise<void> {
       channel: readFlag(args, "--channel")
     });
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return;
+  }
+
+  if (command === "setup") {
+    const { runSetup } = await import("./cli/setup.js");
+    try {
+      await runSetup({ json: hasFlag(args, "--json") });
+    } catch (error) {
+      const name = (error as { name?: string })?.name;
+      if (name === "NoTtyError") {
+        process.stderr.write(`${(error as Error).message}\n`);
+        process.exit(2);
+      }
+      throw error;
+    }
     return;
   }
 

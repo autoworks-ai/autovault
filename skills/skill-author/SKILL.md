@@ -126,6 +126,27 @@ the signature before exec and refuses to run on mismatch.
 `requires-secrets` should describe secrets only when **the agent itself** needs
 them. When the bin script is the only consumer, leave `requires-secrets: []`.
 
+### OAuth and browser setup UX
+
+Many setup actions need a browser-based OAuth, API-key, or dashboard flow.
+Do not open the browser before the terminal has explained what is happening.
+The setup script should:
+
+1. Print the purpose, required permissions, storage location, and secret
+   boundary first.
+2. Print every URL the user may need.
+3. Ask before opening the browser.
+4. Support `AUTOVAULT_BROWSER_MODE`:
+   - `prompt` or unset: print URLs, then ask `Open these pages in your browser now? [Y/n]:`.
+   - `never`, `manual`, `no`, `false`, or `0`: never open a browser; print URLs only.
+   - `always`, `open`, `yes`, `true`, or `1`: open after printing URLs.
+5. Offer a token/manual path for headless users when the provider supports it.
+
+Prefer device-code or pairing-code flows when available: they keep the terminal
+as the source of truth, work over SSH, and avoid surprising browser focus
+steals. If the provider only supports dashboard/API-key setup, print the URL
+and required scopes before prompting to open it.
+
 ## Full template
 
 ```yaml
