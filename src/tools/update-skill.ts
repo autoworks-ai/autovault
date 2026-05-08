@@ -1,13 +1,12 @@
 import { collectLocalSkillBundle, addLocalSkill, LocalBundleLimitError } from "../installer/local.js";
 import {
-  declaredBinPaths,
   readSkill,
   readSkillSource,
   readVerifiedSkillResources
 } from "../storage/index.js";
 import type { SkillRecord } from "../types.js";
-import { canonicalRelPath } from "../util/path.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
+import { resourcePathsForSkill } from "../util/skill-resource-paths.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { installSkill } from "./install-skill.js";
 
@@ -207,18 +206,6 @@ async function existingResourcesOrFailure(
   return result.resources;
 }
 
-function resourcePathsForSkill(skill: SkillRecord): string[] {
-  const paths = new Set<string>();
-  for (const resource of skill.resources) {
-    const canonical = canonicalRelPath(resource.path);
-    if (canonical.length > 0) paths.add(canonical);
-  }
-  for (const binPath of declaredBinPaths(skill.bin)) {
-    if (binPath.length > 0) paths.add(binPath);
-  }
-  return [...paths].sort();
-}
-
 function formatResourceReadFailure(result: Exclude<
   Awaited<ReturnType<typeof readVerifiedSkillResources>>,
   { kind: "ok" }
@@ -257,7 +244,7 @@ function formatUpdateResult(result: Record<string, unknown>, verbose?: boolean):
     linkedRoots: syncRecord.linkedRoots ?? {},
     warningCount: syncRecord.warnings?.length ?? 0
   };
-  const { sync: _sync, paths: _paths, ...rest } = result;
+  const { sync: _sync, ...rest } = result;
   return { ...rest, sync: compactSync };
 }
 

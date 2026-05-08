@@ -190,6 +190,9 @@ describe("skill CRUD MCP tool handlers", () => {
     });
     expect(compact).toMatchObject({
       success: true,
+      paths: {
+        skill: expect.stringContaining("compact-sync-skill")
+      },
       sync: {
         profiles: { codex: 1 },
         linkedRoots: { codex: profileRoot }
