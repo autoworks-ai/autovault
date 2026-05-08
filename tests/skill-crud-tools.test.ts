@@ -19,6 +19,36 @@ metadata:
 # ${body}
 `;
 
+const skillMdWithAgent = (name: string, body = "Body"): string => `---
+name: ${name}
+description: A description that is intentionally long enough to satisfy schema checks.
+metadata:
+  version: "1.0.0"
+agents: [codex]
+---
+
+# ${body}
+`;
+
+const resourceSkillMd = (name: string, body = "Body"): string => `---
+name: ${name}
+description: A description that is intentionally long enough to satisfy schema checks.
+metadata:
+  version: "1.0.0"
+resources:
+  - path: bin/setup
+    type: file
+bin:
+  setup:
+    command: bin/setup
+    args: []
+    description: Run setup.
+    requires-tty: false
+---
+
+# ${body}
+`;
+
 async function writeLocalBundle(dir: string, name: string, body = "Body"): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, "SKILL.md"), skillMd(name, body), "utf-8");
@@ -74,6 +104,113 @@ describe("skill CRUD MCP tool handlers", () => {
       name: "update-inline-skill"
     });
     expect(JSON.stringify(ambiguousInline)).toContain("source='inline'");
+  });
+
+  it("updates inline SKILL.md while reusing existing signed resources", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await resourceBundle("reuse-inline-skill", "Before")
+    });
+
+    const updated = await updateSkill({
+      name: "reuse-inline-skill",
+      source: "inline",
+      skill_md: resourceSkillMd("reuse-inline-skill", "After"),
+      reuse_existing_resources: true
+    });
+
+    expect(updated).toMatchObject({ success: true, name: "reuse-inline-skill" });
+    await expect(getSkill("reuse-inline-skill", undefined, { includeResources: true })).resolves.toMatchObject({
+      skill_md: expect.stringContaining("# After"),
+      resource_contents: [
+        expect.objectContaining({ path: "bin/setup", content: "echo setup\n" })
+      ]
+    });
+  });
+
+  it("fails inline resource reuse when the new SKILL.md stops declaring existing resources", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await resourceBundle("reuse-validation-skill", "Before")
+    });
+
+    const result = await updateSkill({
+      name: "reuse-validation-skill",
+      source: "inline",
+      skill_md: skillMd("reuse-validation-skill", "After"),
+      reuse_existing_resources: true
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      validation: { valid: false }
+    });
+    expect(JSON.stringify(result)).toContain("undisclosed file 'bin/setup'");
+  });
+
+  it("rejects inline updates that provide resources while requesting reuse", async () => {
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundle("reuse-conflict-skill", "Before")
+    });
+
+    const result = await updateSkill({
+      name: "reuse-conflict-skill",
+      source: "inline",
+      skill_md: skillMd("reuse-conflict-skill", "After"),
+      resources: [{ path: "bin/setup", content: "echo setup\n" }],
+      reuse_existing_resources: true
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      name: "reuse-conflict-skill"
+    });
+    expect(JSON.stringify(result)).toContain("cannot be combined with resources");
+  });
+
+  it("compacts local update sync output unless verbose is requested", async () => {
+    const profileRoot = path.join(currentStorageRoot(), "codex-profile");
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundleWithAgent("compact-sync-skill", "Before"),
+      profile_roots: { codex: profileRoot }
+    });
+
+    const compact = await updateSkill({
+      name: "compact-sync-skill",
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundleWithAgent("compact-sync-skill", "After"),
+      profile_roots: { codex: profileRoot }
+    });
+    expect(compact).toMatchObject({
+      success: true,
+      sync: {
+        profiles: { codex: 1 },
+        linkedRoots: { codex: profileRoot }
+      }
+    });
+
+    const verbose = await updateSkill({
+      name: "compact-sync-skill",
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundleWithAgent("compact-sync-skill", "Verbose"),
+      profile_roots: { codex: profileRoot },
+      verbose: true
+    });
+    expect(verbose).toMatchObject({
+      success: true,
+      sync: {
+        profiles: { codex: ["compact-sync-skill"] },
+        linkedRoots: { codex: profileRoot }
+      }
+    });
   });
 
   it("returns structured failures for malformed local update frontmatter", async () => {
@@ -208,5 +345,20 @@ bin:
 async function localBundle(name: string, body = "Body"): Promise<string> {
   const dir = path.join(currentStorageRoot(), `bundle-${name}-${body}`);
   await writeLocalBundle(dir, name, body);
+  return dir;
+}
+
+async function localBundleWithAgent(name: string, body = "Body"): Promise<string> {
+  const dir = path.join(currentStorageRoot(), `bundle-${name}-${body}`);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, "SKILL.md"), skillMdWithAgent(name, body), "utf-8");
+  return dir;
+}
+
+async function resourceBundle(name: string, body = "Body"): Promise<string> {
+  const dir = path.join(currentStorageRoot(), `bundle-${name}-${body}`);
+  await fs.mkdir(path.join(dir, "bin"), { recursive: true });
+  await fs.writeFile(path.join(dir, "SKILL.md"), resourceSkillMd(name, body), "utf-8");
+  await fs.writeFile(path.join(dir, "bin", "setup"), "echo setup\n", "utf-8");
   return dir;
 }

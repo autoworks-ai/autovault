@@ -162,7 +162,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "update_skill",
-    "Update an installed skill. With only `name`, AutoVault refreshes the recorded GitHub/agentskills/URL source. To update from a new source, pass `source` and `identifier`; to update from a local bundle, pass `source: \"local\"`, `skill_dir`, and `identifier`; to explicitly replace from caller-held bytes, pass `source: \"inline\"` and `skill_md`. Updates refuse candidates whose frontmatter name does not match `name`.",
+    "Update an installed skill. With only `name`, AutoVault refreshes the recorded GitHub/agentskills/URL source. To update from a new source, pass `source` and `identifier`; to update from a local bundle, pass `source: \"local\"`, `skill_dir`, and `identifier`; to explicitly replace from caller-held bytes, pass `source: \"inline\"` and `skill_md`. For SKILL.md-only inline edits, pass `reuse_existing_resources: true` to validate against the currently installed signed resources. Updates return compact sync counts by default; pass `verbose: true` for full sync detail. Updates refuse candidates whose frontmatter name does not match `name`.",
     {
       name: z.string(),
       source: z.enum(["github", "agentskills", "url", "local", "inline"]).optional(),
@@ -171,9 +171,11 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       skill_dir: z.string().optional(),
       skill_md: z.string().optional(),
       resources: z.array(z.object({ path: z.string(), content: z.string() })).optional(),
+      reuse_existing_resources: z.boolean().optional(),
       sync_profiles: z.boolean().optional(),
       profile_roots: z.record(z.string()).optional(),
-      discover_profile_roots: z.boolean().optional()
+      discover_profile_roots: z.boolean().optional(),
+      verbose: z.boolean().optional()
     },
     async (input, extra) =>
       runTool(

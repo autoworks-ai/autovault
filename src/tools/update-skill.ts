@@ -1,5 +1,12 @@
 import { collectLocalSkillBundle, addLocalSkill, LocalBundleLimitError } from "../installer/local.js";
-import { readSkill, readSkillSource } from "../storage/index.js";
+import {
+  declaredBinPaths,
+  readSkill,
+  readSkillSource,
+  readVerifiedSkillResources
+} from "../storage/index.js";
+import type { SkillRecord } from "../types.js";
+import { canonicalRelPath } from "../util/path.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { installSkill } from "./install-skill.js";
@@ -12,9 +19,11 @@ export type UpdateSkillInput = {
   skill_dir?: string;
   skill_md?: string;
   resources?: Array<{ path: string; content: string }>;
+  reuse_existing_resources?: boolean;
   sync_profiles?: boolean;
   profile_roots?: Record<string, string>;
   discover_profile_roots?: boolean;
+  verbose?: boolean;
 };
 
 export async function updateSkill(input: UpdateSkillInput): Promise<Record<string, unknown>> {
@@ -34,6 +43,22 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
       name: input.name,
       validation: {},
       warnings: ["skill_md requires source='inline'."]
+    };
+  }
+  if (input.reuse_existing_resources && input.source !== "inline") {
+    return {
+      success: false,
+      name: input.name,
+      validation: {},
+      warnings: ["reuse_existing_resources requires source='inline'."]
+    };
+  }
+  if (input.reuse_existing_resources && input.resources && input.resources.length > 0) {
+    return {
+      success: false,
+      name: input.name,
+      validation: {},
+      warnings: ["reuse_existing_resources cannot be combined with resources[]."]
     };
   }
 
@@ -80,13 +105,16 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
     if (bundleName.name !== input.name) {
       return nameMismatch(input.name, bundleName.name);
     }
-    return addLocalSkill({
-      skillDir: input.skill_dir,
-      source: input.identifier,
-      syncProfiles: input.sync_profiles ?? true,
-      profileRoots: input.profile_roots,
-      discoverProfileRoots: input.discover_profile_roots
-    });
+    return formatUpdateResult(
+      await addLocalSkill({
+        skillDir: input.skill_dir,
+        source: input.identifier,
+        syncProfiles: input.sync_profiles ?? true,
+        profileRoots: input.profile_roots,
+        discoverProfileRoots: input.discover_profile_roots
+      }),
+      input.verbose
+    );
   }
 
   if (input.source === "inline") {
@@ -98,14 +126,20 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
         warnings: ["source='inline' requires skill_md."]
       };
     }
-    return installSkill({
+    let resources = input.resources;
+    if (input.reuse_existing_resources) {
+      const reused = await existingResourcesOrFailure(input.name, existing);
+      if (!Array.isArray(reused)) return reused;
+      resources = reused;
+    }
+    return formatUpdateResult(await installSkill({
       source: "url",
       identifier: input.identifier ?? `inline:${input.name}`,
       version: input.version,
       skill_md: input.skill_md,
-      resources: input.resources,
+      resources,
       expected_name: input.name
-    });
+    }), input.verbose);
   }
 
   if (input.source) {
@@ -117,12 +151,12 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
         warnings: [`source='${input.source}' requires identifier.`]
       };
     }
-    return installSkill({
+    return formatUpdateResult(await installSkill({
       source: input.source,
       identifier: input.identifier,
       version: input.version,
       expected_name: input.name
-    });
+    }), input.verbose);
   }
 
   const source = await readSkillSource(input.name);
@@ -136,12 +170,12 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
   }
 
   if (source.source === "github" || source.source === "agentskills" || source.source === "url") {
-    return installSkill({
+    return formatUpdateResult(await installSkill({
       source: source.source,
       identifier: source.identifier,
       version: source.version,
       expected_name: input.name
-    });
+    }), input.verbose);
   }
 
   return {
@@ -154,6 +188,77 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
         : "Inline skills have no checkable upstream; provide source='inline' and skill_md."
     ]
   };
+}
+
+async function existingResourcesOrFailure(
+  name: string,
+  existing: SkillRecord
+): Promise<Array<{ path: string; content: string }> | Record<string, unknown>> {
+  const paths = resourcePathsForSkill(existing);
+  const result = await readVerifiedSkillResources(name, paths);
+  if (result.kind !== "ok") {
+    return {
+      success: false,
+      name,
+      validation: {},
+      warnings: [`Cannot reuse existing resources: ${formatResourceReadFailure(result)}`]
+    };
+  }
+  return result.resources;
+}
+
+function resourcePathsForSkill(skill: SkillRecord): string[] {
+  const paths = new Set<string>();
+  for (const resource of skill.resources) {
+    const canonical = canonicalRelPath(resource.path);
+    if (canonical.length > 0) paths.add(canonical);
+  }
+  for (const binPath of declaredBinPaths(skill.bin)) {
+    if (binPath.length > 0) paths.add(binPath);
+  }
+  return [...paths].sort();
+}
+
+function formatResourceReadFailure(result: Exclude<
+  Awaited<ReturnType<typeof readVerifiedSkillResources>>,
+  { kind: "ok" }
+>): string {
+  switch (result.kind) {
+    case "no_manifest":
+      return "installed skill has no signed manifest; reinstall before reusing resources";
+    case "manifest_corrupt":
+      return "installed skill has a corrupt signed manifest; reinstall before reusing resources";
+    case "tampered":
+      return `installed skill integrity check failed: ${result.mismatches
+        .map((m) => `${m.file} (${m.reason})`)
+        .join(", ")}`;
+    case "not_covered":
+      return `'${result.resource}' is not covered by the signed manifest`;
+    case "signature_invalid":
+      return `signature mismatch for '${result.resource}'`;
+    case "missing_on_disk":
+      return `'${result.resource}' is missing on disk`;
+  }
+}
+
+function formatUpdateResult(result: Record<string, unknown>, verbose?: boolean): Record<string, unknown> {
+  if (verbose) return result;
+  const sync = result.sync;
+  if (typeof sync !== "object" || sync === null) return result;
+  const syncRecord = sync as {
+    profiles?: Record<string, string[]>;
+    linkedRoots?: Record<string, string>;
+    warnings?: string[];
+  };
+  const compactSync = {
+    profiles: Object.fromEntries(
+      Object.entries(syncRecord.profiles ?? {}).map(([agent, names]) => [agent, names.length])
+    ),
+    linkedRoots: syncRecord.linkedRoots ?? {},
+    warningCount: syncRecord.warnings?.length ?? 0
+  };
+  const { sync: _sync, paths: _paths, ...rest } = result;
+  return { ...rest, sync: compactSync };
 }
 
 function skillNameFromMarkdown(skillMd: string): { name: string; error?: string } {
