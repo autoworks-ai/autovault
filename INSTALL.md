@@ -67,8 +67,9 @@ variables.
 
 ## 3. Seed the skill library
 
-AutoVault ships bundled skills in `skills/`. Seed every `skills/*/SKILL.md`
-bundle into your storage path and refresh host-visible profiles:
+AutoVault ships two bundled meta-skills in `skills/` (`autovault-skill` and
+`skill-author`). Seed every `skills/*/SKILL.md` bundle into your storage path
+and refresh host-visible profiles:
 
 ```bash
 npm run build            # if you haven't already
@@ -78,9 +79,11 @@ node scripts/bootstrap-skills.mjs
 Expected output (abbreviated):
 
 ```text
-Bootstrapping N skill(s) into /Users/you/.autovault and syncing profiles
+Bootstrapping 2 skill(s) into /Users/you/.autovault and syncing profiles
 --- installing autovault-skill ---
 { "success": true, "name": "autovault-skill", ... }
+--- installing skill-author ---
+{ "success": true, "name": "skill-author", ... }
 --- get_skill query ---
 { "matches": [ ... ], "skill": { ... } }
 ```
@@ -144,7 +147,7 @@ Third-party installers should use `add-local` when they already have a local
 skill directory on disk:
 
 ```bash
-autovault add-local ./skills/railway --source railway/skills --sync-profiles
+autovault add-local ./path/to/your-skill --source vendor/skills --sync-profiles
 ```
 
 The command requires `SKILL.md`, walks sibling resources in deterministic
@@ -156,7 +159,7 @@ validation/signing pipeline as other install paths, and records honest
 Machine-readable output:
 
 ```bash
-autovault add-local ./skills/railway --source railway/skills --sync-profiles --json
+autovault add-local ./path/to/your-skill --source vendor/skills --sync-profiles --json
 ```
 
 Vendor drop-in pattern:
@@ -306,11 +309,11 @@ From your MCP host, run:
 get_skill({ "query": "skill", "top_k": 10 })
 ```
 
-You should see the three seeded skills. Then try:
+You should see the two seeded skills. Then try:
 
 ```
-get_skill({ "query": "commit" })
-get_skill({ "name": "commit-message" })
+get_skill({ "query": "what is autovault" })
+get_skill({ "name": "autovault-skill" })
 get_skill({ "query": "author a new skill" })
 get_skill({ "name": "skill-author" })
 ```
