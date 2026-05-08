@@ -101,6 +101,67 @@ describe("setup scan", () => {
     expect(view?.native).toHaveLength(2);
   });
 
+  it("detects drift when only bundle resources changed", async () => {
+    await ensureStorage();
+
+    const nativeRoot = path.join(currentStorageRoot(), "fake-native-resource");
+    await fs.mkdir(nativeRoot, { recursive: true });
+
+    const sameSkillMd = skillMd("resource-drift", "same skill md", { agents: ["claude-code"] });
+    await writeSkill(
+      "resource-drift",
+      sameSkillMd,
+      [{ path: "bin/setup", content: "#!/usr/bin/env bash\necho vault\n" }]
+    );
+
+    const nativeDir = path.join(nativeRoot, "resource-drift");
+    await fs.mkdir(path.join(nativeDir, "bin"), { recursive: true });
+    await fs.writeFile(path.join(nativeDir, "SKILL.md"), sameSkillMd, "utf-8");
+    await fs.writeFile(
+      path.join(nativeDir, "bin", "setup"),
+      "#!/usr/bin/env bash\necho native\n",
+      "utf-8"
+    );
+
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { "claude-code": nativeRoot }
+    });
+
+    expect(report.skills.find((s) => s.name === "resource-drift")?.category).toBe(
+      "vault-drift"
+    );
+  });
+
+  it("includes native skill directory symlinks in scan results", async () => {
+    await ensureStorage();
+
+    const nativeRoot = path.join(currentStorageRoot(), "fake-native-symlink");
+    const targetRoot = path.join(currentStorageRoot(), "fake-native-symlink-targets");
+    await fs.mkdir(nativeRoot, { recursive: true });
+    await fs.mkdir(targetRoot, { recursive: true });
+
+    await writeNativeSkill(
+      targetRoot,
+      "linked-skill",
+      skillMd("linked-skill", "symlinked native", { agents: ["claude-code"] })
+    );
+    await fs.symlink(
+      path.join(targetRoot, "linked-skill"),
+      path.join(nativeRoot, "linked-skill"),
+      process.platform === "win32" ? "junction" : "dir"
+    );
+
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { "claude-code": nativeRoot }
+    });
+
+    const linked = report.skills.find((s) => s.name === "linked-skill");
+    expect(linked?.category).toBe("native-only");
+    expect(linked?.native[0]?.skillDir).toBe(path.join(nativeRoot, "linked-skill"));
+  });
+
   it("flags native skills that would fail vault validation", async () => {
     await ensureStorage();
 

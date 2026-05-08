@@ -105,7 +105,7 @@ export async function askChoice<T>(
         rl.question(`${c.magenta}?${c.reset} choice: `, (a) => resolve(a.trim()));
       });
       if (answer.length === 0) {
-        stream.output.write(`${c.yellow}!${c.reset} pick a letter from the list above\n`);
+        stream.output.write(`${c.yellow}!${c.reset} pick a choice from the list above\n`);
         continue;
       }
       const lowered = answer.toLowerCase();

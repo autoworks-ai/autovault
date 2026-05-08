@@ -64,8 +64,10 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
     spin.stop();
   }
 
+  const profileRoots = { ...report.discovered, ...(options.profileRoots ?? {}) };
+
   log.ok(
-    `Scanned ${report.skills.length} skill name(s) across vault, bundled, and ${Object.keys(report.discovered).length} native root(s)`
+    `Scanned ${report.skills.length} skill name(s) across vault, bundled, and ${Object.keys(profileRoots).length} native root(s)`
   );
 
   renderDriftReport(report);
@@ -134,12 +136,13 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
     mode: adoptionDecision.value,
     candidates,
     collisions,
-    profileRoots: report.discovered
+    profileRoots,
+    discover: options.discover ?? true
   });
 
   renderFinalSummary(report, outcomes);
 
-  printConfigSnippets(report);
+  printConfigSnippets(report, profileRoots);
   renderArt();
 }
 
@@ -205,7 +208,10 @@ async function collectCollisionDecisions(
   return decisions;
 }
 
-function printConfigSnippets(report: DriftReport): void {
+function printConfigSnippets(
+  report: DriftReport,
+  profileRoots: Record<string, string>
+): void {
   const c = colorsFor(process.stdout);
   process.stdout.write(`\n${c.bold}MCP host config snippet${c.reset} (Claude Code)\n`);
   process.stdout.write(
@@ -213,7 +219,7 @@ function printConfigSnippets(report: DriftReport): void {
   );
   const node = process.execPath;
   const distPath = resolveMcpServerPath();
-  const linkArgs = Object.entries(report.discovered)
+  const linkArgs = Object.entries(profileRoots)
     .map(([agent, root]) => `${agent}=${root}`)
     .join(",");
   const snippet = {

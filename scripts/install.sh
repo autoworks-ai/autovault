@@ -317,14 +317,21 @@ if [ -t 0 ] || (: </dev/tty) 2>/dev/null; then
   plain ""
   info "Launching the setup wizard…"
   plain ""
+  setup_status=0
   if [ -t 0 ]; then
-    "$BIN_DIR/autovault" setup || true
+    "$BIN_DIR/autovault" setup || setup_status=$?
   else
     # curl|sh case — stdin is the script; reattach the terminal for the wizard.
     exec </dev/tty
-    "$BIN_DIR/autovault" setup || true
+    "$BIN_DIR/autovault" setup || setup_status=$?
   fi
-  print_celebration
+  if [ "$setup_status" -eq 0 ]; then
+    print_celebration
+  else
+    warn "Setup wizard exited with status $setup_status."
+    plain "${BOLD}> AutoVault installed; rerun setup when ready:${RESET}"
+    plain "    autovault setup"
+  fi
   exit 0
 fi
 

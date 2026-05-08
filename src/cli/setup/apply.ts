@@ -18,6 +18,7 @@ export type ApplyInput = {
   candidates: SkillView[];
   collisions: CollisionDecision[];
   profileRoots: Record<string, string>;
+  discover?: boolean;
 };
 
 export type ApplyOutcome = {
@@ -209,13 +210,13 @@ export async function applyDecisions(input: ApplyInput): Promise<ApplyOutcome[]>
   }
 
   // Final sync so newly adopted skills surface as managed symlinks under the
-  // discovered native roots. addLocalSkill only syncs when sync_profiles is
+  // selected native roots. addLocalSkill only syncs when sync_profiles is
   // explicitly requested; we bundle one sync at the end to avoid N redundant
   // walks.
   try {
     const sync = await syncProfiles({
       profileRoots: input.profileRoots,
-      discover: true
+      discover: input.discover ?? false
     });
     for (const warning of sync.warnings) {
       outcomes.push({ name: "—", action: "sync-warning", ok: false, detail: warning });

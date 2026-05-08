@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +6,7 @@ import { collectLocalSkillBundle } from "../../installer/local.js";
 import { discoverProfileRoots } from "../../profiles/discovery.js";
 import { listInstalledSkillNames } from "../../storage/index.js";
 import { skillDir } from "../../storage/index.js";
+import { bundleHash } from "../../util/hash.js";
 import { parseFrontmatter } from "../../validation/frontmatter.js";
 import { validateSkillInput } from "../../validation/index.js";
 
@@ -62,10 +62,6 @@ export function defaultBundledRoot(): string {
   return path.resolve(here, "..", "..", "..", "skills");
 }
 
-function hashContent(text: string): string {
-  return createHash("sha256").update(text, "utf-8").digest("hex");
-}
-
 async function readDescription(skillMd: string): Promise<string> {
   try {
     const { data } = parseFrontmatter(skillMd);
@@ -85,7 +81,7 @@ async function loadSourceView(
 ): Promise<SkillSourceView> {
   const target = path.join(rootDir, name);
   try {
-    const bundle = await collectLocalSkillBundle(target);
+    const bundle = await collectLocalSkillBundle(target, { followRootSymlink: true });
     const validation = options?.runValidation
       ? validateSkillInput(bundle.skillMd, bundle.resources)
       : undefined;
@@ -94,7 +90,7 @@ async function loadSourceView(
       agent,
       rootDir,
       skillDir: target,
-      hash: hashContent(bundle.skillMd),
+      hash: bundleHash(bundle.skillMd, bundle.resources),
       description: await readDescription(bundle.skillMd),
       validation: validation
         ? {
@@ -121,10 +117,22 @@ async function loadSourceView(
 async function listSkillNamesInDir(rootDir: string): Promise<string[]> {
   try {
     const entries = await fs.readdir(rootDir, { withFileTypes: true });
-    return entries
-      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
-      .map((e) => e.name)
-      .sort();
+    const names: string[] = [];
+    for (const entry of entries) {
+      if (entry.name.startsWith(".")) continue;
+      if (entry.isDirectory()) {
+        names.push(entry.name);
+        continue;
+      }
+      if (!entry.isSymbolicLink()) continue;
+      try {
+        const stat = await fs.stat(path.join(rootDir, entry.name));
+        if (stat.isDirectory()) names.push(entry.name);
+      } catch {
+        // Ignore broken symlinks; setup only reports readable skill roots.
+      }
+    }
+    return names.sort();
   } catch {
     return [];
   }

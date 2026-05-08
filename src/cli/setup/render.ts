@@ -103,7 +103,7 @@ export function startSpinner(initial: string, stream: NodeJS.WriteStream = proce
 
 const CATEGORY_LABEL: Record<DriftCategory, string> = {
   identical: "identical",
-  "vault-drift": "drift between vault and native",
+  "vault-drift": "drift involving vault",
   "bundled-drift": "drift between bundled and native",
   "cross-host-drift": "different versions across native roots",
   "vault-only": "in vault only",
