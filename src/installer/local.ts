@@ -53,8 +53,24 @@ export type AddLocalSkillResult = {
   sync?: SyncProfilesResult;
 };
 
+const OS_METADATA_ENTRIES = new Set([".DS_Store", "Thumbs.db"]);
+
 function shouldSkipEntry(name: string): boolean {
-  return name.startsWith(".autovault-");
+  return name.startsWith(".autovault-") || OS_METADATA_ENTRIES.has(name);
+}
+
+async function formatSymlinkRejection(
+  baseMessage: string,
+  displayPath: string,
+  absolutePath: string,
+  targetSuffix = ""
+): Promise<string> {
+  try {
+    const target = await fs.realpath(absolutePath);
+    return `${baseMessage}: ${displayPath} -> ${target}${targetSuffix}`;
+  } catch {
+    return `${baseMessage}: ${displayPath}`;
+  }
 }
 
 export class LocalBundleLimitError extends Error {
@@ -71,7 +87,14 @@ export async function collectLocalSkillBundle(
   const rootStat = await fs.lstat(root);
   if (rootStat.isSymbolicLink()) {
     if (!options.followRootSymlink) {
-      throw new Error(`Refusing to install local bundle through a symlink directory: ${skillDirInput}`);
+      throw new Error(
+        await formatSymlinkRejection(
+          "Refusing to install local bundle through a symlink directory",
+          skillDirInput,
+          root,
+          ". Use the canonical target path instead."
+        )
+      );
     }
     root = await fs.realpath(root);
   }
@@ -105,7 +128,13 @@ export async function collectLocalSkillBundle(
       const rel = relative ? `${relative}/${entry.name}` : entry.name;
       const stat = await fs.lstat(absolute);
       if (stat.isSymbolicLink()) {
-        throw new Error(`Refusing to install local bundle with symlink resource: ${rel}`);
+        throw new Error(
+          await formatSymlinkRejection(
+            "Refusing to install local bundle with symlink resource",
+            rel,
+            absolute
+          )
+        );
       }
       if (stat.isDirectory()) {
         await walk(absolute, rel);
