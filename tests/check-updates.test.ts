@@ -88,6 +88,30 @@ describe("checkUpdates", () => {
     expect(result.unchecked).toHaveLength(0);
   });
 
+  it("stays up_to_date when only ignored OS metadata is present locally", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+    await fs.writeFile(path.join(skillDir("drift-skill"), ".DS_Store"), "finder\n", "utf-8");
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).toContain("drift-skill");
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings).toEqual([
+      {
+        name: "drift-skill",
+        warning: "Ignored benign OS/editor metadata; run autovault doctor --clean to remove it.",
+        ignored_artifacts: [".DS_Store"]
+      }
+    ]);
+  });
+
   it("ignores bundled .autovault metadata when comparing inline bundles", async () => {
     const skillWithResource = `---
 name: drift-skill
@@ -104,7 +128,10 @@ resources:
     const resources = [{ path: "references/notes.md", content: "# notes\n" }];
     const bundledSkillsDir = await writeBundledSkill("drift-skill", skillWithResource, [
       ...resources,
-      { path: ".autovault-manifest", content: "{}" }
+      { path: ".autovault-manifest", content: "{}" },
+      { path: ".DS_Store", content: "finder\n" },
+      { path: "desktop.ini", content: "desktop\n" },
+      { path: "references/._notes.md", content: "appledouble\n" }
     ]);
     await installSkill({
       source: "url",

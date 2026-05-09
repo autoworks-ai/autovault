@@ -7,6 +7,7 @@ import {
   ensureStorage,
   listInstalledSkillNames,
   readSkill,
+  readVerifiedSkillResource,
   readSkillSource,
   readSkillSourceStatus,
   recoverOrphanBackups,
@@ -400,6 +401,78 @@ ${resources.length > 0 ? `resources:\n${resources.map((p) => `  - path: ${p}\n  
       const dir = result.mismatches.find((m) => m.file === "feature-flag");
       expect(dir).toBeDefined();
       expect(dir?.reason).toBe("unmanifested_file");
+    }
+  });
+
+  it("ignores benign OS metadata artifacts in installed skill dirs", async () => {
+    await writeSkill(
+      "finder-artifacts",
+      skillMd.replace("parsed-skill", "finder-artifacts"),
+      [{ path: "references/setup.md", content: "signed\n" }]
+    );
+    const liveRoot = path.join(currentStorageRoot(), "skills", "finder-artifacts");
+    await fs.writeFile(path.join(liveRoot, ".DS_Store"), "finder\n", "utf-8");
+    await fs.writeFile(path.join(liveRoot, "Thumbs.db"), "thumbs\n", "utf-8");
+    await fs.writeFile(path.join(liveRoot, "desktop.ini"), "desktop\n", "utf-8");
+    await fs.writeFile(path.join(liveRoot, "references", "._SKILL.md"), "appledouble\n", "utf-8");
+
+    const result = await verifyInstalledIntegrity("finder-artifacts");
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.ignored_artifacts).toEqual([
+        ".DS_Store",
+        "Thumbs.db",
+        "desktop.ini",
+        "references/._SKILL.md"
+      ]);
+    }
+
+    const resource = await readVerifiedSkillResource("finder-artifacts", "references/setup.md");
+    expect(resource).toEqual({ kind: "ok", content: "signed\n" });
+  });
+
+  it("still flags unknown hidden artifacts and helper files", async () => {
+    await writeSkill(
+      "unknown-hidden",
+      skillMd.replace("parsed-skill", "unknown-hidden"),
+      [{ path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }]
+    );
+    const liveRoot = path.join(currentStorageRoot(), "skills", "unknown-hidden");
+    await fs.writeFile(path.join(liveRoot, ".env"), "SECRET=x\n", "utf-8");
+    await fs.mkdir(path.join(liveRoot, "lib"), { recursive: true });
+    await fs.writeFile(path.join(liveRoot, "lib", "helper.sh"), "echo no\n", "utf-8");
+
+    const result = await verifyInstalledIntegrity("unknown-hidden");
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      expect(result.mismatches).toEqual(
+        expect.arrayContaining([
+          { file: ".env", reason: "unmanifested_file" },
+          { file: "lib", reason: "unmanifested_file" },
+          { file: "lib/helper.sh", reason: "unmanifested_file" }
+        ])
+      );
+    }
+  });
+
+  it("does not ignore symlink artifacts even when the name is allowlisted", async () => {
+    await writeSkill(
+      "artifact-symlink",
+      skillMd.replace("parsed-skill", "artifact-symlink"),
+      [{ path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }]
+    );
+    const liveRoot = path.join(currentStorageRoot(), "skills", "artifact-symlink");
+    const target = path.join(currentStorageRoot(), "artifact-target");
+    await fs.writeFile(target, "not ignored\n", "utf-8");
+    await fs.symlink(target, path.join(liveRoot, ".DS_Store"));
+
+    const result = await verifyInstalledIntegrity("artifact-symlink");
+    expect(result.kind).toBe("tampered");
+    if (result.kind === "tampered") {
+      expect(result.mismatches).toContainEqual({
+        file: ".DS_Store",
+        reason: "unmanifested_file"
+      });
     }
   });
 

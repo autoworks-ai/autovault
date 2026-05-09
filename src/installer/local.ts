@@ -18,6 +18,7 @@ import {
   checkBundleLimits
 } from "../util/limits.js";
 import { canonicalRelPath } from "../util/path.js";
+import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { validateSkillInput } from "../validation/index.js";
 
@@ -53,10 +54,8 @@ export type AddLocalSkillResult = {
   sync?: SyncProfilesResult;
 };
 
-const OS_METADATA_ENTRIES = new Set([".DS_Store", "Thumbs.db"]);
-
 function shouldSkipEntry(name: string): boolean {
-  return name.startsWith(".autovault-") || OS_METADATA_ENTRIES.has(name);
+  return name.startsWith(".autovault-") || isIgnoredArtifactPath(name);
 }
 
 async function formatSymlinkRejection(

@@ -356,8 +356,10 @@ metadata:
     });
     await fs.writeFile(path.join(sourceDir, ".DS_Store"), "finder\n", "utf-8");
     await fs.writeFile(path.join(sourceDir, "Thumbs.db"), "thumbs\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "desktop.ini"), "desktop\n", "utf-8");
     await fs.writeFile(path.join(sourceDir, "references", ".DS_Store"), "nested finder\n", "utf-8");
     await fs.writeFile(path.join(sourceDir, "references", "Thumbs.db"), "nested thumbs\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "references", "._setup.md"), "appledouble\n", "utf-8");
 
     const result = await addLocalSkill({
       skillDir: sourceDir,
@@ -370,8 +372,10 @@ metadata:
     const manifestFiles = Object.keys(manifest?.files ?? {});
     expect(manifestFiles).not.toContain(".DS_Store");
     expect(manifestFiles).not.toContain("Thumbs.db");
+    expect(manifestFiles).not.toContain("desktop.ini");
     expect(manifestFiles).not.toContain("references/.DS_Store");
     expect(manifestFiles).not.toContain("references/Thumbs.db");
+    expect(manifestFiles).not.toContain("references/._setup.md");
     await expect(
       fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", ".DS_Store"))
     ).rejects.toBeDefined();
@@ -379,10 +383,16 @@ metadata:
       fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "Thumbs.db"))
     ).rejects.toBeDefined();
     await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "desktop.ini"))
+    ).rejects.toBeDefined();
+    await expect(
       fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", ".DS_Store"))
     ).rejects.toBeDefined();
     await expect(
       fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", "Thumbs.db"))
+    ).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", "._setup.md"))
     ).rejects.toBeDefined();
   });
 
@@ -443,7 +453,8 @@ sign      terminal-local
 storage   <ROOT>/skills/terminal-local
 source    vendor/repo
 
-restart any agent host that caches filesystem skills
+restart Claude Code, Codex, or Cursor if they cache filesystem skills
+verify from the host by loading the autovault-skill skill
 "
 `);
   });
@@ -488,8 +499,10 @@ restart any agent host that caches filesystem skills
     });
     await fs.writeFile(path.join(sourceDir, ".DS_Store"), "finder\n", "utf-8");
     await fs.writeFile(path.join(sourceDir, "Thumbs.db"), "thumbs\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "desktop.ini"), "desktop\n", "utf-8");
     await fs.writeFile(path.join(sourceDir, "references", ".DS_Store"), "nested finder\n", "utf-8");
     await fs.writeFile(path.join(sourceDir, "references", "Thumbs.db"), "nested thumbs\n", "utf-8");
+    await fs.writeFile(path.join(sourceDir, "references", "._setup.md"), "appledouble\n", "utf-8");
 
     const result = await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
 
@@ -498,15 +511,21 @@ restart any agent host that caches filesystem skills
     expect(manifest?.files["references/setup.md"]).toBeDefined();
     expect(manifest?.files[".DS_Store"]).toBeUndefined();
     expect(manifest?.files["Thumbs.db"]).toBeUndefined();
+    expect(manifest?.files["desktop.ini"]).toBeUndefined();
     expect(manifest?.files["references/.DS_Store"]).toBeUndefined();
     expect(manifest?.files["references/Thumbs.db"]).toBeUndefined();
+    expect(manifest?.files["references/._setup.md"]).toBeUndefined();
     await expect(fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", ".DS_Store"))).rejects.toBeDefined();
     await expect(fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "Thumbs.db"))).rejects.toBeDefined();
+    await expect(fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "desktop.ini"))).rejects.toBeDefined();
     await expect(
       fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", ".DS_Store"))
     ).rejects.toBeDefined();
     await expect(
       fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", "Thumbs.db"))
+    ).rejects.toBeDefined();
+    await expect(
+      fs.access(path.join(currentStorageRoot(), "skills", "metadata-local", "references", "._setup.md"))
     ).rejects.toBeDefined();
   });
 

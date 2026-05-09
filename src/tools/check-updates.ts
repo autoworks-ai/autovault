@@ -14,6 +14,7 @@ import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
 import { listTransformReviews, type TransformReview } from "../transforms/index.js";
 import { bundleHash, type HashedResource } from "../util/hash.js";
+import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair } from "../validation/frontmatter.js";
 
@@ -63,6 +64,7 @@ async function readBundledInlineBundle(
     for (const entry of entries) {
       const abs = path.join(current, entry.name);
       const rel = relative ? `${relative}/${entry.name}` : entry.name;
+      if (isIgnoredArtifactPath(rel)) continue;
       if (entry.isDirectory()) {
         await walk(abs, rel);
       } else if (entry.name !== "SKILL.md" && !entry.name.startsWith(".autovault-")) {
@@ -100,6 +102,7 @@ export async function checkUpdates(
   up_to_date: string[];
   unchecked: UncheckedEntry[];
   errors: Array<{ name: string; error: string }>;
+  warnings: Array<{ name: string; warning: string; ignored_artifacts?: string[] }>;
   transform_reviews: TransformReview[];
 }> {
   if (skill !== undefined) assertSafeSkillName(skill);
@@ -108,6 +111,7 @@ export async function checkUpdates(
   const upToDate: string[] = [];
   const unchecked: UncheckedEntry[] = [];
   const errors: Array<{ name: string; error: string }> = [];
+  const warnings: Array<{ name: string; warning: string; ignored_artifacts?: string[] }> = [];
   const transformReviews: TransformReview[] = [];
 
   for (const name of names) {
@@ -141,9 +145,16 @@ export async function checkUpdates(
         .join(", ");
       errors.push({
         name,
-        error: `Local integrity check failed: ${detail}; reinstall the skill`
+        error: `Local integrity check failed: ${detail}; reinstall the skill. Ignored OS/editor metadata can be cleaned with autovault doctor ${name} --clean, but these files are not on the benign artifact allowlist.`
       });
       continue;
+    }
+    if (integrity.kind === "ok" && integrity.ignored_artifacts?.length) {
+      warnings.push({
+        name,
+        warning: "Ignored benign OS/editor metadata; run autovault doctor --clean to remove it.",
+        ignored_artifacts: integrity.ignored_artifacts
+      });
     }
     // kind === "ok" or "no_manifest" (legacy installs pre-signing) fall
     // through. "no_manifest" preserves backward compat with installs that
@@ -264,5 +275,5 @@ export async function checkUpdates(
     }
   }
 
-  return { drifted, up_to_date: upToDate, unchecked, errors, transform_reviews: transformReviews };
+  return { drifted, up_to_date: upToDate, unchecked, errors, warnings, transform_reviews: transformReviews };
 }

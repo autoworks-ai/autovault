@@ -105,9 +105,9 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
   const adoptionDecision = await askChoice<AdoptionMode | "skip">(
     "\nHow would you like to handle native skills?",
     [
-      { key: "1", label: "augment — leave natives alone, vault adds new skills only", value: "augment" },
-      { key: "2", label: "adopt + backup — copy each into vault; rename original to <root>.bak/<name>", value: "backup" },
-      { key: "3", label: "adopt in place — copy each into vault; replace original dir with managed symlink", value: "in-place" },
+      { key: "1", label: "augment (recommended) — leave natives alone, vault adds new skills only", value: "augment" },
+      { key: "2", label: "adopt + backup — copy into vault; move originals to <root>.bak/<name>", value: "backup" },
+      { key: "3", label: "adopt in place (destructive) — replace original dirs with managed symlinks", value: "in-place" },
       { key: "4", label: "skip — exit without changes", value: "skip" }
     ]
   );
@@ -143,6 +143,7 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
   renderFinalSummary(report, outcomes);
 
   printConfigSnippets(report, profileRoots);
+  printHostRestartGuidance();
   renderArt();
 }
 
@@ -235,4 +236,11 @@ function printConfigSnippets(
     }
   };
   process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
+}
+
+function printHostRestartGuidance(): void {
+  const c = colorsFor(process.stdout);
+  process.stdout.write(`\n${c.bold}Host restart${c.reset}\n`);
+  process.stdout.write("Restart Claude Code, Codex, or Cursor if they cache filesystem skills.\n");
+  process.stdout.write("Then verify from the host by loading the autovault-skill skill.\n");
 }

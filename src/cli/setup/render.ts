@@ -1,4 +1,5 @@
 import type { DriftCategory, DriftReport, SkillView } from "./scan.js";
+import { KNOWN_PROFILE_ROOTS } from "../../profiles/discovery.js";
 
 export type Colors = {
   bold: string;
@@ -151,6 +152,12 @@ export function renderDriftReport(
     }
   } else {
     out.push(`${c.dim}no native skill roots discovered${c.reset}`);
+    out.push(
+      `${c.dim}checked: ${KNOWN_PROFILE_ROOTS.map((root) => `~/${root.root}`).join(", ")}${c.reset}`
+    );
+    out.push(
+      `${c.dim}link manually: autovault sync-profiles --link codex="$HOME/.codex/skills"${c.reset}`
+    );
   }
   out.push("");
 

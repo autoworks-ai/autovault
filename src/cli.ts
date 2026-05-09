@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runDoctorCommand } from "./cli/doctor.js";
 import { runSkillCommand } from "./cli/skill.js";
 import {
   addLocalSkill,
@@ -15,6 +16,7 @@ function usage(): never {
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
   autovault setup [--json]
+  autovault doctor [skill-name] [--clean] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
@@ -41,6 +43,13 @@ function parseProfileLink(value: string | undefined): [string, string] {
   const [agent, root] = value.split("=", 2);
   if (!agent || !root) usage();
   return [agent, root];
+}
+
+function hostRestartGuidance(): string[] {
+  return [
+    "restart Claude Code, Codex, or Cursor if they cache filesystem skills",
+    "verify from the host by loading the autovault-skill skill"
+  ];
 }
 
 function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): string {
@@ -78,7 +87,7 @@ function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): st
       for (const warning of result.warnings) lines.push(`  - ${warning}`);
     }
     lines.push("");
-    lines.push("restart any agent host that caches filesystem skills");
+    lines.push(...hostRestartGuidance());
   } else {
     lines.push("");
     lines.push("errors");
@@ -108,6 +117,7 @@ async function main(): Promise<void> {
         2
       )}\n`
     );
+    for (const line of hostRestartGuidance()) process.stderr.write(`${line}\n`);
     return;
   }
 
@@ -179,6 +189,11 @@ async function main(): Promise<void> {
 
   if (command === "skill") {
     await runSkillCommand(args);
+    return;
+  }
+
+  if (command === "doctor") {
+    await runDoctorCommand(args);
     return;
   }
 

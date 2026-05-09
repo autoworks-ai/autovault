@@ -69,6 +69,12 @@ describe("autovault skill CLI", () => {
     expect(result.stderr).toMatch(/Usage:/);
   });
 
+  it("top-level usage includes doctor", async () => {
+    const result = await runCli([]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/autovault doctor \[skill-name\]/);
+  });
+
   it("returns 0 with a 'no <action> declared' message when bin is absent", async () => {
     const skillMd = `---
 name: no-bin
@@ -254,6 +260,40 @@ bin:
     expect(out).toContain("'--config=$SECRET'");
     expect(out).toContain("rest");
     expect(out).toContain("# cwd: ");
+  });
+
+  it("'skill which' ignores benign OS metadata artifacts", async () => {
+    await writeSkill("which-finder", fixtureSkill("which-finder"), [
+      { path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }
+    ]);
+    const skillRoot = path.join(currentStorageRoot(), "skills", "which-finder");
+    await fs.writeFile(path.join(skillRoot, ".DS_Store"), "finder\n", "utf-8");
+
+    const result = await runCli(["skill", "which", "which-finder", "setup"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(path.join(skillRoot, "bin", "setup"));
+  });
+
+  it("doctor --clean --json removes only ignored artifacts", async () => {
+    await writeSkill("doctor-finder", fixtureSkill("doctor-finder"), [
+      { path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }
+    ]);
+    const skillRoot = path.join(currentStorageRoot(), "skills", "doctor-finder");
+    await fs.writeFile(path.join(skillRoot, ".DS_Store"), "finder\n", "utf-8");
+    await fs.writeFile(path.join(skillRoot, ".env"), "SECRET=x\n", "utf-8");
+
+    const result = await runCli(["doctor", "doctor-finder", "--clean", "--json"]);
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      summary: { cleaned: number; errors: number };
+      skills: Array<{ cleaned: string[]; integrity: { kind: string } }>;
+    };
+    expect(parsed.summary.cleaned).toBe(1);
+    expect(parsed.summary.errors).toBe(1);
+    expect(parsed.skills[0]?.cleaned).toEqual([".DS_Store"]);
+    expect(parsed.skills[0]?.integrity.kind).toBe("tampered");
+    await expect(fs.access(path.join(skillRoot, ".DS_Store"))).rejects.toThrow();
+    await expect(fs.access(path.join(skillRoot, ".env"))).resolves.toBeUndefined();
   });
 
   it("'skill which' resolves a backslash-form bin command via canonical normalization (round-32)", async () => {

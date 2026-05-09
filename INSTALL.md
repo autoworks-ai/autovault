@@ -36,6 +36,13 @@ If `~/.autovault/bin` is not already on your `PATH`, add it:
 export PATH="$HOME/.autovault/bin:$PATH"
 ```
 
+Check vault health at any time:
+
+```bash
+autovault doctor
+autovault doctor --clean   # remove ignored OS/editor metadata only
+```
+
 ## 1. Clone and build
 
 ```bash
@@ -126,6 +133,14 @@ AutoVault can also discover existing native roots:
 
 ```bash
 autovault sync-profiles --discover
+```
+
+Discovery only reports roots that already exist. If a host has not created its
+skill directory yet, create it or pass an explicit link:
+
+```bash
+mkdir -p "$HOME/.codex/skills"
+autovault sync-profiles --link codex="$HOME/.codex/skills"
 ```
 
 Audit an AutoHub-style repository before migrating local scripts into vault
@@ -459,6 +474,19 @@ AutoVault signs each skill with an Ed25519 key stored under
 SKILL.md, the signature will stop verifying and AutoVault will log a warning.
 V1 enforcement is log-only; the skill still loads. Re-run bootstrap or
 `update_skill` to re-sign.
+
+Finder and editors may add benign metadata files such as `.DS_Store`,
+`Thumbs.db`, `desktop.ini`, or AppleDouble `._*` files. AutoVault ignores those
+for integrity decisions and reports them through `autovault doctor`; remove
+them with:
+
+```bash
+autovault doctor --clean
+```
+
+Unknown extra files, symlinks, FIFOs, changed `SKILL.md`, and changed signed
+resources are still treated as integrity failures. Reinstall the skill if
+doctor reports those.
 
 ### Permission denied on `.signing-key.json`
 
