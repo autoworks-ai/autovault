@@ -14,6 +14,6 @@
 
 ## Release Safety
 
-- [ ] Uses `v0.2.1` as the current public release unless this is a Release Please PR
+- [ ] Does not change version or changelog files unless this is a Release Please PR
 - [ ] Does not advertise npm install commands before npm publishing is live
 - [ ] Does not push local `archive/*` tags

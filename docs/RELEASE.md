@@ -39,7 +39,7 @@ AutoVault currently follows pre-1.0 semver:
 Release Please owns version bumps on `main`. For normal releases, do not bump
 `package.json`, `package-lock.json`, `server.json`, or
 `.release-please-manifest.json` by hand; merge conventional commits and let the
-Release Please PR make those edits from the current `0.2.1` baseline.
+Release Please PR make those edits from the current manifest baseline.
 
 For emergency manual releases only, update both:
 
