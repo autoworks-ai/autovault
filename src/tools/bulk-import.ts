@@ -6,9 +6,11 @@ import type { SkillSource } from "../storage/index.js";
 import { bundleHash } from "../util/hash.js";
 import { log } from "../util/log.js";
 import { formatResultSync } from "../util/sync-format.js";
+import { buildSimilarityCorpus, type DedupCandidate } from "../validation/dedup.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import {
   analyzeProposedSkill,
+  buildInstalledDedupCorpus,
   writeAcceptedProposedSkill,
   type AcceptedProposedSkill
 } from "./propose-skill.js";
@@ -73,6 +75,7 @@ export async function bulkImport(input: BulkImportInput): Promise<Record<string,
     skipped: [],
     warnings: []
   };
+  const dedupCorpus = await buildInstalledDedupCorpus();
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     if (!entry.isDirectory()) continue;
@@ -105,7 +108,8 @@ export async function bulkImport(input: BulkImportInput): Promise<Record<string,
       skill_md: bundle.skillMd,
       resources: bundle.resources,
       agents: input.agents,
-      allow_synthesized_frontmatter: input.allow_synthesized_frontmatter
+      allow_synthesized_frontmatter: input.allow_synthesized_frontmatter,
+      dedupCorpus
     });
 
     if (analysis.kind === "response") {
@@ -139,6 +143,7 @@ export async function bulkImport(input: BulkImportInput): Promise<Record<string,
 
     const accepted = analysis.accepted;
     await writeAcceptedProposedSkill(accepted, sourceForBundle(sourceDir, directory, accepted));
+    dedupCorpus.push(dedupCandidateForAccepted(accepted));
     result.summary.accepted += 1;
     result.imported.push({
       directory,
@@ -197,6 +202,14 @@ function sourceForBundle(
     identifier: path.join(sourceDir, directory),
     fetchedAt: new Date().toISOString(),
     contentHash: bundleHash(accepted.skillMd, accepted.resources)
+  };
+}
+
+function dedupCandidateForAccepted(accepted: AcceptedProposedSkill): DedupCandidate {
+  return {
+    name: accepted.name,
+    contentHash: accepted.contentHash,
+    similarityCorpus: buildSimilarityCorpus(accepted.skillMd, accepted.resources)
   };
 }
 

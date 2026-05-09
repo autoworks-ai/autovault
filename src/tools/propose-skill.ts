@@ -193,12 +193,31 @@ export type ProposeSkillAnalysis =
   | { kind: "accepted"; accepted: AcceptedProposedSkill }
   | { kind: "response"; response: Record<string, unknown> };
 
+export async function buildInstalledDedupCorpus(): Promise<DedupCandidate[]> {
+  const existing: DedupCandidate[] = [];
+  for (const existingName of await listInstalledSkillNames()) {
+    const record = await readSkill(existingName);
+    if (!record) continue;
+    // Always hash live disk bytes — see readInstalledResources for why
+    // source.contentHash is unsafe for dedup.
+    const existingResources = await readInstalledResources(existingName);
+    const existingHash = bundleHash(record.skillMd, existingResources);
+    existing.push({
+      name: record.name,
+      contentHash: existingHash,
+      similarityCorpus: buildSimilarityCorpus(record.skillMd, existingResources)
+    });
+  }
+  return existing;
+}
+
 export async function analyzeProposedSkill(input: {
   skill_md: string;
   resources?: Array<{ path: string; content: string }>;
   source_session?: string;
   allow_synthesized_frontmatter?: boolean;
   agents?: string[];
+  dedupCorpus?: DedupCandidate[];
 }): Promise<ProposeSkillAnalysis> {
   // Enforce raw byte caps BEFORE attemptRepair. attemptRepair runs full-string
   // regex passes — feeding it a 100 MiB SKILL.md burns CPU before
@@ -223,10 +242,16 @@ export async function analyzeProposedSkill(input: {
       validateSkillInput(normalizedSkillMd, input.resources ?? []),
       repair.repaired
     );
-    return analyzeValidatedProposal(input, normalizedSkillMd, validation, {
-      inferredResources: synthesized.inferredResources,
-      inferredAgents: synthesized.inferredAgents
-    });
+    return analyzeValidatedProposal(
+      input,
+      normalizedSkillMd,
+      validation,
+      {
+        inferredResources: synthesized.inferredResources,
+        inferredAgents: synthesized.inferredAgents
+      },
+      input.dedupCorpus
+    );
   } catch (error) {
     const validation = withRepairWarning(
       validateSkillInput(normalizedSkillMd, input.resources ?? []),
@@ -252,7 +277,8 @@ async function analyzeValidatedProposal(
   synthesis: {
     inferredResources: SynthesizedResource[];
     inferredAgents: string[];
-  }
+  },
+  dedupCorpus?: DedupCandidate[]
 ): Promise<ProposeSkillAnalysis> {
   if (validation.securityFlags.length > 0 && !validation.valid) {
     log.info("propose_skill.security_blocked", { flags: validation.securityFlags });
@@ -276,22 +302,11 @@ async function analyzeValidatedProposal(
   const candidateHash = bundleHash(normalizedSkillMd, input.resources ?? []);
   const candidateCorpus = buildSimilarityCorpus(normalizedSkillMd, input.resources ?? []);
 
-  const existing: DedupCandidate[] = [];
-  for (const existingName of await listInstalledSkillNames()) {
-    const record = await readSkill(existingName);
-    if (!record) continue;
-    // Always hash live disk bytes — see readInstalledResources for why
-    // source.contentHash is unsafe for dedup.
-    const existingResources = await readInstalledResources(existingName);
-    const existingHash = bundleHash(record.skillMd, existingResources);
-    existing.push({
-      name: record.name,
-      contentHash: existingHash,
-      similarityCorpus: buildSimilarityCorpus(record.skillMd, existingResources)
-    });
-  }
-
-  const dedup = classifyDedup(candidateHash, candidateCorpus, existing);
+  const dedup = classifyDedup(
+    candidateHash,
+    candidateCorpus,
+    dedupCorpus ?? await buildInstalledDedupCorpus()
+  );
 
   if (dedup.tier === "exact") {
     log.info("propose_skill.duplicate_exact", { existing: dedup.existingName });

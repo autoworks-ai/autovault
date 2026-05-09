@@ -28,7 +28,7 @@ metadata:
 `;
     const missingResult = validateSkillInput(missing);
     expect(missingResult.valid).toBe(false);
-    expect(missingResult.errors.join(" ")).toMatch(/agents/);
+    expect(missingResult.errors.join(" ")).toMatch(/agents: at least one agent is required/);
 
     const empty = `---
 name: empty-agents
@@ -42,7 +42,7 @@ metadata:
 `;
     const emptyResult = validateSkillInput(empty);
     expect(emptyResult.valid).toBe(false);
-    expect(emptyResult.errors.join(" ")).toMatch(/agents/);
+    expect(emptyResult.errors.join(" ")).toMatch(/agents: at least one agent is required/);
   });
 
   it("accepts a clean skill in strict mode", () => {

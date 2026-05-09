@@ -49,6 +49,10 @@ describe("bulkImport", () => {
       skillMd: skillMd("accepted-one"),
       resources: { "docs/guide.md": "Guide" }
     });
+    await writeBundle(sourceDir, "accepted-one-copy", {
+      skillMd: skillMd("accepted-one"),
+      resources: { "docs/guide.md": "Guide" }
+    });
     await writeBundle(sourceDir, "already-installed", {
       skillMd: skillMd("already-installed", { agents: ["codex"] })
     });
@@ -68,10 +72,10 @@ describe("bulkImport", () => {
       success: false,
       summary: {
         accepted: 1,
-        duplicate: 1,
+        duplicate: 2,
         invalid: 1,
         skipped: 1,
-        total: 4
+        total: 5
       },
       imported: [
         expect.objectContaining({
@@ -80,7 +84,10 @@ describe("bulkImport", () => {
           inferred_resources: [{ path: "docs/guide.md", type: "file" }]
         })
       ],
-      duplicates: [expect.objectContaining({ name: "already-installed" })],
+      duplicates: [
+        expect.objectContaining({ name: "accepted-one" }),
+        expect.objectContaining({ name: "already-installed" })
+      ],
       invalid: [expect.objectContaining({ name: "invalid-one" })],
       skipped: [expect.objectContaining({ directory: "not-a-skill" })],
       sync: {
