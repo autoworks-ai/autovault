@@ -3,7 +3,7 @@ import os from "node:os";
 import dotenv from "dotenv";
 import { z } from "zod";
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const booleanish = z.union([z.boolean(), z.string()]).transform((value, ctx) => {
   if (typeof value === "boolean") return value;

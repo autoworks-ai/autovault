@@ -9,12 +9,26 @@ updates:
         applies-to: security-updates
         patterns:
           - "*"
+      production-major:
+        applies-to: version-updates
+        dependency-type: "production"
+        update-types:
+          - "major"
       production-minor-patch:
         applies-to: version-updates
         dependency-type: "production"
         update-types:
           - "minor"
           - "patch"
+      typescript-major:
+        applies-to: version-updates
+        dependency-type: "development"
+        patterns:
+          - "@types/*"
+          - "tsx"
+          - "typescript"
+        update-types:
+          - "major"
       typescript-minor-patch:
         applies-to: version-updates
         dependency-type: "development"
@@ -25,6 +39,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      test-tooling-major:
+        applies-to: version-updates
+        dependency-type: "development"
+        patterns:
+          - "@vitest/*"
+          - "vitest"
+        update-types:
+          - "major"
       test-tooling-minor-patch:
         applies-to: version-updates
         dependency-type: "development"
@@ -34,6 +56,17 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      development-major:
+        applies-to: version-updates
+        dependency-type: "development"
+        exclude-patterns:
+          - "@types/*"
+          - "@vitest/*"
+          - "tsx"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "major"
       development-minor-patch:
         applies-to: version-updates
         dependency-type: "development"
