@@ -113,10 +113,14 @@ function matchedTokens(value: string | undefined, tokens: string[]): string[] {
 }
 
 function matchedTags(tags: string[], tokens: string[]): string[] {
-  const lowerTags = tags.map((tag) => tag.toLowerCase());
-  const matched = tags.filter((tag, index) =>
-    tokens.some((token) => lowerTags[index]?.includes(token) || token.includes(lowerTags[index] ?? ""))
-  );
+  const normalizedTags = tags
+    .map((tag) => ({ original: tag, normalized: tag.trim().toLowerCase() }))
+    .filter((tag) => tag.normalized.length > 0);
+  const matched = normalizedTags
+    .filter((tag) =>
+      tokens.some((token) => tag.normalized.includes(token) || token.includes(tag.normalized))
+    )
+    .map((tag) => tag.original);
   return [...new Set(matched)];
 }
 

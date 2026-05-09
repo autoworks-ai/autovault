@@ -317,7 +317,8 @@ function buildSummary(name: string, frontmatter: Record<string, unknown>): Skill
     risk_level: optionalString(frontmatter.risk_level),
     capabilities,
     requires_tools: capabilities.tools,
-    requires_secrets: requiresSecrets
+    requires_secrets: requiresSecrets,
+    requiresSecrets
   };
 }
 
@@ -876,7 +877,8 @@ export async function readSkillSummary(name: string): Promise<SkillSummary | nul
     risk_level: record.risk_level,
     capabilities: record.capabilities,
     requires_tools: record.requires_tools,
-    requires_secrets: record.requires_secrets
+    requires_secrets: record.requires_secrets,
+    requiresSecrets: record.requiresSecrets
   };
 }
 

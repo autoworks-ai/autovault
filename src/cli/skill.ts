@@ -19,7 +19,7 @@ import { verifyFile } from "../util/sign.js";
 import { canonicalRelPath } from "../util/path.js";
 import type { SkillBinAction } from "../types.js";
 
-const RESERVED_ACTIONS = new Set(["list", "which"]);
+const RESERVED_ACTIONS = new Set(["list", "search", "which"]);
 const ACTION_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 function fail(message: string): never {
@@ -66,6 +66,9 @@ function usage(): never {
                                       # metadata text search across installed skills
   autovault skill which <name> [<action>]
                                        # print resolved script path(s) without running
+
+Reserved subcommands: list, search, which. Skills cannot expose bin actions
+with those names through this CLI shorthand.
 `);
   process.exit(1);
 }
@@ -141,11 +144,32 @@ async function searchAction(args: string[]): Promise<void> {
   }
 
   for (const match of result.matches) {
-    process.stdout.write(`${match.name}\t${match.score.toFixed(3)}\t${match.reason}\n`);
-    process.stdout.write(`  ${match.description}\n`);
-    if (match.tags.length > 0) process.stdout.write(`  tags: ${match.tags.join(", ")}\n`);
-    if (match.category) process.stdout.write(`  category: ${match.category}\n`);
+    process.stdout.write(
+      `${formatSearchField(match.name, 80)}\t${match.score.toFixed(3)}\t${formatSearchField(match.reason, 160)}\n`
+    );
+    process.stdout.write(`  ${formatSearchField(match.description, 240)}\n`);
+    if (match.tags.length > 0) {
+      process.stdout.write(`  tags: ${match.tags.map((tag) => formatSearchField(tag, 48)).join(", ")}\n`);
+    }
+    if (match.category) process.stdout.write(`  category: ${formatSearchField(match.category, 80)}\n`);
   }
+}
+
+function formatSearchField(value: string, maxLength: number): string {
+  const escaped = value.replace(/[\x00-\x1F\x7F]/g, (char) => {
+    switch (char) {
+      case "\n":
+        return "\\n";
+      case "\r":
+        return "\\r";
+      case "\t":
+        return "\\t";
+      default:
+        return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
+    }
+  });
+  if (escaped.length <= maxLength) return escaped;
+  return `${escaped.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 async function listAction(): Promise<void> {

@@ -252,6 +252,27 @@ metadata:
     expect(resultLines).toHaveLength(1);
   });
 
+  it("skill search escapes control characters in rendered metadata", async () => {
+    await writeSkill("unsafe-search", `---
+name: unsafe-search
+description: "Unsafe\\n\\u001b[2J description for metadata text search output."
+tags:
+  - "tag\\tvalue"
+category: "cat\\rvalue"
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`);
+    const result = await runCli(["skill", "search", "unsafe"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Unsafe\\n\\x1b[2J description");
+    expect(result.stdout).toContain("tags: tag\\tvalue");
+    expect(result.stdout).toContain("category: cat\\rvalue");
+    expect(result.stdout).not.toContain("\u001b[2J");
+  });
+
   it("prints the resolved script path + cwd via 'skill which' (no args case)", async () => {
     await writeSkill("which1", fixtureSkill("which1"), [
       { path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }

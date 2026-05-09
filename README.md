@@ -243,7 +243,9 @@ install.
 Use `autovault skill search <query> [--top-k N]` to debug installed skill
 discovery locally. This is metadata text search over skill names, titles,
 descriptions, tags, categories, and `when_to_use`; embedding-backed semantic
-search is a future backend, not the current behavior.
+search is a future backend, not the current behavior. The `skill` CLI reserves
+`list`, `search`, and `which` as subcommands, so those names are not available
+as executable `bin` action shorthands.
 
 Use `autovault doctor` to inspect vault health. `autovault doctor --clean`
 removes only ignored OS/editor metadata artifacts such as `.DS_Store`,

@@ -85,6 +85,23 @@ when_to_use: Use when deploying a Worker backed by D1 storage.
     expect(result.matches[0]?.reason).toContain("matched tags");
   });
 
+  it("searchSkills ignores empty tags when explaining matches", async () => {
+    await writeSkill("empty-tag-skill", `---
+name: empty-tag-skill
+description: A description that is intentionally long enough to satisfy the schema length checks.
+tags:
+  - ""
+metadata:
+  version: "0.0.1"
+---
+
+# Body
+`);
+    const result = await searchSkills("empty");
+    expect(result.matches[0]?.name).toBe("empty-tag-skill");
+    expect(result.matches[0]?.reasons.map((reason) => reason.kind)).not.toContain("tag_match");
+  });
+
   it("searchSkills returns empty matches for unrelated queries", async () => {
     const result = await searchSkills("totallyunrelatedquery");
     expect(result.matches).toHaveLength(0);
