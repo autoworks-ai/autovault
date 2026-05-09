@@ -1,3 +1,12 @@
+// Remote MCP smoke test.
+//
+// Default mode: spins up a fresh local AutoVault remote server in /tmp,
+// exercises OAuth + propose_skill + get_skill end-to-end, then tears down.
+//
+// Live-target mode: set AUTOVAULT_REMOTE_URL=https://<your-deployment> and
+// AUTOVAULT_ADMIN_EMAIL / AUTOVAULT_ADMIN_PASSWORD to point the same flow
+// at a deployed server (no local boot, no temp storage). Useful for
+// validating a Railway / Docker-Compose deploy after configuration.
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -5,11 +14,19 @@ import os from "node:os";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { startRemoteServer } from "../dist/remote/server.js";
 
-const ADMIN_EMAIL = "admin@example.com";
-const ADMIN_PASSWORD = "admin-password-123";
+const REMOTE_URL = process.env.AUTOVAULT_REMOTE_URL?.replace(/\/+$/, "");
+const ADMIN_EMAIL = process.env.AUTOVAULT_ADMIN_EMAIL ?? "admin@example.com";
+const ADMIN_PASSWORD = process.env.AUTOVAULT_ADMIN_PASSWORD ?? "admin-password-123";
 const REDIRECT_URI = "http://localhost/callback";
+
+if (REMOTE_URL && (!process.env.AUTOVAULT_ADMIN_EMAIL || !process.env.AUTOVAULT_ADMIN_PASSWORD)) {
+  process.stderr.write(
+    "AUTOVAULT_REMOTE_URL is set, but AUTOVAULT_ADMIN_EMAIL and/or AUTOVAULT_ADMIN_PASSWORD are missing. " +
+      "Set both to match the credentials configured on the deployment.\n"
+  );
+  process.exit(2);
+}
 
 const SAMPLE_SKILL = `---
 name: remote-smoke-skill
@@ -120,7 +137,7 @@ async function oauthToken(base) {
   return token.json();
 }
 
-async function main() {
+async function bootLocalServer() {
   const tempStorage = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-remote-smoke-"));
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -133,11 +150,31 @@ async function main() {
   process.env.AUTOVAULT_LOG_LEVEL = "info";
 
   let server;
+  try {
+    const { startRemoteServer } = await import("../dist/remote/server.js");
+    server = await startRemoteServer({ port, host: "127.0.0.1" });
+    return { base, server, tempStorage };
+  } catch (error) {
+    await server?.close();
+    await fs.rm(tempStorage, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function main() {
+  let base;
+  let server;
+  let tempStorage;
+  if (REMOTE_URL) {
+    base = REMOTE_URL;
+    banner(`Targeting deployed server: ${base}`);
+  } else {
+    ({ base, server, tempStorage } = await bootLocalServer());
+    banner(`Spawned local server: ${base}/mcp`);
+  }
+
   let client;
   try {
-    server = await startRemoteServer({ port, host: "127.0.0.1" });
-    banner(`Remote URL: ${base}/mcp`);
-
     const health = await fetch(`${base}/healthz`);
     process.stdout.write(`${pretty(await health.json())}\n`);
 
@@ -166,7 +203,7 @@ async function main() {
   } finally {
     await client?.close();
     await server?.close();
-    await fs.rm(tempStorage, { recursive: true, force: true });
+    if (tempStorage) await fs.rm(tempStorage, { recursive: true, force: true });
   }
 }
 
