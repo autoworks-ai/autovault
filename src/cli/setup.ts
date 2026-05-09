@@ -9,6 +9,7 @@ import {
 } from "./setup/apply.js";
 import {
   askChoice,
+  askSelect,
   isTtyAvailable,
   NoTtyError
 } from "./setup/prompt.js";
@@ -16,8 +17,13 @@ import {
   colorsFor,
   makeLogger,
   renderArt,
+  renderCompactScanSummary,
   renderDriftReport,
+  renderSetupIntro,
   renderFinalSummary,
+  renderReviewSkill,
+  reviewReason,
+  reviewSkills,
   startSpinner
 } from "./setup/render.js";
 import {
@@ -34,10 +40,11 @@ export type RunSetupOptions = {
   discover?: boolean;
   profileRoots?: Record<string, string>;
   json?: boolean;
+  review?: boolean;
+  advanced?: boolean;
 };
 
 export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
-  const log = makeLogger();
   if (!isTtyAvailable() && !options.json) {
     throw new NoTtyError();
   }
@@ -57,19 +64,68 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
     return;
   }
 
-  const spin = startSpinner("Scanning skill roots…");
+  await renderSetupIntro();
+
+  const spin = startSpinner("Scanning vault and native skill roots...");
   try {
     report = await scanDrift(scanInput);
-  } finally {
-    spin.stop();
+    spin.stop(
+      `Scanned ${report.skills.length} skill name(s) across ${Object.keys(report.discovered).length} native root(s)`
+    );
+  } catch (error) {
+    spin.error("Scan failed");
+    throw error;
   }
 
   const profileRoots = { ...report.discovered, ...(options.profileRoots ?? {}) };
 
-  log.ok(
-    `Scanned ${report.skills.length} skill name(s) across vault, bundled, and ${Object.keys(profileRoots).length} native root(s)`
-  );
+  if (options.advanced) {
+    await runAdvancedSetup(report, profileRoots, options);
+    return;
+  }
 
+  renderCompactScanSummary(report);
+
+  const needsReview = reviewSkills(report);
+  let didSync = false;
+  if (options.review) {
+    didSync = await runReviewPicker(report, profileRoots, options);
+  } else if (needsReview.length > 0) {
+    const decision = await askChoice<"finish" | "review">(
+      "Review native skill issues now?",
+      [
+        {
+          key: "f",
+          label: "finish install",
+          value: "finish",
+          hint: "safe default: leave native skills untouched"
+        },
+        {
+          key: "r",
+          label: "review now",
+          value: "review",
+          hint: "open an interactive picker"
+        }
+      ]
+    );
+    if (decision.value === "review") {
+      didSync = await runReviewPicker(report, profileRoots, options);
+    }
+  }
+
+  if (!didSync) {
+    await runSafeSync(profileRoots, options);
+  }
+
+  renderArt(process.stdout, { reviewCount: needsReview.length });
+}
+
+async function runAdvancedSetup(
+  report: DriftReport,
+  profileRoots: Record<string, string>,
+  options: RunSetupOptions
+): Promise<void> {
+  const log = makeLogger();
   renderDriftReport(report);
 
   if (report.skills.length === 0) {
@@ -102,21 +158,6 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
     }
   }
 
-  const adoptionDecision = await askChoice<AdoptionMode | "skip">(
-    "\nHow would you like to handle native skills?",
-    [
-      { key: "1", label: "augment (recommended) — leave natives alone, vault adds new skills only", value: "augment" },
-      { key: "2", label: "adopt + backup — copy into vault; move originals to <root>.bak/<name>", value: "backup" },
-      { key: "3", label: "adopt in place (destructive) — replace original dirs with managed symlinks", value: "in-place" },
-      { key: "4", label: "skip — exit without changes", value: "skip" }
-    ]
-  );
-
-  if (adoptionDecision.value === "skip") {
-    log.info("No changes applied. Re-run autovault setup any time.");
-    return;
-  }
-
   const candidatesAll = adoptionCandidates(report);
   const candidates = allowFailingValidation
     ? candidatesAll
@@ -124,27 +165,247 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
         (skill) => !skill.native.some((n) => n.validation && !n.validation.valid)
       );
 
+  let adoptionMode: AdoptionMode = "augment";
+  if (candidates.length > 0) {
+    const adoptionDecision = await askChoice<AdoptionMode | "skip">(
+      "\nHow would you like to handle native skills?",
+      [
+        {
+          key: "1",
+          label: "augment (recommended) - leave natives alone, vault adds new skills only",
+          value: "augment"
+        },
+        {
+          key: "2",
+          label: "adopt + backup - copy into vault; move originals to <root>.bak/<name>",
+          value: "backup"
+        },
+        {
+          key: "3",
+          label: "adopt in place (destructive) - replace original dirs with managed symlinks",
+          value: "in-place"
+        },
+        { key: "4", label: "skip - exit without changes", value: "skip" }
+      ]
+    );
+
+    if (adoptionDecision.value === "skip") {
+      log.info("No changes applied. Re-run autovault setup any time.");
+      return;
+    }
+    adoptionMode = adoptionDecision.value;
+  } else {
+    log.ok("No adoption decisions needed; refreshing managed profile links.");
+  }
+
   let collisions: CollisionDecision[] = [];
-  if (adoptionDecision.value !== "augment") {
+  if (adoptionMode !== "augment") {
     const colliding = bundledNativeCollisions(report).filter((skill) =>
       candidates.includes(skill)
     );
     collisions = await collectCollisionDecisions(colliding);
   }
 
-  const outcomes = await applyDecisions({
-    mode: adoptionDecision.value,
-    candidates,
-    collisions,
-    profileRoots,
-    discover: options.discover ?? true
-  });
+  const applySpin = startSpinner("Applying vault intake decisions...");
+  let outcomes: Awaited<ReturnType<typeof applyDecisions>>;
+  try {
+    outcomes = await applyDecisions({
+      mode: adoptionMode,
+      candidates,
+      collisions,
+      profileRoots,
+      discover: options.discover ?? true
+    });
+    applySpin.stop("Profile links refreshed");
+  } catch (error) {
+    applySpin.error("Apply failed");
+    throw error;
+  }
 
   renderFinalSummary(report, outcomes);
 
   printConfigSnippets(report, profileRoots);
   printHostRestartGuidance();
-  renderArt();
+  renderArt(process.stdout, { reviewCount: reviewSkills(report).length });
+}
+
+type ReviewSelection = {
+  candidates: SkillView[];
+  collisions: CollisionDecision[];
+};
+
+function nativeFailsValidation(skill: SkillView): boolean {
+  return skill.native.some((native) => native.validation && !native.validation.valid);
+}
+
+function canAdoptWithBackup(skill: SkillView): boolean {
+  return skill.native.length > 0 && !nativeFailsValidation(skill) && skill.category !== "invalid";
+}
+
+function canUseBundled(skill: SkillView): boolean {
+  const nativeHash = skill.native[0]?.hash;
+  return Boolean(skill.bundled && nativeHash && skill.bundled.hash !== nativeHash);
+}
+
+function reviewChoiceLabel(skill: SkillView): string {
+  return `${reviewReason(skill)}: ${skill.name}`;
+}
+
+async function runReviewPicker(
+  report: DriftReport,
+  profileRoots: Record<string, string>,
+  options: RunSetupOptions
+): Promise<boolean> {
+  const reasonOrder = new Map([
+    ["needs validation", 0],
+    ["native only", 1],
+    ["drift", 2],
+    ["unreadable", 3]
+  ]);
+  const reviewable = reviewSkills(report).sort((left, right) => {
+    const byReason =
+      (reasonOrder.get(reviewReason(left)) ?? 99) -
+      (reasonOrder.get(reviewReason(right)) ?? 99);
+    return byReason || left.name.localeCompare(right.name);
+  });
+  if (reviewable.length === 0) {
+    makeLogger().ok("No native skill issues need review.");
+    return false;
+  }
+
+  const selection: ReviewSelection = { candidates: [], collisions: [] };
+  const handled = new Set<string>();
+
+  while (true) {
+    const remaining = reviewable.filter((skill) => !handled.has(skill.name));
+    const choice = await askSelect<SkillView | "finish">(
+      "Choose a skill to review",
+      [
+        {
+          label: "finish review",
+          value: "finish",
+          hint:
+            selection.candidates.length === 0
+              ? "leave all remaining native skills untouched"
+              : "apply selected safe actions"
+        },
+        ...remaining.map((skill) => ({
+          label: reviewChoiceLabel(skill),
+          value: skill,
+          hint: skill.native[0]?.description || skill.bundled?.description || skill.vault?.description
+        }))
+      ],
+      { initialValue: "finish", maxItems: 8 }
+    );
+
+    if (choice === "finish") break;
+    renderReviewSkill(choice);
+
+    const actions: Array<{
+      label: string;
+      value: "leave" | "adopt-backup" | "use-bundled";
+      hint?: string;
+      disabled?: boolean;
+    }> = [
+      {
+        label: "leave native for now",
+        value: "leave",
+        hint: "safe default"
+      },
+      {
+        label: "adopt with backup",
+        value: "adopt-backup",
+        hint: "copy into vault and move original to <root>.bak",
+        disabled: !canAdoptWithBackup(choice)
+      },
+      {
+        label: "use bundled",
+        value: "use-bundled",
+        hint: "back up native copy and keep bundled version",
+        disabled: !canUseBundled(choice)
+      }
+    ];
+
+    const action = await askSelect("Action for this skill", actions, {
+      initialValue: "leave"
+    });
+    handled.add(choice.name);
+
+    if (action === "adopt-backup") {
+      selection.candidates.push(choice);
+    } else if (action === "use-bundled") {
+      selection.candidates.push(choice);
+      selection.collisions.push({ name: choice.name, action: "use-bundled" });
+    }
+  }
+
+  if (selection.candidates.length === 0) return false;
+
+  const applySpin = startSpinner("Applying reviewed skill decisions...");
+  try {
+    const outcomes = await applyDecisions({
+      mode: "backup",
+      candidates: selection.candidates,
+      collisions: selection.collisions,
+      profileRoots,
+      discover: options.discover ?? true
+    });
+    applySpin.stop("Reviewed decisions applied");
+    renderFinalSummary(report, outcomes);
+    return true;
+  } catch (error) {
+    applySpin.error("Review apply failed");
+    throw error;
+  }
+}
+
+async function runSafeSync(
+  profileRoots: Record<string, string>,
+  options: RunSetupOptions
+): Promise<void> {
+  const applySpin = startSpinner("Refreshing managed profile links...");
+  try {
+    const outcomes = await applyDecisions({
+      mode: "augment",
+      candidates: [],
+      collisions: [],
+      profileRoots,
+      discover: options.discover ?? true
+    });
+    const failed = outcomes.filter((outcome) => !outcome.ok);
+    if (failed.length > 0) {
+      applySpin.stop("Profile links refreshed with warnings");
+      if (process.env.AUTOVAULT_VERBOSE === "1") {
+        renderFinalSummary(
+          {
+            storagePath: "",
+            bundledRoot: "",
+            discovered: {},
+            skills: [],
+            totals: {
+              identical: 0,
+              "vault-drift": 0,
+              "bundled-drift": 0,
+              "cross-host-drift": 0,
+              "vault-only": 0,
+              "native-only": 0,
+              "bundled-only": 0,
+              invalid: 0
+            },
+            hasFailingValidation: false
+          },
+          failed
+        );
+      } else {
+        makeLogger().warn(`${failed.length} profile link warning(s); run autovault doctor for details.`);
+      }
+      return;
+    }
+    applySpin.stop("Profile links refreshed");
+  } catch (error) {
+    applySpin.error("Profile refresh failed");
+    throw error;
+  }
 }
 
 export function resolveMcpServerPath(

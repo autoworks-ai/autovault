@@ -1,79 +1,50 @@
-import fs from "node:fs";
-import readline from "node:readline";
-import { Writable } from "node:stream";
-import { colorsFor } from "./render.js";
+import {
+  cancel,
+  confirm as clackConfirm,
+  isCancel,
+  select,
+  selectKey,
+  text
+} from "@clack/prompts";
+import {
+  isTtyAvailable,
+  NoTtyError,
+  openTtyStreams,
+  type TtyStreams
+} from "../ui/tty.js";
 
-export class NoTtyError extends Error {
-  constructor() {
-    super(
-      "autovault setup requires an interactive terminal. Re-run from a TTY (or pass AUTOVAULT_YES=1 to install.sh and run setup later)."
-    );
-    this.name = "NoTtyError";
-  }
-}
-
-function ttyAvailable(): boolean {
-  if (process.stdin.isTTY) return true;
-  let fd: number | undefined;
-  try {
-    fd = fs.openSync("/dev/tty", "r+");
-    return true;
-  } catch {
-    return false;
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
-type Stream = { input: NodeJS.ReadableStream; output: Writable; close: () => void };
-
-function openTtyStreams(): Stream {
-  if (process.stdin.isTTY) {
-    return {
-      input: process.stdin,
-      output: process.stdout,
-      close: () => {}
-    };
-  }
-  // Piped stdin (curl | sh) — open /dev/tty directly so prompts still work.
-  const fd = fs.openSync("/dev/tty", "r+");
-  const input = fs.createReadStream("", { fd, autoClose: false });
-  const output = fs.createWriteStream("", { fd, autoClose: false });
-  return {
-    input,
-    output,
-    close: () => {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        /* already closed */
-      }
-    }
-  };
-}
+export { isTtyAvailable, NoTtyError };
 
 export type PromptResult<T> = { value: T };
 
-function makeInterface(stream: Stream): readline.Interface {
-  return readline.createInterface({
-    input: stream.input,
-    output: stream.output,
-    terminal: true
-  });
+function handleCancel<T>(value: T | symbol, stream: TtyStreams): asserts value is T {
+  if (!isCancel(value)) return;
+  cancel("Setup canceled.", { output: stream.output, withGuide: false });
+  stream.close();
+  process.exit(0);
+}
+
+async function withPromptStreams<T>(run: (stream: TtyStreams) => Promise<T>): Promise<T> {
+  if (!isTtyAvailable()) throw new NoTtyError();
+  const stream = openTtyStreams();
+  try {
+    return await run(stream);
+  } finally {
+    stream.close();
+  }
 }
 
 export async function ask(question: string): Promise<string> {
-  if (!ttyAvailable()) throw new NoTtyError();
-  const stream = openTtyStreams();
-  const rl = makeInterface(stream);
-  try {
-    return await new Promise<string>((resolve) => {
-      rl.question(question, (answer) => resolve(answer.trim()));
+  return withPromptStreams(async (stream) => {
+    const answer = await text({
+      message: question,
+      input: stream.input,
+      output: stream.output,
+      withGuide: false
     });
-  } finally {
-    rl.close();
-    stream.close();
-  }
+    handleCancel(answer, stream);
+    return String(answer).trim();
+  });
 }
 
 export type Choice<T> = {
@@ -81,57 +52,90 @@ export type Choice<T> = {
   label: string;
   value: T;
   applyToAllKey?: string;
+  hint?: string;
+  disabled?: boolean;
 };
 
 export async function askChoice<T>(
   prompt: string,
   choices: Choice<T>[],
-  options?: { applyToAllPrompt?: string }
+  _options?: { applyToAllPrompt?: string }
 ): Promise<{ value: T; applyToAll: boolean }> {
-  if (!ttyAvailable()) throw new NoTtyError();
-  const stream = openTtyStreams();
-  const c = colorsFor(stream.output as NodeJS.WriteStream);
-  const rl = makeInterface(stream);
-  try {
-    while (true) {
-      stream.output.write(`${prompt}\n`);
-      for (const choice of choices) {
-        const apply = choice.applyToAllKey
-          ? `  ${c.dim}or ${choice.applyToAllKey} for all${c.reset}`
-          : "";
-        stream.output.write(`  [${c.bold}${choice.key}${c.reset}] ${choice.label}${apply}\n`);
-      }
-      const answer = await new Promise<string>((resolve) => {
-        rl.question(`${c.magenta}?${c.reset} choice: `, (a) => resolve(a.trim()));
+  if (choices.length === 0) throw new Error("askChoice requires at least one choice");
+  return withPromptStreams(async (stream) => {
+    const byKey = new Map<string, { value: T; applyToAll: boolean }>();
+    const options: Array<{ value: string; label: string; hint?: string; disabled?: boolean }> = [];
+
+    for (const choice of choices) {
+      byKey.set(choice.key, { value: choice.value, applyToAll: false });
+      options.push({
+        value: choice.key,
+        label: choice.label,
+        hint: choice.hint,
+        disabled: choice.disabled
       });
-      if (answer.length === 0) {
-        stream.output.write(`${c.yellow}!${c.reset} pick a choice from the list above\n`);
-        continue;
+      if (choice.applyToAllKey) {
+        byKey.set(choice.applyToAllKey, { value: choice.value, applyToAll: true });
+        options.push({
+          value: choice.applyToAllKey,
+          label: choice.label,
+          hint: "apply to all remaining",
+          disabled: choice.disabled
+        });
       }
-      const lowered = answer.toLowerCase();
-      const direct = choices.find((choice) => choice.key.toLowerCase() === lowered);
-      if (direct) return { value: direct.value, applyToAll: false };
-      const allMatch = choices.find(
-        (choice) =>
-          choice.applyToAllKey !== undefined &&
-          choice.applyToAllKey.toLowerCase() === lowered
-      );
-      if (allMatch) return { value: allMatch.value, applyToAll: true };
-      stream.output.write(`${c.yellow}!${c.reset} unrecognized choice "${answer}"\n`);
     }
-  } finally {
-    rl.close();
-    stream.close();
-  }
+
+    const initialValue = choices.find((choice) => !choice.disabled)?.key ?? choices[0].key;
+    const selected = await selectKey<string>({
+      message: prompt,
+      options,
+      initialValue,
+      caseSensitive: true,
+      input: stream.input,
+      output: stream.output,
+      withGuide: true
+    });
+    handleCancel(selected, stream);
+    const result = byKey.get(selected);
+    if (!result) throw new Error(`unrecognized choice: ${selected}`);
+    return result;
+  });
+}
+
+export async function askSelect<T>(
+  prompt: string,
+  choices: Array<{ label: string; value: T; hint?: string; disabled?: boolean }>,
+  options: { initialValue?: T; maxItems?: number } = {}
+): Promise<T> {
+  if (choices.length === 0) throw new Error("askSelect requires at least one choice");
+  return withPromptStreams(async (stream) => {
+    const selectOptions = choices as never;
+    const selected = await select<T>({
+      message: prompt,
+      options: selectOptions,
+      initialValue: options.initialValue,
+      maxItems: options.maxItems,
+      input: stream.input,
+      output: stream.output,
+      withGuide: true
+    });
+    handleCancel(selected, stream);
+    return selected;
+  });
 }
 
 export async function confirm(question: string, defaultYes = false): Promise<boolean> {
-  const suffix = defaultYes ? "[Y/n]" : "[y/N]";
-  const answer = (await ask(`${question} ${suffix} `)).toLowerCase();
-  if (answer === "") return defaultYes;
-  return answer === "y" || answer === "yes";
-}
-
-export function isTtyAvailable(): boolean {
-  return ttyAvailable();
+  return withPromptStreams(async (stream) => {
+    const answer = await clackConfirm({
+      message: question,
+      initialValue: defaultYes,
+      active: "Yes",
+      inactive: "No",
+      input: stream.input,
+      output: stream.output,
+      withGuide: false
+    });
+    handleCancel(answer, stream);
+    return answer;
+  });
 }

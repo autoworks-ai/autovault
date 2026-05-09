@@ -75,6 +75,41 @@ describe("autovault skill CLI", () => {
     expect(result.stderr).toMatch(/autovault doctor \[skill-name\]/);
   });
 
+  it("prints a trust dashboard for doctor in human mode", async () => {
+    const skillMd = `---
+name: doctor-human
+description: A description that is intentionally long enough to satisfy schema length checks.
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`;
+    await writeSkill("doctor-human", skillMd);
+
+    const result = await runCli(["doctor"]);
+
+    expect(result.exitCode).toBe(0);
+    const normalized = result.stdout.replaceAll(currentStorageRoot(), "<ROOT>");
+    expect(normalized).toMatchInlineSnapshot(`
+"
+[doctor] AutoVault trust dashboard
+Vault health --------------------------------------------
+  - storage   <ROOT>
+  ! summary   0 ok, 1 warning(s), 0 error(s)
+  - cleaned   0 artifact(s)
+  - allowlist .DS_Store, Thumbs.db, desktop.ini, and AppleDouble ._* files
+
+Skill integrity --------------------------------------------
+! doctor-human warning
+  integrity ok
+  source absent
+  - next: Reinstall or update the skill with source metadata if update checks should work.
+
+"
+`);
+  });
+
   it("returns 0 with a 'no <action> declared' message when bin is absent", async () => {
     const skillMd = `---
 name: no-bin

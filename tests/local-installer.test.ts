@@ -443,18 +443,20 @@ autovault_install_skill_bundle "/tmp/source" "vendor/repo" install_native`,
       .replaceAll(sourceDir, "<SOURCE>")
       .replaceAll(currentStorageRoot(), "<ROOT>");
     expect(normalized).toMatchInlineSnapshot(`
-"=============================
-AutoVault local installer
-=============================
+"
+[vault] AutoVault local installer
+Admission receipt --------------------------------------------
+  - scan     <SOURCE>
+  + validate passed
+  + sign    terminal-local
+  + storage <ROOT>/skills/terminal-local
+  - source  vendor/repo
 
-scan      <SOURCE>
-validate  passed
-sign      terminal-local
-storage   <ROOT>/skills/terminal-local
-source    vendor/repo
-
-restart Claude Code, Codex, or Cursor if they cache filesystem skills
-verify from the host by loading the autovault-skill skill
+--------------------------------------------------------------------
++ Skill vaulted
+  next restart Claude Code, Codex, or Cursor if they cache filesystem skills
+  next verify from the host by loading the autovault-skill skill
+--------------------------------------------------------------------
 "
 `);
   });
