@@ -109,7 +109,8 @@ async function runInstaller(extraEnv: Record<string, string> = {}): Promise<RunR
         PATH: process.env.PATH ?? "",
         ...extraEnv
       },
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: true
     });
     let stdout = "";
     let stderr = "";
