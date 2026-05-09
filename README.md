@@ -456,12 +456,11 @@ run `node dist/index.js` directly or override the container command.
 
 ## Release Status
 
-Current release: `v0.2.1`
-
-See:
+See the latest release and release process:
 
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`docs/RELEASE.md`](docs/RELEASE.md)
+- [GitHub Releases](https://github.com/autoworks-ai/autovault/releases)
 
 ## Roadmap
 
