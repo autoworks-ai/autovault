@@ -7,6 +7,10 @@ export type CompactSyncResult = {
   warningCount: number;
 };
 
+export type FormattedSyncResult<T extends Record<string, unknown>> = Omit<T, "sync"> & {
+  sync?: T["sync"] | CompactSyncResult;
+};
+
 export function compactSyncResult(sync: SyncProfilesResult): CompactSyncResult {
   return {
     profiles: Object.fromEntries(
@@ -26,7 +30,7 @@ export function compactSyncResult(sync: SyncProfilesResult): CompactSyncResult {
 export function formatResultSync<T extends Record<string, unknown>>(
   result: T,
   verbose?: boolean
-): T {
+): FormattedSyncResult<T> {
   if (verbose) return result;
   const sync = result.sync;
   if (!isSyncProfilesResult(sync)) return result;
