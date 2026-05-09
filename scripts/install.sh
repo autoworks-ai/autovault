@@ -175,11 +175,7 @@ detect_arch() {
 }
 
 node_meets_minimum() {
-  [ "$NODE_MAJOR" -gt 20 ] && return 0
-  [ "$NODE_MAJOR" -lt 20 ] && return 1
-  [ "$NODE_MINOR" -gt 19 ] && return 0
-  [ "$NODE_MINOR" -lt 19 ] && return 1
-  [ "$NODE_PATCH" -ge 0 ]
+  [ "$NODE_MAJOR" -ge 24 ]
 }
 
 path_contains_bin() {
@@ -332,7 +328,7 @@ NODE_PATCH="$(node -p "process.versions.node.split('.')[2]" 2>/dev/null || print
 
 completed "$PLATFORM $ARCH / Node $NODE_VERSION"
 
-node_meets_minimum || fail "Node.js >= 20.19.0 is required; found $(node --version 2>/dev/null || printf 'unknown')"
+node_meets_minimum || fail "Node.js >= 24.0.0 is required; found $(node --version 2>/dev/null || printf 'unknown')"
 
 if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
   plain "${BOLD}Install plan${RESET}"

@@ -9,7 +9,8 @@ entry points.
 Before cutting a release:
 
 1. Ensure the branch is mergeable and review comments are addressed.
-2. Ensure version and changelog entries are updated.
+2. For normal releases, ensure the Release Please PR contains the generated
+   version and changelog updates.
 3. Run the local verification stack:
 
 ```bash
@@ -108,8 +109,9 @@ tar -xzf autovault-backup-<date>.tgz -C "$HOME"
 
 ## Release Checklist
 
-- [ ] Version bumped in `package.json` and `package-lock.json`
-- [ ] `CHANGELOG.md` updated
+- [ ] Release Please PR includes expected version updates for `package.json`,
+      `package-lock.json`, `.release-please-manifest.json`, and `server.json`
+- [ ] Release Please PR includes the expected `CHANGELOG.md` entry
 - [ ] Build passes
 - [ ] Tests pass
 - [ ] Smoke test passes

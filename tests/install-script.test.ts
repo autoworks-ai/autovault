@@ -158,18 +158,18 @@ describe("install.sh", () => {
     expect(result.stdout).toContain("stderr noise");
   });
 
-  it("rejects Node 20 builds below the package engine floor", async () => {
+  it("rejects Node builds below the package engine floor", async () => {
     const fakeBin = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-node-test-"));
     await fs.writeFile(
       path.join(fakeBin, "node"),
       [
         "#!/bin/sh",
         "case \"$1\" in",
-        "  --version) printf 'v20.18.0\\n'; exit 0 ;;",
+        "  --version) printf 'v23.11.0\\n'; exit 0 ;;",
         "  -p)",
         "    case \"$2\" in",
-        "      *\"[0]\"*) printf '20\\n' ;;",
-        "      *\"[1]\"*) printf '18\\n' ;;",
+        "      *\"[0]\"*) printf '23\\n' ;;",
+        "      *\"[1]\"*) printf '11\\n' ;;",
         "      *\"[2]\"*) printf '0\\n' ;;",
         "      *) printf '0\\n' ;;",
         "    esac",
@@ -187,8 +187,8 @@ describe("install.sh", () => {
     });
 
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("Node.js >= 20.19.0 is required");
-    expect(result.stderr).toContain("v20.18.0");
+    expect(result.stderr).toContain("Node.js >= 24.0.0 is required");
+    expect(result.stderr).toContain("v23.11.0");
   });
 
   it("reports when the shim directory is already on PATH", async () => {
