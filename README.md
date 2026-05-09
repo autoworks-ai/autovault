@@ -216,6 +216,7 @@ reviewed.
 curl -fsSL https://autovault.sh | sh
 export PATH="$HOME/.autovault/bin:$PATH"
 autovault skill list
+autovault doctor
 ```
 
 ## Install Once, Render Everywhere
@@ -235,6 +236,11 @@ and `~/.cursor/skills`, while preserving user-managed native files on conflict.
 The MCP `add_skill` local-bundle path syncs configured profile links by default;
 pass `sync_profiles: false` only when a caller intentionally wants storage-only
 install.
+
+Use `autovault doctor` to inspect vault health. `autovault doctor --clean`
+removes only ignored OS/editor metadata artifacts such as `.DS_Store`,
+`Thumbs.db`, `desktop.ini`, and AppleDouble `._*` files; unknown extra files
+and changed signed content remain integrity failures.
 
 Vendors can use the drop-in helper in
 [`scripts/vendor-autovault-install.sh`](scripts/vendor-autovault-install.sh).
@@ -381,9 +387,10 @@ AutoVault has two distinct surfaces with different execution properties.
 
 **The MCP servers** (`dist/index.js` over stdio and `dist/remote.js` over Streamable HTTP) are storage-and-validation services. They never execute skill content. Agents call their tools to install, propose, search, and read skills; the bytes sit on disk afterward. Remote sources are treated as untrusted input, validated through the schema/security/capability pipeline, and rejected (or, in non-strict mode, warned about) before any write. Path inputs are checked to prevent traversal, and all diagnostics go to stderr so stdout stays reserved for MCP framing on the stdio path. Remote mode additionally requires OAuth bearer tokens and filters skill visibility for non-owner users.
 
-**The `autovault skill <action>` CLI** (e.g. `autovault skill setup <name>`) is a separate, user-invoked surface that *does* execute the bin resources a skill declares in its `bin:` frontmatter block. It is the explicit "user runs this in their own terminal" path for skills that need out-of-band setup (registering MCP servers, writing host config, prompting for secrets). The CLI runs the script as the invoking user, with the user's full filesystem and network access. Three guarantees apply before exec:
+**The `autovault skill <action>` CLI** (e.g. `autovault skill setup <name>`) is a separate, user-invoked surface that *does* execute the bin resources a skill declares in its `bin:` frontmatter block. It is the explicit "user runs this in their own terminal" path for skills that need out-of-band setup (registering MCP servers, writing host config, prompting for secrets). The CLI runs the script as the invoking user, with the user's full filesystem and network access. These checks apply before exec:
 
 - **Manifest signature verification, hard-fail.** Every byte of SKILL.md and every declared bin resource is signed at install time. If either has been mutated post-install, the CLI refuses to run and exits non-zero. This is hard enforcement, not log-only — but the trust root is the keypair at `$AUTOVAULT_STORAGE_PATH/.signing-key.json`, which lives inside the directory the manifest is protecting. The verification therefore detects tampering by callers *outside* the storage-root trust domain (the MCP API, which exposes no key-write tool; accidental corruption; weaker-privilege processes that can read but not write the storage tree). It does **not** defend against a same-uid attacker who already has storage-root writes — they can rewrite the keypair and re-sign tampered bytes. Treat storage-root write access as full vault compromise; see `docs/THREAT-MODEL.md` for the deliberate v1 trade and the v2 keychain lift.
+- **Benign metadata ignore.** The open-set integrity walk ignores regular OS/editor metadata artifacts (`.DS_Store`, `Thumbs.db`, `desktop.ini`, and AppleDouble `._*`) because Finder/editor browsing should not look like skill tampering. Symlinks, special files, unknown hidden files, unsigned helpers, and changed signed files are still integrity failures. Run `autovault doctor --clean` to remove ignored artifacts.
 - **Storage-root only.** The CLI execs from `$AUTOVAULT_STORAGE_PATH/skills/<name>/`, never from a synced host mirror (`~/.claude/skills/`, `~/.cursor/skills/`). Mirrors are read-only copies maintained by `sync-profiles`; only the storage root carries the manifest the CLI was authored against.
 - **Interactive-TTY gate (defense-in-depth).** `bin.<action>.requires-tty` is accepted as declarative metadata, but the CLI currently requires an interactive TTY for every bin action regardless of that value. The gate is unconditional — no environment variable disables it. **Treat the TTY check as advisory, not as proof a human is present**: an agent that can allocate a pseudo-terminal (Node `pty`, Python `pexpect`) will satisfy `process.stdin.isTTY` without any user review. The gate raises the bar against the simplest exfiltration path (`echo $SECRET | autovault skill setup foo`) but does not, on its own, walls off agents from invoking signed bin scripts. The hard boundary is install-time validation + manifest signing, not TTY presence at exec time. See `docs/THREAT-MODEL.md` for the full discussion.
 

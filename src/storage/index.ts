@@ -13,6 +13,7 @@ import {
 } from "../util/sign.js";
 import { log } from "../util/log.js";
 import { canonicalRelPath } from "../util/path.js";
+import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES } from "../util/limits.js";
 import { tryWithStorageLock, withStorageLock } from "./lock.js";
 
@@ -437,11 +438,12 @@ export type IntegrityMismatchReason =
   | "unmanifested_file";
 
 export type SkillIntegrityStatus =
-  | { kind: "ok" }
+  | { kind: "ok"; ignored_artifacts?: string[] }
   | { kind: "no_manifest" }
   | { kind: "manifest_corrupt" }
   | {
       kind: "tampered";
+      ignored_artifacts?: string[];
       mismatches: Array<{
         file: string;
         reason: IntegrityMismatchReason;
@@ -494,6 +496,7 @@ async function verifyIntegrityLocked(
     const resolvedRoot = path.resolve(root);
     const realRoot = realpathIfExists(root) ?? resolvedRoot;
     const mismatches: Array<{ file: string; reason: IntegrityMismatchReason }> = [];
+    const ignoredArtifacts: string[] = [];
     const verified = new Set<string>();
 
     async function readManifestEntry(
@@ -639,6 +642,10 @@ async function verifyIntegrityLocked(
         continue;
       }
       if (live.type === "directory") {
+        if (isIgnoredArtifactPath(live.path)) {
+          ignoredArtifacts.push(live.path);
+          continue;
+        }
         if (allowedDirs.has(live.path)) continue;
         mismatches.push({ file: live.path, reason: "unmanifested_file" });
         continue;
@@ -646,11 +653,22 @@ async function verifyIntegrityLocked(
       // file
       if (live.path.indexOf("/") === -1 && metadataNames.has(live.path)) continue;
       if (Object.hasOwn(manifest.files, live.path)) continue;
+      if (isIgnoredArtifactPath(live.path)) {
+        ignoredArtifacts.push(live.path);
+        continue;
+      }
       mismatches.push({ file: live.path, reason: "unmanifested_file" });
     }
 
-    if (mismatches.length === 0) return { kind: "ok" };
-    return { kind: "tampered", mismatches };
+    ignoredArtifacts.sort();
+    if (mismatches.length === 0) {
+      return ignoredArtifacts.length > 0
+        ? { kind: "ok", ignored_artifacts: ignoredArtifacts }
+        : { kind: "ok" };
+    }
+    return ignoredArtifacts.length > 0
+      ? { kind: "tampered", mismatches, ignored_artifacts: ignoredArtifacts }
+      : { kind: "tampered", mismatches };
   }
 }
 
@@ -769,6 +787,47 @@ async function walkLiveFiles(
   }
   await walk(root, "");
   return out;
+}
+
+export async function listIgnoredSkillArtifacts(name: string): Promise<string[]> {
+  return withStorageLock(async () => {
+    const root = skillDir(name);
+    const entries = await walkLiveFiles(root);
+    return entries
+      .filter(
+        (entry) =>
+          (entry.type === "file" || entry.type === "directory") &&
+          isIgnoredArtifactPath(entry.path)
+      )
+      .map((entry) => entry.path)
+      .sort();
+  });
+}
+
+export async function cleanIgnoredSkillArtifacts(name: string): Promise<string[]> {
+  return withStorageLock(async () => {
+    const root = skillDir(name);
+    const entries = await walkLiveFiles(root);
+    const artifacts = entries
+      .filter(
+        (entry) =>
+          (entry.type === "file" || entry.type === "directory") &&
+          isIgnoredArtifactPath(entry.path)
+      )
+      .map((entry) => entry.path)
+      .sort((a, b) => b.length - a.length);
+    const cleaned: string[] = [];
+    for (const artifact of artifacts) {
+      const target = path.join(root, artifact);
+      const resolved = path.resolve(target);
+      if (resolved !== path.resolve(root) && !resolved.startsWith(path.resolve(root) + path.sep)) {
+        continue;
+      }
+      await fs.rm(target, { recursive: true, force: true });
+      cleaned.push(artifact);
+    }
+    return cleaned.sort();
+  });
 }
 
 export type SkillManifestStatus =

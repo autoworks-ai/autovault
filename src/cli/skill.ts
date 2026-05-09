@@ -52,7 +52,7 @@ async function assertCleanIntegrity(name: string, surface: "exec" | "print"): Pr
     .map((m) => `${m.file} (${m.reason})`)
     .join(", ");
   fail(
-    `Refusing to ${surface}: skill '${name}' integrity check failed: ${detail}. Reinstall the skill.`
+    `Refusing to ${surface}: skill '${name}' integrity check failed: ${detail}. These are not ignored OS/editor metadata artifacts; reinstall the skill or inspect with 'autovault doctor ${name}'.`
   );
 }
 
@@ -351,7 +351,7 @@ async function runAction(action: string, name: string, extraArgs: string[]): Pro
   // command substitution.)
   if (!process.stdin.isTTY) {
     fail(
-      `Action '${action}' for skill '${name}' requires an interactive terminal. Bin actions must be run from a real TTY; non-interactive use is intentionally not supported through this CLI.`
+      `Action '${action}' for skill '${name}' requires an interactive terminal. Run this command yourself in a real terminal, not through an agent, pipe, or CI job; non-interactive use is intentionally not supported through this CLI.`
     );
   }
 
