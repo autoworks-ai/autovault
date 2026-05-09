@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in AutoVault, please **do not** open a public issue.
 
-Instead, report it privately via [GitHub Security Advisories](../../security/advisories/new). We aim to respond within 3 business days.
+Instead, report it privately via [GitHub Security Advisories](https://github.com/autoworks-ai/autovault/security/advisories/new). We aim to respond within 3 business days.
 
 ## Supported Versions
 
