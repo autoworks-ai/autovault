@@ -63,9 +63,10 @@ function shouldColor(stream: NodeJS.WriteStream, mode: ColorMode): boolean {
   return stream.isTTY === true;
 }
 
-function shouldUseUnicode(mode: SymbolMode): boolean {
+function shouldUseUnicode(stream: NodeJS.WriteStream, mode: SymbolMode): boolean {
   if (mode === "unicode") return true;
   if (mode === "ascii") return false;
+  if (stream.isTTY !== true) return false;
   if (process.env.AUTOVAULT_ASCII === "1") return false;
   if (process.env.TERM === "dumb") return false;
   return process.platform !== "win32" || Boolean(process.env.WT_SESSION);
@@ -80,7 +81,7 @@ export function makeTheme(
   options: ThemeOptions = {}
 ): Theme {
   const color = shouldColor(stream, options.color ?? "auto");
-  const unicode = shouldUseUnicode(options.symbols ?? "auto");
+  const unicode = shouldUseUnicode(stream, options.symbols ?? "auto");
   return {
     color,
     unicode,
@@ -129,4 +130,3 @@ export function padEndVisible(value: string, target: number): string {
 export function repeatVisible(char: string, count: number): string {
   return Array.from({ length: Math.max(0, count) }, () => char).join("");
 }
-
