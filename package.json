@@ -1,9 +1,10 @@
 {
-  "name": "@autoworks/autovault",
+  "name": "@autoworks-ai/autovault",
   "version": "0.2.1",
   "description": "AutoVault local capability library and MCP compatibility server",
   "type": "module",
   "main": "dist/library.js",
+  "mcpName": "io.github.autoworks-ai/autovault",
   "bin": {
     "autovault": "dist/cli.js"
   },
@@ -18,6 +19,7 @@
     "skills/autovault-skill",
     "skills/skill-author",
     "scripts/security/patterns.json",
+    "server.json",
     "INSTALL.md",
     "CHANGELOG.md"
   ],
@@ -36,7 +38,7 @@
     "prepublishOnly": "npm test"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=24.0.0"
   },
   "dependencies": {
     "@clack/prompts": "^1.3.0",

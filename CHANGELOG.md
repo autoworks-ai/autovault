@@ -8,6 +8,8 @@ while it remains in pre-1.0 development.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-09
+
 ### Added
 - Three bundled skills shipping with AutoVault, all generic and
   dependency-free:
@@ -39,6 +41,21 @@ while it remains in pre-1.0 development.
 - Expanded security denylist (now 12 patterns): AWS credential reads, wget
   pipe-to-shell, hex-decoded shell execution, `eval $VAR`, setuid/setgid
   chmod, and `--insecure`/`--no-check-certificate` flags.
+- Capability resolver layer backed by SQLite (tools, MCP servers, profiles,
+  callers, aliases, context rules), exposed via `resolveCapabilities()`.
+- Remote Streamable HTTP MCP service (`dist/remote.js`) with OAuth dynamic
+  client registration, PKCE, and role-aware tool access.
+- Vault-local skill transforms: per-agent overlays applied on top of upstream
+  skill content without forking the source.
+- `autovault add-local` for installing a local skill bundle through the same
+  validation/signing pipeline used for remote sources.
+- `autovault audit-repo` to classify repo-local scripts, tools, workflows, and
+  shims for migration into AutoVault skills.
+- `autovault setup` interactive wizard and polished installer/doctor flow.
+- Container image publishing to GHCR on GitHub Release (`docker-publish.yml`)
+  with provenance + SBOM, multi-arch (linux/amd64, linux/arm64).
+- npm publishing readiness: `@autoworks-ai/autovault` scope, `files`
+  allowlist, `publishConfig.access: public`, `prepublishOnly` test gate.
 
 ### Changed
 - `propose_skill` response shape: successful proposals now include a
@@ -48,6 +65,8 @@ while it remains in pre-1.0 development.
   similarity matches.
 - README updated to reflect the signing sidecar, storage layout, validation
   capabilities, and the new bootstrap workflow.
+- Simplified the MCP tool surface to the core skill lifecycle operations.
+- Aligned the Node engine floor across runtime, package.json, and CI.
 
 ### Removed
 - Dead empty `skills.lock` file. AutoVault tracks provenance via per-skill

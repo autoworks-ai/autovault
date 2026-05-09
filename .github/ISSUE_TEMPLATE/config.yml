@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security issue
+    url: https://github.com/autoworks-ai/autovault/security/advisories/new
+    about: Please report vulnerabilities privately.
+  - name: AutoVault website
+    url: https://github.com/autoworks-ai/autovault-website
+    about: Website-only issues belong in the docs site repository.

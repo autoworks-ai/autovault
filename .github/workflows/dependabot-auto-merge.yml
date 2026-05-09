@@ -1,4 +1,4 @@
-name: Dependabot auto-merge
+name: Dependabot Auto-Merge
 
 on:
   pull_request_target:
@@ -6,10 +6,76 @@ on:
 
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 jobs:
-  auto-merge:
-    if: github.event.pull_request.user.login == 'dependabot[bot]'
-    uses: verygoodplugins/.github/.github/workflows/dependabot-auto-merge.yml@main
-    secrets: inherit
+  dependabot:
+    if: >-
+      ${{
+        github.event.pull_request.user.login == 'dependabot[bot]' &&
+        !github.event.pull_request.draft
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Label Dependabot PR
+        uses: actions/github-script@v9
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const labels = [
+              { name: 'dependencies', color: '0366d6', description: 'Dependency update' },
+              process.env.UPDATE_TYPE === 'version-update:semver-major'
+                ? { name: 'needs-human-review', color: 'd73a4a', description: 'Requires human review before merge' }
+                : { name: 'automerge', color: '0e8a16', description: 'Eligible for automatic merge after required checks pass' }
+            ];
+
+            for (const label of labels) {
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: label.name });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({ owner, repo, ...label });
+                } catch (createError) {
+                  if (createError.status !== 422) throw createError;
+                }
+              }
+            }
+
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number,
+              labels: labels.map((label) => label.name)
+            });
+
+      - name: Enable auto-merge for non-major updates
+        if: ${{ steps.metadata.outputs.update-type != 'version-update:semver-major' }}
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
+      - name: Leave major updates for review
+        if: ${{ steps.metadata.outputs.update-type == 'version-update:semver-major' }}
+        run: |
+          {
+            echo "### Major dependency update"
+            echo
+            echo "This Dependabot PR updates: $DEPENDENCIES"
+            echo
+            echo "Auto-merge was intentionally skipped because this is a semver-major update."
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DEPENDENCIES: ${{ steps.metadata.outputs.dependency-names }}

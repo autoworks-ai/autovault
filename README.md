@@ -26,8 +26,8 @@ AutoVault is a Node/TypeScript library and compatibility MCP server that:
 - detects when an installed skill has drifted from its upstream source
 
 The local compatibility server still runs over stdio. An MCP host can spawn
-`node dist/index.js` and communicate over stdin/stdout, while local callers can
-import `@autoworks-ai/autovault` directly. Remote deployments use
+`node dist/index.js` and communicate over stdin/stdout, while source checkouts
+can import the built library entry point directly. Remote deployments use
 `node dist/remote.js` and expose Streamable HTTP MCP at `/mcp`.
 
 See [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md) for the runtime decision.
@@ -456,12 +456,11 @@ run `node dist/index.js` directly or override the container command.
 
 ## Release Status
 
-Current release: `v0.2.0`
-
-See:
+See the latest release and release process:
 
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`docs/RELEASE.md`](docs/RELEASE.md)
+- [GitHub Releases](https://github.com/autoworks-ai/autovault/releases)
 
 ## Roadmap
 
