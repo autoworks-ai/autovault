@@ -41,10 +41,12 @@ Release Please owns version bumps on `main`. For normal releases, do not bump
 `.release-please-manifest.json` by hand; merge conventional commits and let the
 Release Please PR make those edits from the current manifest baseline.
 
-For emergency manual releases only, update both:
+For emergency manual releases only, update all versioned release metadata:
 
 - `package.json`
 - `package-lock.json`
+- `server.json`
+- `.release-please-manifest.json`
 - `CHANGELOG.md`
 
 Recommended command:

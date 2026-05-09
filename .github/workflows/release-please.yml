@@ -13,7 +13,7 @@
 #   feat: add new feature          → minor version bump
 #   fix: fix a bug                 → patch version bump
 #   feat!: breaking change         → major version bump
-#   chore/docs: no version bump
+#   chore(docs): no version bump
 #
 # npm Publishing (future package install path):
 #   Uses Trusted Publishing (OIDC) - no NPM_TOKEN needed.
