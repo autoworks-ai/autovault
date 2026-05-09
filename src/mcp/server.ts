@@ -143,7 +143,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       version: z.string().optional(),
       skill_dir: z.string().optional(),
       sync_profiles: z.boolean().optional(),
-      profile_roots: z.record(z.string()).optional(),
+      profile_roots: z.record(z.string(), z.string()).optional(),
       discover_profile_roots: z.boolean().optional()
     },
     async (input, extra) => runTool("add_skill", input, extra, () => addSkill(input), policy)
@@ -173,7 +173,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       resources: z.array(z.object({ path: z.string(), content: z.string() })).optional(),
       reuse_existing_resources: z.boolean().optional(),
       sync_profiles: z.boolean().optional(),
-      profile_roots: z.record(z.string()).optional(),
+      profile_roots: z.record(z.string(), z.string()).optional(),
       discover_profile_roots: z.boolean().optional(),
       verbose: z.boolean().optional()
     },
