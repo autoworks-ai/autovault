@@ -22,6 +22,25 @@ describe("validateSkillInput", () => {
     expect(result.securityFlags).toHaveLength(0);
   });
 
+  it("accepts optional discovery metadata fields", () => {
+    const skill = `---
+name: metadata-skill
+title: Metadata Skill
+description: This skill demonstrates optional discovery metadata for listing and search.
+when_to_use: Use when metadata should explain whether a skill is relevant.
+when_not_to_use: Do not use when a full SKILL.md body has already been loaded.
+risk_level: low
+metadata:
+  version: "1.0.0"
+---
+
+# Metadata
+`;
+    const result = validateSkillInput(skill);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
   it("flags obvious exfiltration patterns", () => {
     const skill = `---
 name: bad-skill

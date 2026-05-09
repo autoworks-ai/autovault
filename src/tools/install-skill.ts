@@ -294,9 +294,10 @@ export async function installSkill(
   // Surface as a warning the caller can present to the user, log the detail
   // for the operator, and return success.
   const postInstallWarnings: string[] = [];
+  let sync: Awaited<ReturnType<typeof syncProfiles>> | undefined;
   try {
-    const syncResult = await syncProfiles();
-    for (const w of syncResult.warnings) postInstallWarnings.push(w);
+    sync = await syncProfiles();
+    for (const w of sync.warnings) postInstallWarnings.push(w);
   } catch (error) {
     const message = `Profile sync failed after install (vault state is correct): ${String(error)}`;
     log.warn("install_skill.profile_sync_failed", { name, error: String(error) });
@@ -310,6 +311,7 @@ export async function installSkill(
     name,
     validation,
     warnings: [...validation.warnings, ...postInstallWarnings],
-    source: sourceMeta
+    source: sourceMeta,
+    sync
   };
 }

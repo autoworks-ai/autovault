@@ -233,9 +233,19 @@ runs the normal validation/signing pipeline, records `source: "local"`, and
 then optionally syncs rendered profile links. With `--sync-profiles`, AutoVault
 discovers existing native roots such as `~/.claude/skills`, `~/.codex/skills`,
 and `~/.cursor/skills`, while preserving user-managed native files on conflict.
+Sync output includes per-skill profile status, linked root, restart guidance,
+and `loaded_in_current_session: "unknown"` because host session visibility is
+not observable from AutoVault alone.
 The MCP `add_skill` local-bundle path syncs configured profile links by default;
 pass `sync_profiles: false` only when a caller intentionally wants storage-only
 install.
+
+Use `autovault skill search <query> [--top-k N]` to debug installed skill
+discovery locally. This is metadata text search over skill names, titles,
+descriptions, tags, categories, and `when_to_use`; embedding-backed semantic
+search is a future backend, not the current behavior. The `skill` CLI reserves
+`list`, `search`, and `which` as subcommands, so those names are not available
+as executable `bin` action shorthands.
 
 Use `autovault doctor` to inspect vault health. `autovault doctor --clean`
 removes only ignored OS/editor metadata artifacts such as `.DS_Store`,
@@ -361,7 +371,7 @@ All config is environment-based and validated at startup.
 | `AUTOVAULT_PROFILE_LINKS` | _unset_ | Comma-separated `agent=/skills/root` links to refresh during profile sync, e.g. `codex=~/.codex/skills,claude-code=~/.claude/skills`. |
 | `AUTOVAULT_SKILL_INSTALL` | `prefer-autovault` | Vendor installer routing contract for local skill bundles: `prefer-autovault`, `both`, `native`, `native-only`, or `off`. |
 | `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
-| `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently `text` only). |
+| `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently metadata text search only). |
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
 | `AUTOVAULT_PUBLIC_URL` | _required in remote mode_ | Public origin for OAuth metadata and Railway/custom-domain callbacks. |
 | `AUTOVAULT_HTTP_PORT` | `3000` | Local HTTP port when `PORT` is not provided by the platform. |

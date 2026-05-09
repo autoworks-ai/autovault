@@ -77,8 +77,9 @@ visible.
 The compatibility server exposes these MCP tools:
 
 - `list_skills` - returns metadata for every installed skill.
-- `search_skills(query, top_k?)` - text search across name, description,
-  tags, and category. Returns ranked matches with scores.
+- `search_skills(query, top_k?)` - metadata text search across name, title,
+  description, tags, category, and `when_to_use`. Returns ranked matches with
+  scores and structured match reasons.
 - `get_skill(name, agent?)` - returns the full SKILL.md plus parsed metadata,
   capabilities, required secrets, and source provenance. Pass `agent` to see
   the generated variant with matching transforms applied.

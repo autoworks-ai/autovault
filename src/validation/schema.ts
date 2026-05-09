@@ -82,6 +82,7 @@ const schema = z.object({
     .string()
     .min(1)
     .regex(/^[a-z0-9][a-z0-9-_]*$/i, "must be alphanumeric with - or _"),
+  title: z.string().min(1).optional(),
   description: z.string().min(20),
   license: z.string().optional(),
   tags: z.array(z.string()).optional(),
@@ -94,6 +95,9 @@ const schema = z.object({
     )
     .optional(),
   category: z.string().optional(),
+  when_to_use: z.string().min(1).optional(),
+  when_not_to_use: z.string().min(1).optional(),
+  risk_level: z.string().min(1).optional(),
   metadata: z
     .object({
       version: z.string().default("1.0.0")

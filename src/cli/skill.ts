@@ -12,13 +12,14 @@ import {
   skillDir,
   verifyInstalledIntegrity
 } from "../storage/index.js";
+import { searchSkills } from "../tools/search-skills.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { verifyFile } from "../util/sign.js";
 import { canonicalRelPath } from "../util/path.js";
 import type { SkillBinAction } from "../types.js";
 
-const RESERVED_ACTIONS = new Set(["list", "which"]);
+const RESERVED_ACTIONS = new Set(["list", "search", "which"]);
 const ACTION_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 
 function fail(message: string): never {
@@ -61,8 +62,13 @@ function usage(): never {
   autovault skill <action> <name> [args...]
                                       # run bin.<action> declared by skill <name>
   autovault skill list                # list installed skills and their declared bin actions
+  autovault skill search <query> [--top-k N]
+                                      # metadata text search across installed skills
   autovault skill which <name> [<action>]
                                        # print resolved script path(s) without running
+
+Reserved subcommands: list, search, which. Skills cannot expose bin actions
+with those names through this CLI shorthand.
 `);
   process.exit(1);
 }
@@ -88,6 +94,11 @@ export async function runSkillCommand(argv: string[]): Promise<void> {
     return;
   }
 
+  if (sub === "search") {
+    await searchAction(rest);
+    return;
+  }
+
   if (sub === "which") {
     const [name, action] = rest;
     if (!name) usage();
@@ -102,6 +113,63 @@ export async function runSkillCommand(argv: string[]): Promise<void> {
   const [name] = rest;
   if (!name) usage();
   await runAction(sub, name, rest.slice(1));
+}
+
+async function searchAction(args: string[]): Promise<void> {
+  let topK = 5;
+  const queryParts: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--top-k") {
+      const raw = args[i + 1];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 50) {
+        fail("--top-k must be an integer between 1 and 50");
+      }
+      topK = parsed;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) usage();
+    queryParts.push(arg);
+  }
+
+  const query = queryParts.join(" ").trim();
+  if (query.length === 0) usage();
+
+  const result = await searchSkills(query, topK);
+  if (result.matches.length === 0) {
+    process.stdout.write("No matching skills.\n");
+    return;
+  }
+
+  for (const match of result.matches) {
+    process.stdout.write(
+      `${formatSearchField(match.name, 80)}\t${match.score.toFixed(3)}\t${formatSearchField(match.reason, 160)}\n`
+    );
+    process.stdout.write(`  ${formatSearchField(match.description, 240)}\n`);
+    if (match.tags.length > 0) {
+      process.stdout.write(`  tags: ${match.tags.map((tag) => formatSearchField(tag, 48)).join(", ")}\n`);
+    }
+    if (match.category) process.stdout.write(`  category: ${formatSearchField(match.category, 80)}\n`);
+  }
+}
+
+function formatSearchField(value: string, maxLength: number): string {
+  const escaped = value.replace(/[\x00-\x1F\x7F]/g, (char) => {
+    switch (char) {
+      case "\n":
+        return "\\n";
+      case "\r":
+        return "\\r";
+      case "\t":
+        return "\\t";
+      default:
+        return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
+    }
+  });
+  if (escaped.length <= maxLength) return escaped;
+  return `${escaped.slice(0, Math.max(0, maxLength - 3))}...`;
 }
 
 async function listAction(): Promise<void> {

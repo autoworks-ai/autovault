@@ -21,7 +21,18 @@ export type SyncProfilesInput = {
 export type SyncProfilesResult = {
   profiles: Record<string, string[]>;
   linkedRoots: Record<string, string>;
+  profileStatus: Record<string, SyncSkillStatus[]>;
   warnings: string[];
+};
+
+export type SyncSkillStatus = {
+  name: string;
+  status: "installed" | "updated" | "unchanged" | "failed";
+  linked_root: string;
+  visible_to_profile: boolean;
+  restart_required: boolean;
+  loaded_in_current_session: "unknown";
+  message?: string;
 };
 
 function expandHome(inputPath: string): string {
@@ -58,7 +69,7 @@ async function removeManagedLinks(root: string, managedPrefix: string, keep: Set
 }
 
 type ReplaceSymlinkResult =
-  | { replaced: true }
+  | { replaced: true; action: "created" | "updated" }
   | { replaced: false; reason: "noop" }
   | { replaced: false; reason: "user-managed"; current: string };
 
@@ -75,6 +86,7 @@ async function replaceSymlink(
   targetPath: string,
   managedPrefix?: string
 ): Promise<ReplaceSymlinkResult> {
+  let action: "created" | "updated" = "created";
   try {
     const current = await fs.readlink(linkPath);
     const resolvedCurrent = path.resolve(path.dirname(linkPath), current);
@@ -88,6 +100,7 @@ async function replaceSymlink(
       }
     }
     await fs.unlink(linkPath);
+    action = "updated";
   } catch (error) {
     if (await pathExists(linkPath)) {
       if (managedPrefix !== undefined) {
@@ -98,7 +111,7 @@ async function replaceSymlink(
   }
   const symlinkType = process.platform === "win32" ? "junction" : "dir";
   await fs.symlink(targetPath, linkPath, symlinkType);
-  return { replaced: true };
+  return { replaced: true, action };
 }
 
 async function existingDirectoryNames(root: string): Promise<string[]> {
@@ -226,6 +239,12 @@ async function syncProfilesApply(
   const warnings = [...snapshot.warnings];
 
   const resultProfiles: Record<string, string[]> = {};
+  const statusByAgent = new Map<string, Map<string, SyncSkillStatus>>();
+  const setStatus = (agent: string, status: SyncSkillStatus): void => {
+    const agentStatuses = statusByAgent.get(agent) ?? new Map<string, SyncSkillStatus>();
+    agentStatuses.set(status.name, status);
+    statusByAgent.set(agent, agentStatuses);
+  };
   const renderedKeep = new Set<string>();
   const agents = new Set([...await existingDirectoryNames(profileRoot), ...profiles.keys()]);
   for (const agent of agents) {
@@ -254,7 +273,8 @@ async function syncProfilesApply(
           `Skipping transforms for "${agent}/${name}" — ${String(error)}`
         );
       }
-      await replaceSymlink(path.join(agentRoot, name), targetPath);
+      const linkResult = await replaceSymlink(path.join(agentRoot, name), targetPath);
+      setStatus(agent, syncStatusFromLinkResult(name, agentRoot, linkResult));
     }
     if (names.length > 0) resultProfiles[agent] = names.sort();
   }
@@ -285,15 +305,53 @@ async function syncProfilesApply(
         managedAgentRoot
       );
       if (result.replaced === false && result.reason === "user-managed") {
-        warnings.push(
+        const message =
           `Skipping external profile link for "${agent}/${name}" — a user-managed path already exists at "${path.join(externalRoot, name)}" (${result.current}). Remove it manually if you want AutoVault to manage this name.`
-        );
+        warnings.push(message);
+        setStatus(agent, {
+          name,
+          status: "failed",
+          linked_root: externalRoot,
+          visible_to_profile: false,
+          restart_required: false,
+          loaded_in_current_session: "unknown",
+          message
+        });
+      } else {
+        setStatus(agent, syncStatusFromLinkResult(name, externalRoot, result));
       }
     }
     linkedRoots[agent] = externalRoot;
   }
 
+  const profileStatus = Object.fromEntries(
+    [...statusByAgent.entries()].map(([agent, statuses]) => [
+      agent,
+      [...statuses.values()].sort((a, b) => a.name.localeCompare(b.name))
+    ])
+  );
+
   for (const warning of warnings) log.warn("profiles.sync.warning", { warning });
   log.info("profiles.synced", { profiles: Object.keys(resultProfiles), linkedRoots });
-  return { profiles: resultProfiles, linkedRoots, warnings };
+  return { profiles: resultProfiles, linkedRoots, profileStatus, warnings };
+}
+
+function syncStatusFromLinkResult(
+  name: string,
+  linkedRoot: string,
+  result: ReplaceSymlinkResult
+): SyncSkillStatus {
+  const status = result.replaced
+    ? result.action === "created"
+      ? "installed"
+      : "updated"
+    : "unchanged";
+  return {
+    name,
+    status,
+    linked_root: linkedRoot,
+    visible_to_profile: true,
+    restart_required: status !== "unchanged",
+    loaded_in_current_session: "unknown"
+  };
 }

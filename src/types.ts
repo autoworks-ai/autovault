@@ -1,10 +1,32 @@
+export type SkillCapabilities = {
+  network: boolean;
+  filesystem: "readonly" | "readwrite";
+  tools: string[];
+};
+
+export type SkillSecretRequirement = {
+  name: string;
+  description?: string;
+  required?: boolean;
+};
+
 export type SkillSummary = {
   name: string;
+  title?: string;
   description: string;
   version: string;
   tags: string[];
   category?: string;
   agents: string[];
+  when_to_use?: string;
+  when_not_to_use?: string;
+  risk_level?: string;
+  capabilities: SkillCapabilities;
+  // Public JSON alias for metadata-only consumers.
+  requires_tools: string[];
+  // Public JSON alias; internal TypeScript callers should prefer requiresSecrets.
+  requires_secrets: SkillSecretRequirement[];
+  requiresSecrets: SkillSecretRequirement[];
 };
 
 export type SkillBinAction = {
@@ -17,12 +39,6 @@ export type SkillBinAction = {
 export type SkillRecord = SkillSummary & {
   skillMd: string;
   resources: Array<{ path: string; type: string }>;
-  capabilities: {
-    network: boolean;
-    filesystem: "readonly" | "readwrite";
-    tools: string[];
-  };
-  requiresSecrets: Array<{ name: string; description?: string; required?: boolean }>;
   bin: Record<string, SkillBinAction>;
 };
 

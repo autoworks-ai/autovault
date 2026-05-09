@@ -223,6 +223,10 @@ function asString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
 
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
@@ -298,13 +302,23 @@ function asCapabilities(value: unknown): SkillRecord["capabilities"] {
 
 function buildSummary(name: string, frontmatter: Record<string, unknown>): SkillSummary {
   const metadata = (frontmatter.metadata ?? {}) as Record<string, unknown>;
+  const capabilities = asCapabilities(frontmatter.capabilities);
+  const requiresSecrets = asSecretsArray(frontmatter["requires-secrets"]);
   return {
     name: asString(frontmatter.name, name),
+    title: optionalString(frontmatter.title),
     description: asString(frontmatter.description, ""),
     version: asString(metadata.version, "0.0.0"),
     tags: asStringArray(frontmatter.tags),
     category: typeof frontmatter.category === "string" ? frontmatter.category : undefined,
-    agents: asStringArray(frontmatter.agents)
+    agents: asStringArray(frontmatter.agents),
+    when_to_use: optionalString(frontmatter.when_to_use),
+    when_not_to_use: optionalString(frontmatter.when_not_to_use),
+    risk_level: optionalString(frontmatter.risk_level),
+    capabilities,
+    requires_tools: capabilities.tools,
+    requires_secrets: requiresSecrets,
+    requiresSecrets
   };
 }
 
@@ -852,11 +866,19 @@ export async function readSkillSummary(name: string): Promise<SkillSummary | nul
   if (!record) return null;
   return {
     name: record.name,
+    title: record.title,
     description: record.description,
     version: record.version,
     tags: record.tags,
     category: record.category,
-    agents: record.agents
+    agents: record.agents,
+    when_to_use: record.when_to_use,
+    when_not_to_use: record.when_not_to_use,
+    risk_level: record.risk_level,
+    capabilities: record.capabilities,
+    requires_tools: record.requires_tools,
+    requires_secrets: record.requires_secrets,
+    requiresSecrets: record.requiresSecrets
   };
 }
 

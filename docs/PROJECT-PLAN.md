@@ -103,7 +103,7 @@ Each tool's description targets MCP-compatible agents. All tools return JSON.
 ```
 Input: { name?: string, query?: string, top_k?: number, include_resources?: boolean }
 Output: {
-  matches?: [{ name, description, score, reason }],
+  matches?: [{ name, description, score, reason, reasons, search_type: "metadata_text" }],
   skill?: {
     name, description, version,
     skill_md: string,
