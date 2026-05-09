@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to publish (overrides release tag, e.g. v0.2.1)"
-        required: false
+        description: "Tag to publish (e.g. v0.2.1)"
+        required: true
         type: string
 
 permissions:
@@ -22,8 +22,6 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-
       - name: Resolve tag
         id: resolve
         run: |
@@ -38,6 +36,10 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.resolve.outputs.tag }}
 
       - uses: docker/setup-qemu-action@v3
 
