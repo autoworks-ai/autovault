@@ -1,6 +1,6 @@
 {
-  "name": "@autoworks-ai/autovault",
-  "version": "0.2.0",
+  "name": "@autoworks/autovault",
+  "version": "0.2.1",
   "description": "AutoVault local capability library and MCP compatibility server",
   "type": "module",
   "main": "dist/library.js",
