@@ -323,8 +323,6 @@ PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
 NODE_VERSION="$(node --version 2>/dev/null | sed 's/^v//' || printf 'unknown')"
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || printf '0')"
-NODE_MINOR="$(node -p "process.versions.node.split('.')[1]" 2>/dev/null || printf '0')"
-NODE_PATCH="$(node -p "process.versions.node.split('.')[2]" 2>/dev/null || printf '0')"
 
 completed "$PLATFORM $ARCH / Node $NODE_VERSION"
 
