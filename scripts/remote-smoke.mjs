@@ -149,9 +149,16 @@ async function bootLocalServer() {
   process.env.AUTOVAULT_ADMIN_PASSWORD = ADMIN_PASSWORD;
   process.env.AUTOVAULT_LOG_LEVEL = "info";
 
-  const { startRemoteServer } = await import("../dist/remote/server.js");
-  const server = await startRemoteServer({ port, host: "127.0.0.1" });
-  return { base, server, tempStorage };
+  let server;
+  try {
+    const { startRemoteServer } = await import("../dist/remote/server.js");
+    server = await startRemoteServer({ port, host: "127.0.0.1" });
+    return { base, server, tempStorage };
+  } catch (error) {
+    await server?.close();
+    await fs.rm(tempStorage, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function main() {
