@@ -18,6 +18,7 @@ if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then
   BLUE="$(tput setaf 4 2>/dev/null || printf '')"
   MAGENTA="$(tput setaf 5 2>/dev/null || printf '')"
   CYAN="$(tput setaf 6 2>/dev/null || printf '')"
+  MINT="$(printf '\033[38;2;90;214;192m')"
   RESET="$(tput sgr0 2>/dev/null || printf '')"
 else
   BOLD=""
@@ -28,18 +29,106 @@ else
   BLUE=""
   MAGENTA=""
   CYAN=""
+  MINT=""
   RESET=""
 fi
 
-info()      { printf '%s\n' "${BOLD}${GREY}>${RESET} $*"; }
-warn()      { printf '%s\n' "${YELLOW}! $*${RESET}"; }
+STAGE_COUNTER_WIDTH=9
+STAGE_LABEL_WIDTH=7
+DETAIL_INDENT=14
+STEP_CURRENT=0
+STEP_TOTAL=6
+NEEDS_ENV_COMMAND=0
+RUN_LOG_COUNT=0
+
+detail_line() {
+  printf '%*s%s\n' "$DETAIL_INDENT" "" "$*"
+}
+
+info()      { detail_line "${BOLD}${GREY}>${RESET} $*"; }
+warn()      { detail_line "${YELLOW}!${RESET} $*"; }
 error()     { printf '%s\n' "${RED}x $*${RESET}" >&2; }
-completed() { printf '%s\n' "${GREEN}✓${RESET} $*"; }
+completed() { detail_line "${GREEN}✓${RESET} $*"; }
 plain()     { printf '%s\n' "$*"; }
+
+step() {
+  STEP_CURRENT=$((STEP_CURRENT + 1))
+  counter="stage $STEP_CURRENT/$STEP_TOTAL"
+  printf '   %s%*s%s  %s%-*s%s  %s%s%s\n' \
+    "$GREY" "$STAGE_COUNTER_WIDTH" "$counter" "$RESET" \
+    "$MINT" "$STAGE_LABEL_WIDTH" "$1" "$RESET" \
+    "$BOLD" "$2" "$RESET"
+}
+
+warning_card() {
+  title="$1"
+  shift
+  bar="${GREY}│${RESET}"
+  printf '\n   %s[ shell ]%s  %s  %s%s%s\n' "$YELLOW" "$RESET" "$bar" "$YELLOW" "$title" "$RESET"
+  while [ "$#" -gt 0 ]; do
+    printf '%*s%s  %s\n' "$DETAIL_INDENT" "" "$bar" "$1"
+    shift
+  done
+  printf '\n'
+}
 
 fail() {
   error "$*"
   exit 1
+}
+
+run_quiet() {
+  label="$1"
+  shift
+  RUN_LOG_COUNT=$((RUN_LOG_COUNT + 1))
+  log_file="$TMP_DIR/step-$RUN_LOG_COUNT.log"
+
+  if [ -t 1 ]; then
+    "$@" >"$log_file" 2>&1 &
+    cmd_pid=$!
+    frame=0
+    while kill -0 "$cmd_pid" 2>/dev/null; do
+      case "$frame" in
+        0) glyph="⠋" ;;
+        1) glyph="⠙" ;;
+        2) glyph="⠹" ;;
+        3) glyph="⠸" ;;
+        4) glyph="⠼" ;;
+        5) glyph="⠴" ;;
+        6) glyph="⠦" ;;
+        7) glyph="⠧" ;;
+        8) glyph="⠇" ;;
+        *) glyph="⠏" ;;
+      esac
+      printf '\r%*s%s %s' "$DETAIL_INDENT" "" "${MINT}${glyph}${RESET}" "$label"
+      frame=$(( (frame + 1) % 10 ))
+      sleep 0.08
+    done
+    if wait "$cmd_pid"; then
+      status=0
+    else
+      status=$?
+    fi
+    printf '\r%80s\r' " "
+  else
+    if "$@" >"$log_file" 2>&1; then
+      status=0
+    else
+      status=$?
+    fi
+  fi
+
+  if [ "$status" -ne 0 ]; then
+    error "$label failed"
+    if [ -s "$log_file" ]; then
+      warn "Last log lines:"
+      tail -40 "$log_file" >&2 || true
+    fi
+    return "$status"
+  elif [ "${AUTOVAULT_VERBOSE:-0}" = "1" ] && [ -s "$log_file" ]; then
+    info "$label log tail"
+    tail -20 "$log_file" | sed 's/^/  /' || true
+  fi
 }
 
 need() {
@@ -156,21 +245,61 @@ ensure_profile_sources_env() {
 }
 
 print_banner() {
-  printf '\n'
-  printf '%s\n' "${BOLD}${MAGENTA}  AutoVault installer${RESET}"
-  printf '%s\n' "${GREY}  curated skill vault for Claude Code, Codex, and Cursor${RESET}"
+  if [ "${AUTOVAULT_ASCII:-0}" = "1" ]; then
+    printf '%s\n' "${MINT}   .----. ${RESET}  ${BOLD}AutoVault${RESET}"
+    printf '%s\n' "${MINT}   |  | | ${RESET}  ${GREY}validate -> sign -> vault${RESET}"
+    printf '%s\n' "${MINT}   | O  | ${RESET}  ${GREY}curated skill vault for Claude Code, Codex, and Cursor${RESET}"
+    printf '%s\n' "${MINT}   '+--+' ${RESET}"
+    printf '%s\n' "${MINT}    |  |  ${RESET}"
+  else
+    printf '%s\n' "${MINT}   ╓─────╖ ${RESET}  ${BOLD}AutoVault${RESET}"
+    printf '%s\n' "${MINT}   ║  ╷  ║ ${RESET}  ${GREY}validate → sign → vault${RESET}"
+    printf '%s\n' "${MINT}   ║ ⊙   ║ ${RESET}  ${GREY}curated skill vault for Claude Code, Codex, and Cursor${RESET}"
+    printf '%s\n' "${MINT}   ╙┬───┬╜ ${RESET}"
+    printf '%s\n' "${MINT}    ╵   ╵  ${RESET}"
+  fi
   printf '\n'
 }
 
 print_celebration() {
+  skill_count=0
+  if [ -d "$STORAGE_PATH/skills" ]; then
+    for skill_dir in "$STORAGE_PATH"/skills/*; do
+      [ -d "$skill_dir" ] || continue
+      skill_count=$((skill_count + 1))
+    done
+  fi
+
+  profile_roots=""
+  if [ -d "$HOME/.claude/skills" ]; then
+    profile_roots="${profile_roots}claude-code "
+  fi
+  if [ -d "$HOME/.codex/skills" ]; then
+    profile_roots="${profile_roots}codex "
+  fi
+  if [ -d "$HOME/.cursor/skills" ]; then
+    profile_roots="${profile_roots}cursor "
+  fi
+  if [ -z "$profile_roots" ]; then
+    profile_roots="none detected"
+  fi
+
   printf '\n'
-  printf '%s\n' "${MAGENTA}        _         __     __         _ _   ${RESET}"
-  printf '%s\n' "${MAGENTA}   __ _| |_ _   _ \\ \\   / /_ _ _   _| | |_ ${RESET}"
-  printf '%s\n' "${MAGENTA}  / _\` | __| | | | \\ \\ / / _\` | | | | | __|${RESET}"
-  printf '%s\n' "${MAGENTA} | (_| | |_| |_| |  \\ V / (_| | |_| | | |_ ${RESET}"
-  printf '%s\n' "${MAGENTA}  \\__,_|\\__|\\__,_|   \\_/ \\__,_|\\__,_|_|\\__|${RESET}"
-  printf '\n'
-  printf '%s\n' "         ${GREEN}AutoVault is ready.${RESET}"
+  printf '%s\n' "${MINT}────────────────────────────────────────${RESET}"
+  printf '%s\n' "${GREEN}✓${RESET} ${BOLD}AutoVault is ready.${RESET}"
+  if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
+    printf '%s\n' "  ${GREY}storage ${RESET} $STORAGE_PATH"
+    printf '%s\n' "  ${GREY}shim    ${RESET} $BIN_DIR/autovault"
+    printf '%s\n' "  ${GREY}skills  ${RESET} $skill_count vaulted"
+    printf '%s\n' "  ${GREY}profiles${RESET} $profile_roots"
+  else
+    printf '%s\n' "  ${GREY}skills${RESET} $skill_count vaulted"
+  fi
+  if [ "$NEEDS_ENV_COMMAND" = "1" ]; then
+    printf '%s\n' "  ${GREY}next   ${RESET} . \"$ENV_FILE\""
+  fi
+  printf '%s\n' "  ${GREY}next${RESET} autovault doctor"
+  printf '%s\n' "${MINT}────────────────────────────────────────${RESET}"
   printf '\n'
 }
 
@@ -180,6 +309,7 @@ print_celebration() {
 
 print_banner
 
+step "detect" "checking prerequisites and platform"
 need curl
 need tar
 need node
@@ -190,18 +320,18 @@ ARCH="$(detect_arch)"
 NODE_VERSION="$(node --version 2>/dev/null | sed 's/^v//' || printf 'unknown')"
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || printf '0')"
 
-info "Detecting platform…"
 completed "$PLATFORM $ARCH / Node $NODE_VERSION"
 
 [ "$NODE_MAJOR" -ge 20 ] || fail "Node.js >= 20 is required; found $(node --version 2>/dev/null || printf 'unknown')"
 
-plain ""
-plain "${BOLD}Install plan${RESET}"
-plain "  ${GREY}repo    ${RESET} $REPO@$REF"
-plain "  ${GREY}app     ${RESET} $APP_DIR"
-plain "  ${GREY}storage ${RESET} $STORAGE_PATH"
-plain "  ${GREY}shim    ${RESET} $BIN_DIR/autovault"
-plain ""
+if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
+  plain "${BOLD}Install plan${RESET}"
+  plain "  ${GREY}repo     ${RESET} $REPO@$REF"
+  plain "  ${GREY}app      ${RESET} $APP_DIR"
+  plain "  ${GREY}storage  ${RESET} $STORAGE_PATH"
+  plain "  ${GREY}shim     ${RESET} $BIN_DIR/autovault"
+  plain ""
+fi
 
 confirm "Install AutoVault to $HOME_DIR and seed bundled skills?"
 
@@ -227,7 +357,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 plain ""
-info "Downloading source…"
+step "fetch" "downloading AutoVault source"
 curl -fsSL "$TARBALL_URL" -o "$TMP_DIR/autovault.tgz"
 mkdir -p "$TMP_DIR/src"
 tar -xzf "$TMP_DIR/autovault.tgz" -C "$TMP_DIR/src" --strip-components=1
@@ -236,12 +366,11 @@ completed "Fetched $REF"
 
 cd "$TMP_DIR/src"
 
-info "Installing dependencies…"
-npm ci --silent >/dev/null 2>&1 || npm ci
+step "build" "installing dependencies and compiling"
+run_quiet "Installing dependencies..." npm ci --silent
 completed "npm ci done"
 
-info "Building…"
-npm run build --silent >/dev/null 2>&1 || npm run build
+run_quiet "Building AutoVault..." npm run build --silent
 completed "Built dist/"
 
 # ---------------------------------------------------------------------------
@@ -249,16 +378,18 @@ completed "Built dist/"
 # ---------------------------------------------------------------------------
 
 if [ "${AUTOVAULT_NO_BOOTSTRAP:-0}" != "1" ]; then
-  info "Seeding bundled skills…"
-  AUTOVAULT_STORAGE_PATH="$STORAGE_PATH" node scripts/bootstrap-skills.mjs >/dev/null
+  step "seed" "validating and installing bundled skills"
+  run_quiet "Seeding bundled skills..." env AUTOVAULT_LOG_LEVEL=error AUTOVAULT_STORAGE_PATH="$STORAGE_PATH" node scripts/bootstrap-skills.mjs
   completed "Bundled skills bootstrapped"
+else
+  step "seed" "skipped by AUTOVAULT_NO_BOOTSTRAP=1"
 fi
 
 # ---------------------------------------------------------------------------
 # Atomic swap into $APP_DIR + write shim
 # ---------------------------------------------------------------------------
 
-info "Installing shim…"
+step "path" "installing the autovault shim"
 mkdir -p "$HOME_DIR" "$BIN_DIR"
 rm -rf "$APP_DIR.next"
 mkdir -p "$APP_DIR.next"
@@ -281,7 +412,11 @@ exec node "$APP_DIR/dist/cli.js" "\$@"
 EOF
 chmod 755 "$BIN_DIR/autovault"
 write_env_file
-completed "$BIN_DIR/autovault"
+if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
+  completed "$BIN_DIR/autovault"
+else
+  completed "autovault shim installed"
+fi
 
 # ---------------------------------------------------------------------------
 # Shell PATH wiring
@@ -291,13 +426,24 @@ plain ""
 if path_contains_bin; then
   completed "autovault is already on your PATH"
 elif profile_updated="$(ensure_profile_sources_env)"; then
-  completed "Wired into $profile_updated"
-  plain "  ${GREY}use it in this terminal:${RESET} . \"$ENV_FILE\""
-  plain "  ${GREY}new terminals pick it up automatically${RESET}"
+  NEEDS_ENV_COMMAND=1
+  if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
+    completed "Wired into $profile_updated"
+  else
+    completed "shell profile updated"
+  fi
+  detail_line "${GREY}use it in this terminal:${RESET} . \"$ENV_FILE\""
+  detail_line "${GREY}new terminals pick it up automatically${RESET}"
 else
-  warn "Could not update your shell profile automatically."
-  plain "  ${GREY}use it in this terminal:${RESET} . \"$ENV_FILE\""
-  plain "  ${GREY}or add this to your profile:${RESET} [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\""
+  NEEDS_ENV_COMMAND=1
+  warning_card \
+    "Could not update your shell profile automatically." \
+    "Run this once in this session:" \
+    "  . \"$ENV_FILE\"" \
+    "${GREY}Rerun with AUTOVAULT_VERBOSE=1 for the profile line.${RESET}"
+  if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
+    detail_line "${GREY}or add this to your profile:${RESET} [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\""
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -306,6 +452,7 @@ fi
 
 if [ "${AUTOVAULT_NO_SETUP:-0}" = "1" ]; then
   plain ""
+  step "setup" "skipped by AUTOVAULT_NO_SETUP=1"
   warn "Setup wizard skipped (AUTOVAULT_NO_SETUP=1)."
   plain "${BOLD}> Run this when ready to migrate native skills:${RESET}"
   plain "    autovault setup"
@@ -315,7 +462,7 @@ fi
 
 if [ -t 0 ] || (: </dev/tty) 2>/dev/null; then
   plain ""
-  info "Launching the setup wizard…"
+  step "setup" "launching guided vault intake"
   plain ""
   setup_status=0
   if [ -t 0 ]; then
@@ -336,6 +483,7 @@ if [ -t 0 ] || (: </dev/tty) 2>/dev/null; then
 fi
 
 plain ""
+step "setup" "deferred for non-interactive shell"
 warn "Non-interactive shell detected. Skipping setup wizard."
 plain "${BOLD}> Run this when ready to migrate native skills:${RESET}"
 plain "    autovault setup"

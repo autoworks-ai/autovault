@@ -1,7 +1,11 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { resolveMcpServerPath, runSetup } from "../src/cli/setup.js";
+import { renderCompactScanSummary } from "../src/cli/setup/render.js";
+import { scanDrift } from "../src/cli/setup/scan.js";
+import { ensureStorage, writeSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
 async function captureStdout(fn: () => Promise<void>): Promise<string> {
@@ -20,6 +24,18 @@ async function captureStdout(fn: () => Promise<void>): Promise<string> {
   }
   return stdout;
 }
+
+const skillMd = (name: string, body: string): string => `---
+name: ${name}
+description: ${name} ${body} description text long enough to satisfy schema constraints.
+metadata:
+  version: "1.0.0"
+---
+
+# ${name}
+
+${body}
+`;
 
 describe("setup CLI", () => {
   it("prints clean JSON in --json mode", async () => {
@@ -55,5 +71,41 @@ describe("setup CLI", () => {
     expect(resolveMcpServerPath(moduleUrl, path.join(path.sep, "repo"))).toBe(
       path.join(path.sep, "repo", "dist", "index.js")
     );
+  });
+
+  it("renders compact first-run scan output without diagnostic details", async () => {
+    await ensureStorage();
+    await writeSkill("vault-ready", skillMd("vault-ready", "vault only"));
+
+    const nativeRoot = path.join(currentStorageRoot(), "native-root");
+    await fs.mkdir(path.join(nativeRoot, "native-only"), { recursive: true });
+    await fs.writeFile(
+      path.join(nativeRoot, "native-only", "SKILL.md"),
+      skillMd("native-only", "native only"),
+      "utf-8"
+    );
+    await fs.mkdir(path.join(nativeRoot, "tiny"), { recursive: true });
+    await fs.writeFile(
+      path.join(nativeRoot, "tiny", "SKILL.md"),
+      "---\nname: tiny\ndescription: too short\n---\n\n# tiny\n",
+      "utf-8"
+    );
+
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { codex: nativeRoot },
+      discover: false
+    });
+    const stdout = await captureStdout(async () => {
+      renderCompactScanSummary(report);
+    });
+
+    expect(stdout).toContain("[skills]");
+    expect(stdout).toContain("3 found");
+    expect(stdout).toContain("1 ready");
+    expect(stdout).toContain("2 need review");
+    expect(stdout).not.toContain("native-only");
+    expect(stdout).not.toContain(nativeRoot);
+    expect(stdout).not.toMatch(/[a-f0-9]{8}/);
   });
 });

@@ -12,6 +12,9 @@ import {
 } from "../storage/index.js";
 import { ignoredArtifactNamesDescription } from "../util/ignored-artifacts.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
+import { badge, sectionTitle } from "./ui/messages.js";
+import { bulletList, keyValueRows } from "./ui/table.js";
+import { makeTheme } from "./ui/theme.js";
 
 type DoctorOptions = {
   skill?: string;
@@ -127,39 +130,78 @@ async function inspectSkill(name: string, clean: boolean): Promise<DoctorSkillRe
 }
 
 function formatReport(report: Awaited<ReturnType<typeof runDoctorReport>>): string {
+  const theme = makeTheme(process.stdout);
   const lines: string[] = [];
-  lines.push("AutoVault doctor");
-  lines.push("================");
-  lines.push(`storage: ${report.storagePath}`);
-  lines.push(`ignored metadata allowlist: ${ignoredArtifactNamesDescription()}`);
+  lines.push("");
+  lines.push(`${badge("doctor", theme)} ${theme.style.bold("AutoVault trust dashboard")}`);
+  lines.push(sectionTitle("Vault health", theme));
+  lines.push(
+    keyValueRows(
+      [
+        { label: "storage", value: theme.style.dim(report.storagePath), status: "muted" },
+        {
+          label: "summary",
+          value: `${report.summary.ok} ok, ${report.summary.warnings} warning(s), ${report.summary.errors} error(s)`,
+          status:
+            report.summary.errors > 0
+              ? "error"
+              : report.summary.warnings > 0
+                ? "warn"
+                : "ok"
+        },
+        {
+          label: "cleaned",
+          value: `${report.summary.cleaned} artifact(s)`,
+          status: report.summary.cleaned > 0 ? "ok" : "muted"
+        },
+        {
+          label: "allowlist",
+          value: ignoredArtifactNamesDescription(),
+          status: "muted"
+        }
+      ],
+      theme
+    )
+  );
   lines.push("");
   if (report.skills.length === 0) {
-    lines.push("No installed skills found.");
+    lines.push(`${theme.style.dim("No installed skills found.")}`);
     return `${lines.join("\n")}\n`;
   }
+
+  lines.push(sectionTitle("Skill integrity", theme));
   for (const skill of report.skills) {
-    lines.push(`${skill.status.toUpperCase()} ${skill.name}`);
+    const statusTone =
+      skill.status === "ok" ? "ok" : skill.status === "warning" ? "warn" : "error";
+    const mark =
+      skill.status === "ok"
+        ? theme.style.green(theme.symbol.check)
+        : skill.status === "warning"
+          ? theme.style.yellow(theme.symbol.warn)
+          : theme.style.red(theme.symbol.cross);
+    lines.push(`${mark} ${theme.style.bold(skill.name)} ${theme.style.dim(skill.status)}`);
     if (skill.cleaned.length > 0) {
-      lines.push(`  cleaned: ${skill.cleaned.join(", ")}`);
+      lines.push(`  ${theme.style.green("cleaned")} ${skill.cleaned.join(", ")}`);
     }
     if (skill.ignored_artifacts.length > 0) {
-      lines.push(`  ignored artifacts: ${skill.ignored_artifacts.join(", ")}`);
+      lines.push(
+        `  ${theme.style.yellow("ignored metadata")} ${skill.ignored_artifacts.join(", ")}`
+      );
     }
     if (skill.integrity.kind === "tampered") {
       const detail = skill.integrity.mismatches
         .map((m) => `${m.file} (${m.reason})`)
         .join(", ");
-      lines.push(`  integrity: failed: ${detail}`);
+      lines.push(`  ${theme.style.red("integrity")} failed: ${detail}`);
     } else {
-      lines.push(`  integrity: ${skill.integrity.kind}`);
+      lines.push(`  ${theme.style.dim("integrity")} ${skill.integrity.kind}`);
     }
-    lines.push(`  source: ${skill.source.kind}`);
-    for (const action of skill.actions) lines.push(`  next: ${action}`);
+    lines.push(`  ${theme.style.dim("source")} ${skill.source.kind}`);
+    if (statusTone !== "ok" && skill.actions.length > 0) {
+      lines.push(bulletList(skill.actions.map((action) => `next: ${action}`), theme));
+    }
     lines.push("");
   }
-  lines.push(
-    `summary: ${report.summary.ok} ok, ${report.summary.warnings} warning(s), ${report.summary.errors} error(s), ${report.summary.cleaned} cleaned artifact(s)`
-  );
   return `${lines.join("\n")}\n`;
 }
 

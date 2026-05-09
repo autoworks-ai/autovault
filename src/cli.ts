@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { runDoctorCommand } from "./cli/doctor.js";
 import { runSkillCommand } from "./cli/skill.js";
+import { renderSuccessOutro } from "./cli/ui/brand.js";
+import { badge, sectionTitle } from "./cli/ui/messages.js";
+import { bulletList, keyValueRows } from "./cli/ui/table.js";
+import { makeTheme } from "./cli/ui/theme.js";
 import {
   addLocalSkill,
   auditRepo,
@@ -15,7 +19,7 @@ function usage(): never {
   process.stderr.write(`Usage:
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
-  autovault setup [--json]
+  autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
@@ -54,46 +58,68 @@ function hostRestartGuidance(): string[] {
 }
 
 function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): string {
+  const theme = makeTheme(process.stdout);
   const lines: string[] = [];
-  lines.push("=============================");
-  lines.push("AutoVault local installer");
-  lines.push("=============================");
   lines.push("");
-  lines.push(`scan      ${skillDir}`);
-  lines.push(`validate  ${result.validation.valid ? "passed" : "failed"}`);
+  lines.push(`${badge("vault", theme)} ${theme.style.bold("AutoVault local installer")}`);
+  lines.push(sectionTitle(result.success ? "Admission receipt" : "Admission blocked", theme));
+  lines.push(
+    keyValueRows(
+      [
+        { label: "scan", value: skillDir, status: "muted" },
+        {
+          label: "validate",
+          value: result.validation.valid ? "passed" : "failed",
+          status: result.validation.valid ? "ok" : "error"
+        }
+      ],
+      theme
+    )
+  );
   if (result.success) {
-    lines.push(`sign      ${result.name}`);
-    if (result.paths) {
-      lines.push(`storage   ${result.paths.skill}`);
-    }
-    if (result.source) {
-      lines.push(`source    ${result.source.identifier}`);
-    }
+    lines.push(
+      keyValueRows(
+        [
+          { label: "sign", value: result.name, status: "ok" },
+          ...(result.paths ? [{ label: "storage", value: result.paths.skill, status: "ok" as const }] : []),
+          ...(result.source
+            ? [{ label: "source", value: result.source.identifier, status: "muted" as const }]
+            : [])
+        ],
+        theme
+      )
+    );
     if (result.sync) {
       lines.push("");
-      lines.push("profile sync");
+      lines.push(`${badge("sync", theme, "dim")} profile sync`);
       const linkedEntries = Object.entries(result.sync.linkedRoots);
       if (linkedEntries.length === 0) {
-        lines.push("  no external profile roots linked");
+        lines.push(`  ${theme.style.dim("No external profile roots linked.")}`);
       } else {
         for (const [agent, root] of linkedEntries) {
           const count = result.sync.profiles[agent]?.length ?? 0;
-          lines.push(`  ${agent}: ${root} (${count} skill${count === 1 ? "" : "s"})`);
+          lines.push(
+            `  ${theme.style.green(theme.symbol.check)} ${agent} ${theme.style.dim(root)} (${count} skill${count === 1 ? "" : "s"})`
+          );
         }
       }
     }
     if (result.warnings.length > 0) {
       lines.push("");
-      lines.push("warnings");
-      for (const warning of result.warnings) lines.push(`  - ${warning}`);
+      lines.push(`${badge("warn", theme, "warn")} warnings`);
+      lines.push(bulletList(result.warnings, theme));
     }
-    lines.push("");
-    lines.push(...hostRestartGuidance());
+    lines.push(
+      renderSuccessOutro(
+        "Skill vaulted",
+        hostRestartGuidance().map((line) => `${theme.style.dim("next")} ${line}`),
+        process.stdout
+      ).trimEnd()
+    );
   } else {
     lines.push("");
-    lines.push("errors");
-    for (const error of result.validation.errors) lines.push(`  - ${error}`);
-    for (const warning of result.warnings) lines.push(`  - ${warning}`);
+    lines.push(`${badge("error", theme, "warn")} errors`);
+    lines.push(bulletList([...result.validation.errors, ...result.warnings], theme));
   }
   return `${lines.join("\n")}\n`;
 }
@@ -216,7 +242,11 @@ async function main(): Promise<void> {
   if (command === "setup") {
     const { runSetup } = await import("./cli/setup.js");
     try {
-      await runSetup({ json: hasFlag(args, "--json") });
+      await runSetup({
+        json: hasFlag(args, "--json"),
+        review: hasFlag(args, "--review"),
+        advanced: hasFlag(args, "--advanced")
+      });
     } catch (error) {
       const name = (error as { name?: string })?.name;
       if (name === "NoTtyError") {
