@@ -1,0 +1,48 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.autoworks-ai/autovault",
+  "title": "AutoVault",
+  "description": "Validates, signs, scopes, and serves agent SKILL.md files over local stdio MCP and remote Streamable HTTP MCP.",
+  "version": "0.2.1",
+  "websiteUrl": "https://github.com/autoworks-ai/autovault",
+  "repository": {
+    "url": "https://github.com/autoworks-ai/autovault",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@autoworks-ai/autovault",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "get_skill",
+      "description": "Find and load installed skills by name or query, optionally inlining packaged resources."
+    },
+    {
+      "name": "add_skill",
+      "description": "Install a known skill from a GitHub, agentskills, URL, or local-bundle source after validation."
+    },
+    {
+      "name": "propose_skill",
+      "description": "Submit caller-authored SKILL.md bytes; runs the full validation, security, and dedup pipeline."
+    },
+    {
+      "name": "update_skill",
+      "description": "Refresh an installed skill from its recorded source or replace it from a new source/bundle."
+    },
+    {
+      "name": "delete_skill",
+      "description": "Remove an installed skill and its vault-local transforms, then refresh generated profiles."
+    },
+    {
+      "name": "check_updates",
+      "description": "Detect upstream drift for skills installed from GitHub, agentskills, URL, or bundled inline sources."
+    }
+  ]
+}

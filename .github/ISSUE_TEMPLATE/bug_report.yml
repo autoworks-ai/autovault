@@ -1,0 +1,26 @@
+name: Bug report
+description: Report a runtime, CLI, MCP, or documentation bug.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the command, MCP host, or endpoint involved.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS, AutoVault version, install path, and relevant logs.
+    validations:
+      required: false

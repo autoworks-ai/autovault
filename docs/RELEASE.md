@@ -35,7 +35,12 @@ AutoVault currently follows pre-1.0 semver:
 - `0.x.0` for meaningful feature releases
 - `0.x.y` for targeted bug fixes and hardening releases
 
-Update both:
+Release Please owns version bumps on `main`. For normal releases, do not bump
+`package.json`, `package-lock.json`, `server.json`, or
+`.release-please-manifest.json` by hand; merge conventional commits and let the
+Release Please PR make those edits from the current `0.2.1` baseline.
+
+For emergency manual releases only, update both:
 
 - `package.json`
 - `package-lock.json`
@@ -49,20 +54,15 @@ npm version <new-version> --no-git-tag-version
 
 ## Merge / Tag Workflow
 
-Once GitHub Actions is enabled for the repo, the preferred workflow is:
+The preferred workflow is:
 
-1. Merge the PR into `main`.
-2. Pull the merge commit locally.
-3. Create an annotated tag:
+1. Merge the launch or feature PR into `main`.
+2. Let Release Please open or update the release PR.
+3. Review the changelog, package version, manifest, and `server.json`.
+4. Merge the Release Please PR after npm publishing is configured and approved.
 
-```bash
-git checkout main
-git pull origin main
-git tag -a v0.2.0 -m "AutoVault v0.2.0"
-git push origin v0.2.0
-```
-
-4. If using container images, build and publish from the tagged commit only.
+Release Please creates the GitHub Release and tag. The container workflow then
+publishes GHCR images from the tagged commit only.
 
 ## Rollback
 
