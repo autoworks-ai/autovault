@@ -363,7 +363,7 @@ AutoHub can depend on AutoVault directly:
 ```json
 {
   "dependencies": {
-    "@autoworks/autovault": "file:../autovault"
+    "@autoworks-ai/autovault": "file:../autovault"
   }
 }
 ```
