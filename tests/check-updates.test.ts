@@ -10,6 +10,7 @@ import { currentStorageRoot } from "./setup.js";
 const skillMd = `---
 name: drift-skill
 description: A description that is intentionally long enough to satisfy the schema length check.
+agents: [codex]
 metadata:
   version: "1.0.0"
 ---
@@ -116,6 +117,7 @@ describe("checkUpdates", () => {
     const skillWithResource = `---
 name: drift-skill
 description: A description that is intentionally long enough to satisfy the schema length check.
+agents: [codex]
 metadata:
   version: "1.0.0"
 resources:
@@ -171,6 +173,7 @@ resources:
     const skillWithBin = `---
 name: drift-skill
 description: A description that is intentionally long enough to satisfy the schema length check.
+agents: [codex]
 metadata:
   version: "1.0.0"
 bin:
@@ -228,6 +231,7 @@ bin:
       "---\n" +
       "name: drift-skill\n" +
       "description: A description that is intentionally long enough to satisfy the schema length check.\n" +
+      "agents: [codex]\n" +
       "metadata:\n" +
       "\tversion: \"1.0.0\"\n" +
       "---\n" +
@@ -295,6 +299,7 @@ bin:
     const skillWithBin = `---
 name: drift-skill
 description: A description that is intentionally long enough to satisfy the schema length check.
+agents: [codex]
 metadata:
   version: "1.0.0"
 bin:
@@ -389,6 +394,7 @@ bin:
     const skillWithBin = `---
 name: drift-skill
 description: A description that is intentionally long enough to satisfy the schema length check.
+agents: [codex]
 metadata:
   version: "1.0.0"
 bin:

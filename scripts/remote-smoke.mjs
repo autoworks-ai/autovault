@@ -31,6 +31,7 @@ if (REMOTE_URL && (!process.env.AUTOVAULT_ADMIN_EMAIL || !process.env.AUTOVAULT_
 const SAMPLE_SKILL = `---
 name: remote-smoke-skill
 description: Smoke-test skill for AutoVault remote MCP mode. Long enough to satisfy schema checks.
+agents: [codex]
 tags:
   - smoke
 metadata:

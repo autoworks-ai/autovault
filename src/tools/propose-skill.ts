@@ -4,10 +4,15 @@ import {
   listInstalledSkillNames,
   readSkill,
   skillDir,
+  type SkillSource,
   validateResourcePathShape,
   writeSkill
 } from "../storage/index.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
+import {
+  synthesizeSkillFrontmatter,
+  type SynthesizedResource
+} from "../validation/frontmatter-synthesis.js";
 import {
   buildSimilarityCorpus,
   classifyDedup,
@@ -23,6 +28,8 @@ import {
 } from "../util/limits.js";
 import { log } from "../util/log.js";
 import { syncProfiles } from "../profiles/sync.js";
+import { formatResultSync } from "../util/sync-format.js";
+import type { ValidationResult } from "../types.js";
 
 // Walk an installed skill's directory and collect every non-metadata file as a
 // HashedResource so we can recompute its bundle hash from current disk state.
@@ -160,9 +167,39 @@ export type ProposeSkillInput = {
   skill_md: string;
   resources?: Array<{ path: string; content: string }>;
   source_session?: string;
+  allow_synthesized_frontmatter?: boolean;
+  check?: boolean;
+  verbose?: boolean;
 };
 
-export async function proposeSkill(input: ProposeSkillInput): Promise<Record<string, unknown>> {
+export type AcceptedProposedSkill = {
+  name: string;
+  skillMd: string;
+  frontmatter: Record<string, unknown>;
+  resources: Array<{ path: string; content: string }>;
+  contentHash: string;
+  validation: ValidationResult;
+  warnings: string[];
+  dedup: {
+    tier: string;
+    similarity: number;
+    similar_to: string | null;
+  };
+  inferredResources: SynthesizedResource[];
+  inferredAgents: string[];
+};
+
+export type ProposeSkillAnalysis =
+  | { kind: "accepted"; accepted: AcceptedProposedSkill }
+  | { kind: "response"; response: Record<string, unknown> };
+
+export async function analyzeProposedSkill(input: {
+  skill_md: string;
+  resources?: Array<{ path: string; content: string }>;
+  source_session?: string;
+  allow_synthesized_frontmatter?: boolean;
+  agents?: string[];
+}): Promise<ProposeSkillAnalysis> {
   // Enforce raw byte caps BEFORE attemptRepair. attemptRepair runs full-string
   // regex passes — feeding it a 100 MiB SKILL.md burns CPU before
   // validateSkillInput's internal limit check fires. Match installSkill's
@@ -170,19 +207,64 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
   const limitErrors = checkBundleLimits(input.skill_md, input.resources ?? []);
   if (limitErrors.length > 0) {
     log.info("propose_skill.invalid_size", { errors: limitErrors });
-    return { outcome: "invalid", errors: limitErrors };
+    return { kind: "response", response: { outcome: "invalid", errors: limitErrors } };
   }
 
-  const { output: normalizedSkillMd } = attemptRepair(input.skill_md);
-  const validation = validateSkillInput(input.skill_md, input.resources ?? []);
+  const repair = attemptRepair(input.skill_md);
+  let normalizedSkillMd = repair.output;
+  try {
+    const synthesized = synthesizeSkillFrontmatter(normalizedSkillMd, {
+      resources: input.resources,
+      agents: input.agents,
+      allowSynthesizedFrontmatter: input.allow_synthesized_frontmatter
+    });
+    normalizedSkillMd = synthesized.skillMd;
+    const validation = withRepairWarning(
+      validateSkillInput(normalizedSkillMd, input.resources ?? []),
+      repair.repaired
+    );
+    return analyzeValidatedProposal(input, normalizedSkillMd, validation, {
+      inferredResources: synthesized.inferredResources,
+      inferredAgents: synthesized.inferredAgents
+    });
+  } catch (error) {
+    const validation = withRepairWarning(
+      validateSkillInput(normalizedSkillMd, input.resources ?? []),
+      repair.repaired
+    );
+    if (!validation.valid) {
+      log.info("propose_skill.invalid", { errors: validation.errors });
+      return { kind: "response", response: { outcome: "invalid", errors: validation.errors } };
+    }
+    return {
+      kind: "response",
+      response: { outcome: "invalid", errors: [`Frontmatter synthesis failed: ${String(error)}`] }
+    };
+  }
+}
+
+async function analyzeValidatedProposal(
+  input: {
+    resources?: Array<{ path: string; content: string }>;
+  },
+  normalizedSkillMd: string,
+  validation: ValidationResult,
+  synthesis: {
+    inferredResources: SynthesizedResource[];
+    inferredAgents: string[];
+  }
+): Promise<ProposeSkillAnalysis> {
   if (validation.securityFlags.length > 0 && !validation.valid) {
     log.info("propose_skill.security_blocked", { flags: validation.securityFlags });
-    return { outcome: "security_blocked", security_flags: validation.securityFlags };
+    return {
+      kind: "response",
+      response: { outcome: "security_blocked", security_flags: validation.securityFlags }
+    };
   }
 
   if (!validation.valid) {
     log.info("propose_skill.invalid", { errors: validation.errors });
-    return { outcome: "invalid", errors: validation.errors };
+    return { kind: "response", response: { outcome: "invalid", errors: validation.errors } };
   }
 
   const { data } = parseFrontmatter(normalizedSkillMd);
@@ -214,12 +296,15 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
   if (dedup.tier === "exact") {
     log.info("propose_skill.duplicate_exact", { existing: dedup.existingName });
     return {
-      outcome: "duplicate",
-      existing_match: {
-        name: dedup.existingName,
-        similarity: 1,
-        match_type: "exact",
-        merge_options: ["keep_existing"]
+      kind: "response",
+      response: {
+        outcome: "duplicate",
+        existing_match: {
+          name: dedup.existingName,
+          similarity: 1,
+          match_type: "exact",
+          merge_options: ["keep_existing"]
+        }
       }
     };
   }
@@ -230,12 +315,15 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
       similarity: dedup.similarity
     });
     return {
-      outcome: "duplicate",
-      existing_match: {
-        name: dedup.existingName,
-        similarity: dedup.similarity,
-        match_type: "near_exact",
-        merge_options: ["keep_existing", "replace", "merge", "keep_both"]
+      kind: "response",
+      response: {
+        outcome: "duplicate",
+        existing_match: {
+          name: dedup.existingName,
+          similarity: dedup.similarity,
+          match_type: "near_exact",
+          merge_options: ["keep_existing", "replace", "merge", "keep_both"]
+        }
       }
     };
   }
@@ -249,23 +337,73 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
       } catch (error) {
         log.warn("propose_skill.resource_rejected", { name: nextName, error: String(error) });
         return {
-          outcome: "invalid",
-          errors: [`Resource path rejected: ${String(error)}`]
+          kind: "response",
+          response: {
+            outcome: "invalid",
+            errors: [`Resource path rejected: ${String(error)}`]
+          }
         };
       }
     }
   }
 
+  const warnings = [...validation.warnings];
+  if (dedup.tier === "functional" && dedup.existingName) {
+    warnings.push(
+      `Functionally similar to existing skill "${dedup.existingName}" (similarity ${dedup.similarity.toFixed(2)}). Consider reviewing for overlap.`
+    );
+  }
+
+  return {
+    kind: "accepted",
+    accepted: {
+      name: nextName,
+      skillMd: normalizedSkillMd,
+      frontmatter: data as Record<string, unknown>,
+      resources: input.resources ?? [],
+      contentHash: candidateHash,
+      validation,
+      warnings,
+      dedup: {
+        tier: dedup.tier,
+        similarity: dedup.similarity,
+        similar_to: dedup.existingName ?? null
+      },
+      inferredResources: synthesis.inferredResources,
+      inferredAgents: synthesis.inferredAgents
+    }
+  };
+}
+
+export async function writeAcceptedProposedSkill(
+  accepted: AcceptedProposedSkill,
+  source: SkillSource
+): Promise<void> {
   // Pass source through writeSkill so SKILL.md/resources/manifest/source land
   // atomically in the same staged-tmp swap. A separate post-swap write would
   // create a window where SKILL.md is paired with no source record (or worse,
   // the previous skill's source record carried forward) — corrupting the
   // contentHash drift signal check_updates relies on.
-  await writeSkill(nextName, normalizedSkillMd, input.resources ?? [], {
+  await writeSkill(accepted.name, accepted.skillMd, accepted.resources, source);
+}
+
+export async function proposeSkill(input: ProposeSkillInput): Promise<Record<string, unknown>> {
+  const analysis = await analyzeProposedSkill(input);
+  if (analysis.kind === "response") return analysis.response;
+  const { accepted } = analysis;
+
+  if (input.check) {
+    return acceptedResponse("would_accept", accepted, {
+      includeSkillMd: true,
+      includeFrontmatter: true
+    });
+  }
+
+  await writeAcceptedProposedSkill(accepted, {
     source: "inline",
     identifier: input.source_session ?? "proposed",
     fetchedAt: new Date().toISOString(),
-    contentHash: candidateHash
+    contentHash: accepted.contentHash
   });
 
   // Profile sync is post-commit convenience — the vault is the source of truth
@@ -283,27 +421,48 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
     for (const w of sync.warnings) postCommitWarnings.push(w);
   } catch (error) {
     const message = `Profile sync failed after propose (vault state is correct): ${String(error)}`;
-    log.warn("propose_skill.profile_sync_failed", { name: nextName, error: String(error) });
+    log.warn("propose_skill.profile_sync_failed", { name: accepted.name, error: String(error) });
     postCommitWarnings.push(message);
   }
 
-  const warnings = [...validation.warnings, ...postCommitWarnings];
-  if (dedup.tier === "functional" && dedup.existingName) {
-    warnings.push(
-      `Functionally similar to existing skill "${dedup.existingName}" (similarity ${dedup.similarity.toFixed(2)}). Consider reviewing for overlap.`
-    );
-  }
-
-  log.info("propose_skill.accepted", { name: nextName, tier: dedup.tier });
-  return {
-    outcome: "accepted",
-    name: nextName,
-    warnings,
-    dedup: {
-      tier: dedup.tier,
-      similarity: dedup.similarity,
-      similar_to: dedup.existingName ?? null
+  accepted.warnings.push(...postCommitWarnings);
+  log.info("propose_skill.accepted", { name: accepted.name, tier: accepted.dedup.tier });
+  return formatResultSync(
+    {
+      ...acceptedResponse("accepted", accepted),
+      sync
     },
-    sync
+    input.verbose
+  );
+}
+
+function acceptedResponse(
+  outcome: "accepted" | "would_accept",
+  accepted: AcceptedProposedSkill,
+  options: { includeSkillMd?: boolean; includeFrontmatter?: boolean } = {}
+): Record<string, unknown> {
+  return {
+    outcome,
+    name: accepted.name,
+    warnings: accepted.warnings,
+    dedup: accepted.dedup,
+    ...(accepted.inferredResources.length > 0
+      ? { inferred_resources: accepted.inferredResources }
+      : {}),
+    ...(accepted.inferredAgents.length > 0 ? { inferred_agents: accepted.inferredAgents } : {}),
+    ...(options.includeFrontmatter ? { frontmatter: accepted.frontmatter } : {}),
+    ...(options.includeSkillMd ? { skill_md: accepted.skillMd } : {})
+  };
+}
+
+function withRepairWarning(validation: ValidationResult, repaired: boolean): ValidationResult {
+  if (!repaired) return validation;
+  const warning = "Frontmatter formatting was auto-normalized.";
+  return {
+    ...validation,
+    repaired: true,
+    warnings: validation.warnings.includes(warning)
+      ? validation.warnings
+      : [warning, ...validation.warnings]
   };
 }

@@ -7,6 +7,7 @@ import {
 import type { SkillRecord } from "../types.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { resourcePathsForSkill } from "../util/skill-resource-paths.js";
+import { formatResultSync } from "../util/sync-format.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { installSkill } from "./install-skill.js";
 
@@ -104,7 +105,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
     if (bundleName.name !== input.name) {
       return nameMismatch(input.name, bundleName.name);
     }
-    return formatUpdateResult(
+    return formatResultSync(
       await addLocalSkill({
         skillDir: input.skill_dir,
         source: input.identifier,
@@ -131,7 +132,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
       if (!Array.isArray(reused)) return reused;
       resources = reused;
     }
-    return formatUpdateResult(await installSkill({
+    return formatResultSync(await installSkill({
       source: "url",
       identifier: input.identifier ?? `inline:${input.name}`,
       version: input.version,
@@ -150,7 +151,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
         warnings: [`source='${input.source}' requires identifier.`]
       };
     }
-    return formatUpdateResult(await installSkill({
+    return formatResultSync(await installSkill({
       source: input.source,
       identifier: input.identifier,
       version: input.version,
@@ -169,7 +170,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
   }
 
   if (source.source === "github" || source.source === "agentskills" || source.source === "url") {
-    return formatUpdateResult(await installSkill({
+    return formatResultSync(await installSkill({
       source: source.source,
       identifier: source.identifier,
       version: source.version,
@@ -226,28 +227,6 @@ function formatResourceReadFailure(result: Exclude<
     case "missing_on_disk":
       return `'${result.resource}' is missing on disk`;
   }
-}
-
-function formatUpdateResult(result: Record<string, unknown>, verbose?: boolean): Record<string, unknown> {
-  if (verbose) return result;
-  const sync = result.sync;
-  if (typeof sync !== "object" || sync === null) return result;
-  const syncRecord = sync as {
-    profiles?: Record<string, string[]>;
-    linkedRoots?: Record<string, string>;
-    profileStatus?: Record<string, unknown[]>;
-    warnings?: string[];
-  };
-  const compactSync = {
-    profiles: Object.fromEntries(
-      Object.entries(syncRecord.profiles ?? {}).map(([agent, names]) => [agent, names.length])
-    ),
-    linkedRoots: syncRecord.linkedRoots ?? {},
-    profileStatus: syncRecord.profileStatus ?? {},
-    warningCount: syncRecord.warnings?.length ?? 0
-  };
-  const { sync: _sync, ...rest } = result;
-  return { ...rest, sync: compactSync };
 }
 
 function skillNameFromMarkdown(skillMd: string): { name: string; error?: string } {

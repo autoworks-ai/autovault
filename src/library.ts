@@ -3,6 +3,7 @@ export { addSkill, type AddSkillInput } from "./tools/add-skill.js";
 export { updateSkill, type UpdateSkillInput } from "./tools/update-skill.js";
 export { deleteSkill, type DeleteSkillInput } from "./tools/delete-skill.js";
 export { proposeSkill, type ProposeSkillInput } from "./tools/propose-skill.js";
+export { bulkImport, type BulkImportInput } from "./tools/bulk-import.js";
 export { syncProfiles, type SyncProfilesInput, type SyncProfilesResult } from "./profiles/sync.js";
 export { discoverProfileRoots, type DiscoverProfileRootsInput } from "./profiles/discovery.js";
 export {

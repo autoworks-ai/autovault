@@ -34,13 +34,17 @@ skill already exists, reuse or extend it instead of creating a duplicate.
 ---
 name: kebab-case-name           # letters, digits, hyphens, underscores
 description: At least 20 characters explaining WHAT the skill does and WHEN to use it.
+agents: [claude-code, codex]    # at least one visible target profile
 ---
 ```
 
 - `name` must match the storage directory name and be unique in the
   library.
-- `description` is what `search_skills` ranks on and what agents read to
+- `description` is what `get_skill({query})` ranks on and what agents read to
   decide whether the skill applies. Describe **both** what and when.
+- `agents` is required. A skill with no target profile would enter the vault
+  but be invisible to every generated skill directory, so AutoVault rejects it
+  instead of accepting a hidden install.
 
 ## Recommended frontmatter
 
@@ -58,6 +62,9 @@ requires-secrets:
   - name: GITHUB_TOKEN
     description: Required for gh CLI calls.
     required: true
+resources:
+  - path: references/example.md
+    type: file
 bin:
   setup:
     command: bin/setup
@@ -125,6 +132,27 @@ the signature before exec and refuses to run on mismatch.
 
 `requires-secrets` should describe secrets only when **the agent itself** needs
 them. When the bin script is the only consumer, leave `requires-secrets: []`.
+
+## How to think about `resources`
+
+Every bundled file besides `SKILL.md` must be declared. For ordinary support
+files, add a `resources:` entry with `type: file`:
+
+```yaml
+resources:
+  - path: references/prompt-template.md
+    type: file
+  - path: scripts/helper.js
+    type: file
+```
+
+`bin.<action>.command` also counts as a declaration for that executable path,
+but listing scripts in `resources:` is still clearer for human review. Direct
+imports from upstream ecosystems often omit `resources:` because those systems
+do not need it. AutoVault's `propose_skill` and `bulk_import` infer missing
+`resources:` entries from supplied bundle files by default and return
+`inferred_resources`; pass `allow_synthesized_frontmatter: false` when you want
+strict authoring feedback instead.
 
 ### OAuth and browser setup UX
 

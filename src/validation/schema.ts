@@ -93,7 +93,7 @@ const schema = z.object({
         .min(1)
         .regex(AGENT_NAME_PATTERN, "agent name must match ^[a-z][a-z0-9-]*$")
     )
-    .optional(),
+    .min(1, "at least one agent is required"),
   category: z.string().optional(),
   when_to_use: z.string().min(1).optional(),
   when_not_to_use: z.string().min(1).optional(),
