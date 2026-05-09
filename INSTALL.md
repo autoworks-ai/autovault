@@ -6,7 +6,7 @@ Cursor, Codex, AutoHub, Railway, Docker, or any other MCP-compatible host.
 
 ## Prerequisites
 
-- Node.js **>= 20.0.0** (use `node --version` to confirm)
+- Node.js **>= 20.19.0** (use `node --version` to confirm)
 - `curl`, `tar`, and `npm`
 - An MCP-compatible host (Claude Code, Cursor, Codex, etc.)
 - Git, if you choose the manual clone path

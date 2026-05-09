@@ -27,7 +27,7 @@
     "prepare": "npm run build"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.19.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
