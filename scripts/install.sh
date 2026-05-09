@@ -135,8 +135,20 @@ need() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
+is_headless() {
+  # Headless when running inside a known agent/CI environment
+  [ -n "${CI-}" ] || [ -n "${CLAUDE_CODE-}" ] || [ -n "${CODEX-}" ] || \
+  [ -n "${GITHUB_ACTIONS-}" ] || [ -n "${CIRCLECI-}" ] || \
+  [ -n "${TRAVIS-}" ] || [ -n "${BUILDKITE-}" ]
+}
+
 confirm() {
   if [ -n "${AUTOVAULT_YES-}" ]; then
+    return 0
+  fi
+  # Auto-confirm in known headless/agent/CI environments
+  if is_headless; then
+    info "Headless environment detected — auto-confirming install"
     return 0
   fi
   if [ -t 0 ]; then
@@ -146,7 +158,11 @@ confirm() {
     printf '%s' "${MAGENTA}?${RESET} $* ${BOLD}[y/N]${RESET} "
     read -r yn </dev/tty 2>/dev/null || yn=""
   else
-    fail "no TTY available; rerun with AUTOVAULT_YES=1 to skip the confirmation"
+    printf '\n' >&2
+    printf '%s\n' "  No TTY detected. Re-run with:" >&2
+    printf '%s\n' "    AUTOVAULT_YES=1 curl -fsSL https://autovault.dev/install | sh" >&2
+    printf '\n' >&2
+    exit 1
   fi
   case "$yn" in
     y|Y|yes|YES|Yes) return 0 ;;
@@ -175,7 +191,7 @@ detect_arch() {
 }
 
 node_meets_minimum() {
-  [ "$NODE_MAJOR" -ge 24 ]
+  [ "$NODE_MAJOR" -ge 22 ]
 }
 
 path_contains_bin() {
@@ -326,7 +342,20 @@ NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || print
 
 completed "$PLATFORM $ARCH / Node $NODE_VERSION"
 
-node_meets_minimum || fail "Node.js >= 24.0.0 is required; found $(node --version 2>/dev/null || printf 'unknown')"
+if ! node_meets_minimum; then
+  found_ver="$(node --version 2>/dev/null || printf 'unknown')"
+  error "Node.js >= 22.0.0 is required; found $found_ver"
+  printf '\n' >&2
+  printf '%s\n' "  Upgrade options:" >&2
+  printf '%s\n' "    nvm:   nvm install 22 && nvm use 22" >&2
+  printf '%s\n' "    fnm:   fnm install 22 && fnm use 22" >&2
+  printf '%s\n' "    brew:  brew install node@22" >&2
+  printf '\n' >&2
+  printf '%s\n' "  Then re-run:" >&2
+  printf '%s\n' "    curl -fsSL https://autovault.dev/install | sh" >&2
+  printf '\n' >&2
+  exit 1
+fi
 
 if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
   plain "${BOLD}Install plan${RESET}"
@@ -488,7 +517,7 @@ fi
 
 plain ""
 step "setup" "deferred for non-interactive shell"
-warn "Non-interactive shell detected. Skipping setup wizard."
-plain "${BOLD}> Run this when ready to migrate native skills:${RESET}"
-plain "    autovault setup"
+warn "Non-interactive shell detected — setup wizard skipped."
+plain "  To complete setup, run:"
+plain "    ${BOLD}autovault setup${RESET}"
 print_celebration

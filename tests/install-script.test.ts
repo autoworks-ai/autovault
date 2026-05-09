@@ -191,11 +191,11 @@ describe("install.sh", () => {
       [
         "#!/bin/sh",
         "case \"$1\" in",
-        "  --version) printf 'v23.11.0\\n'; exit 0 ;;",
+        "  --version) printf 'v20.18.0\\n'; exit 0 ;;",
         "  -p)",
         "    case \"$2\" in",
-        "      *\\[0\\]*) printf '23\\n' ;;",
-        "      *\\[1\\]*) printf '11\\n' ;;",
+        "      *\\[0\\]*) printf '20\\n' ;;",
+        "      *\\[1\\]*) printf '18\\n' ;;",
         "      *\\[2\\]*) printf '0\\n' ;;",
         "      *) printf '0\\n' ;;",
         "    esac",
@@ -213,8 +213,8 @@ describe("install.sh", () => {
     });
 
     expect(result.code).not.toBe(0);
-    expect(result.stderr).toContain("Node.js >= 24.0.0 is required");
-    expect(result.stderr).toContain("v23.11.0");
+    expect(result.stderr).toContain("Node.js >= 22.0.0 is required");
+    expect(result.stderr).toContain("v20.18.0");
   });
 
   it("reports when the shim directory is already on PATH", async () => {
@@ -248,5 +248,28 @@ describe("install.sh", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toMatch(/stage 6\/6\s+setup\s+deferred for non-interactive shell/);
     expect(result.stdout).not.toContain("fake setup ran");
+    expect(result.stdout).toContain("autovault setup");
+  });
+
+  it("auto-confirms without AUTOVAULT_YES when CLAUDE_CODE is set", async () => {
+    const result = await runInstaller({
+      AUTOVAULT_NO_SETUP: "1",
+      AUTOVAULT_YES: "",
+      CLAUDE_CODE: "1"
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Headless environment detected");
+  });
+
+  it("auto-confirms without AUTOVAULT_YES when CI is set", async () => {
+    const result = await runInstaller({
+      AUTOVAULT_NO_SETUP: "1",
+      AUTOVAULT_YES: "",
+      CI: "true"
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Headless environment detected");
   });
 });
