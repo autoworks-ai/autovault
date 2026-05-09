@@ -1,12 +1,27 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INSTALL_SH = path.join(REPO_ROOT, "scripts", "install.sh");
+
+const activeChildren = new Set<ChildProcess>();
+
+function killChildGroup(child: ChildProcess): void {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // already dead or pgid gone — nothing to do
+  }
+}
+
+process.once("exit", () => {
+  for (const child of activeChildren) killChildGroup(child);
+});
 
 type RunResult = {
   code: number;
@@ -109,8 +124,10 @@ async function runInstaller(extraEnv: Record<string, string> = {}): Promise<RunR
         PATH: process.env.PATH ?? "",
         ...extraEnv
       },
-      stdio: ["pipe", "pipe", "pipe"]
+      stdio: ["pipe", "pipe", "pipe"],
+      detached: true
     });
+    activeChildren.add(child);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -119,8 +136,12 @@ async function runInstaller(extraEnv: Record<string, string> = {}): Promise<RunR
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
     });
-    child.on("error", reject);
+    child.on("error", (err) => {
+      activeChildren.delete(child);
+      reject(err);
+    });
     child.on("exit", (code) => {
+      activeChildren.delete(child);
       resolve({ code: code ?? -1, stdout, stderr, home: avHome, binDir });
     });
     child.stdin.end();
@@ -128,6 +149,11 @@ async function runInstaller(extraEnv: Record<string, string> = {}): Promise<RunR
 }
 
 describe("install.sh", () => {
+  afterEach(() => {
+    for (const child of activeChildren) killChildGroup(child);
+    activeChildren.clear();
+  });
+
   it("supports AUTOVAULT_YES with setup skipped", async () => {
     const result = await runInstaller({ AUTOVAULT_NO_SETUP: "1" });
 
