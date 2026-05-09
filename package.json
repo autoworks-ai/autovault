@@ -13,6 +13,14 @@
     "./remote": "./dist/remote.js",
     "./cli": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "skills/autovault-skill",
+    "skills/skill-author",
+    "scripts/security/patterns.json",
+    "INSTALL.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
@@ -24,7 +32,8 @@
     "import:autohub": "tsx src/cli.ts import-autohub --tool-filters ../autohub/config/tool-filters.json --mcp-servers ../autohub/config/mcp-servers.json --reset",
     "test": "vitest run",
     "test:watch": "vitest",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "prepublishOnly": "npm test"
   },
   "engines": {
     "node": ">=20.19.0"
@@ -48,6 +57,28 @@
     "tsx": "^4.19.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/autoworks-ai/autovault.git"
+  },
+  "homepage": "https://github.com/autoworks-ai/autovault#readme",
+  "bugs": {
+    "url": "https://github.com/autoworks-ai/autovault/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "cursor",
+    "codex",
+    "skills",
+    "agent",
+    "autovault"
+  ],
+  "publishConfig": {
+    "access": "public"
   },
   "license": "MIT"
 }
