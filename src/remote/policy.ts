@@ -30,6 +30,7 @@ const WRITE_TOOLS = new Set([
   "update_skill",
   "delete_skill",
   "propose_skill",
+  "bulk_import",
 ]);
 
 export function isWriteTool(toolName: string): boolean {

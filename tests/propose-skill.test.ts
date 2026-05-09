@@ -9,6 +9,7 @@ import { currentStorageRoot } from "./setup.js";
 const baseSkill = (name: string) => `---
 name: ${name}
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 ---
@@ -17,10 +18,27 @@ metadata:
 `;
 
 describe("proposeSkill", () => {
+  it("rejects missing agents frontmatter without persisting the skill", async () => {
+    const skillMd = `---
+name: missing-agents-proposal
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`;
+    const result = await proposeSkill({ skill_md: skillMd });
+    expect(result.outcome).toBe("invalid");
+    expect(((result as { errors?: string[] }).errors ?? []).join(" ")).toMatch(/agents/);
+    await expect(readSkill("missing-agents-proposal")).resolves.toBeNull();
+  });
+
   it("accepts a clean proposal and writes resources", async () => {
     const skillMd = `---
 name: clean-skill
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 resources:
@@ -45,6 +63,83 @@ resources:
     );
     const written = await fs.readFile(resourcePath, "utf-8");
     expect(written).toBe("echo hi");
+  });
+
+  it("infers resources frontmatter when bundle files are supplied", async () => {
+    const result = await proposeSkill({
+      skill_md: `---
+name: inferred-resource-skill
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`,
+      resources: [{ path: "docs/guide.md", content: "Guide" }]
+    });
+
+    expect(result.outcome).toBe("accepted");
+    expect(result).toMatchObject({
+      inferred_resources: [{ path: "docs/guide.md", type: "file" }]
+    });
+    const stored = await readSkill("inferred-resource-skill");
+    expect(stored?.resources).toEqual([{ path: "docs/guide.md", type: "file" }]);
+  });
+
+  it("keeps strict resource-frontmatter rejection available", async () => {
+    const result = await proposeSkill({
+      skill_md: `---
+name: strict-resource-skill
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`,
+      resources: [{ path: "docs/guide.md", content: "Guide" }],
+      allow_synthesized_frontmatter: false
+    });
+
+    expect(result.outcome).toBe("invalid");
+    await expect(readSkill("strict-resource-skill")).resolves.toBeNull();
+  });
+
+  it("check mode validates and dedups without writing or syncing", async () => {
+    const externalRoot = path.join(currentStorageRoot(), "external-check-mode");
+    process.env.AUTOVAULT_PROFILE_LINKS = `codex=${externalRoot}`;
+    resetConfigCache();
+
+    const result = await proposeSkill({
+      skill_md: `---
+name: check-only-skill
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`,
+      check: true
+    });
+
+    expect(result.outcome).toBe("would_accept");
+    expect(result).toMatchObject({
+      frontmatter: {
+        name: "check-only-skill",
+        agents: ["codex"]
+      },
+      dedup: {
+        tier: "novel"
+      }
+    });
+    expect(result).not.toHaveProperty("sync");
+    await expect(readSkill("check-only-skill")).resolves.toBeNull();
+    await expect(fs.lstat(path.join(externalRoot, "check-only-skill"))).rejects.toThrow();
   });
 
   it("blocks security-flagged proposals in strict mode", async () => {
@@ -83,6 +178,7 @@ description: too short
     const existing = `---
 name: first-func-skill
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 ---
@@ -92,6 +188,7 @@ ${words(11)}
     const similar = `---
 name: second-func-skill
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 ---
@@ -130,6 +227,7 @@ ${words(10)} z
     const md = `---
 name: bin-fix-target
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 bin:
@@ -181,6 +279,7 @@ Run setup before invoking the skill.
     const md = `---
 name: bundle-dedup
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 bin:
@@ -239,6 +338,7 @@ ${"x".repeat(300 * 1024)}`;
     const md = `---
 name: tampered-skill
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 bin:
@@ -278,7 +378,7 @@ bin:
 
   it("persists the repaired content that was validated", async () => {
     const result = await proposeSkill({
-      skill_md: `---\nname: repaired-skill\ndescription: A description that is intentionally long enough to satisfy the schema check threshold.   \nmetadata:\n\tversion: "1.0.0"\n---\n\n# Body\t`
+      skill_md: `---\nname: repaired-skill\ndescription: A description that is intentionally long enough to satisfy the schema check threshold.   \nagents: [codex]\nmetadata:\n\tversion: "1.0.0"\n---\n\n# Body\t`
     });
     expect(result.outcome).toBe("accepted");
 
@@ -310,6 +410,67 @@ metadata:
     await expect(fs.readlink(path.join(externalRoot, "profile-linked-proposal"))).resolves.toContain(
       path.join("profiles", "codex", "profile-linked-proposal")
     );
+  });
+
+  it("compacts propose sync output unless verbose is requested", async () => {
+    const profileRoot = path.join(currentStorageRoot(), "compact-propose-profile");
+    process.env.AUTOVAULT_PROFILE_LINKS = `codex=${profileRoot}`;
+    resetConfigCache();
+
+    const compact = await proposeSkill({
+      skill_md: `---
+name: compact-propose-sync
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`
+    });
+
+    expect(compact).toMatchObject({
+      outcome: "accepted",
+      sync: {
+        profiles: { codex: 1 },
+        linkedRoots: { codex: profileRoot },
+        statusCounts: { codex: { installed: 1 } },
+        warningCount: 0
+      }
+    });
+    expect((compact.sync as Record<string, unknown>)).not.toHaveProperty("profileStatus");
+
+    const verbose = await proposeSkill({
+      skill_md: `---
+name: verbose-propose-sync
+description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Verbose Sync
+
+This skill has a distinct body about verbose profile reporting, aggregated
+status counts, linked roots, and migration diagnostics so dedup does not
+collapse it with the compact sync fixture.
+`,
+      verbose: true
+    });
+
+    expect(verbose).toMatchObject({
+      outcome: "accepted",
+      sync: {
+        profiles: { codex: ["compact-propose-sync", "verbose-propose-sync"] },
+        linkedRoots: { codex: profileRoot },
+        profileStatus: {
+          codex: expect.arrayContaining([
+            expect.objectContaining({ name: "verbose-propose-sync" })
+          ])
+        }
+      }
+    });
   });
 
   it("does not load oversized installed resources into the dedup corpus (DoS guard)", async () => {

@@ -42,6 +42,14 @@ const NO_CONTROL_CHARS = /^[^\x00-\x1F\x7F]*$/;
 // no `\`, no `..`. The schema gate is layer one; syncProfiles also runs a
 // path-resolve check as defense-in-depth.
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+const agentNameSchema = z
+  .string()
+  .min(1)
+  .regex(AGENT_NAME_PATTERN, "agent name must match ^[a-z][a-z0-9-]*$");
+const agentsSchema = z.preprocess(
+  (value) => (value === undefined ? [] : value),
+  z.array(agentNameSchema).min(1, "at least one agent is required")
+);
 
 const binActionSchema = z.object({
   command: z
@@ -86,14 +94,7 @@ const schema = z.object({
   description: z.string().min(20),
   license: z.string().optional(),
   tags: z.array(z.string()).optional(),
-  agents: z
-    .array(
-      z
-        .string()
-        .min(1)
-        .regex(AGENT_NAME_PATTERN, "agent name must match ^[a-z][a-z0-9-]*$")
-    )
-    .optional(),
+  agents: agentsSchema,
   category: z.string().optional(),
   when_to_use: z.string().min(1).optional(),
   when_not_to_use: z.string().min(1).optional(),

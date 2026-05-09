@@ -12,6 +12,7 @@ import { currentStorageRoot } from "./setup.js";
 const skillMd = (name: string, body = "Body"): string => `---
 name: ${name}
 description: A description that is intentionally long enough to satisfy schema checks.
+agents: [codex]
 metadata:
   version: "1.0.0"
 ---
@@ -33,6 +34,7 @@ agents: [codex]
 const resourceSkillMd = (name: string, body = "Body"): string => `---
 name: ${name}
 description: A description that is intentionally long enough to satisfy schema checks.
+agents: [codex]
 metadata:
   version: "1.0.0"
 resources:
@@ -68,6 +70,48 @@ describe("skill CRUD MCP tool handlers", () => {
     expect(result).toMatchObject({ success: true, name: "local-add-skill" });
     const source = await readSkillSource("local-add-skill");
     expect(source).toMatchObject({ source: "local", identifier: "vendor/repo" });
+  });
+
+  it("compacts add_skill sync output unless verbose is requested", async () => {
+    const profileRoot = path.join(currentStorageRoot(), "add-codex-profile");
+
+    const compact = await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundleWithAgent("compact-add-skill", "Before"),
+      profile_roots: { codex: profileRoot }
+    });
+    expect(compact).toMatchObject({
+      success: true,
+      sync: {
+        profiles: { codex: 1 },
+        linkedRoots: { codex: profileRoot },
+        statusCounts: { codex: { installed: 1 } },
+        warningCount: 0
+      }
+    });
+    expect((compact.sync as Record<string, unknown>)).not.toHaveProperty("profileStatus");
+
+    const verboseRoot = path.join(currentStorageRoot(), "add-codex-profile-verbose");
+    const verbose = await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundleWithAgent("verbose-add-skill", "Before"),
+      profile_roots: { codex: verboseRoot },
+      verbose: true
+    });
+    expect(verbose).toMatchObject({
+      success: true,
+      sync: {
+        profiles: { codex: ["compact-add-skill", "verbose-add-skill"] },
+        linkedRoots: { codex: verboseRoot },
+        profileStatus: {
+          codex: expect.arrayContaining([
+            expect.objectContaining({ name: "verbose-add-skill" })
+          ])
+        }
+      }
+    });
   });
 
   it("updates an existing skill from explicit inline bytes and refuses name drift", async () => {
@@ -195,9 +239,12 @@ describe("skill CRUD MCP tool handlers", () => {
       },
       sync: {
         profiles: { codex: 1 },
-        linkedRoots: { codex: profileRoot }
+        linkedRoots: { codex: profileRoot },
+        statusCounts: { codex: { unchanged: 1 } },
+        warningCount: 0
       }
     });
+    expect((compact.sync as Record<string, unknown>)).not.toHaveProperty("profileStatus");
 
     const verbose = await updateSkill({
       name: "compact-sync-skill",
@@ -299,6 +346,7 @@ metadata:
       `---
 name: canonical-resource-skill
 description: A description that is intentionally long enough to satisfy schema checks.
+agents: [codex]
 metadata:
   version: "1.0.0"
 resources:

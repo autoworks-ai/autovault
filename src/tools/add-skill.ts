@@ -1,4 +1,5 @@
 import { addLocalSkill } from "../installer/local.js";
+import { formatResultSync } from "../util/sync-format.js";
 import { installSkill } from "./install-skill.js";
 
 export type AddSkillInput = {
@@ -9,6 +10,7 @@ export type AddSkillInput = {
   sync_profiles?: boolean;
   profile_roots?: Record<string, string>;
   discover_profile_roots?: boolean;
+  verbose?: boolean;
 };
 
 export async function addSkill(input: AddSkillInput): Promise<Record<string, unknown>> {
@@ -21,18 +23,24 @@ export async function addSkill(input: AddSkillInput): Promise<Record<string, unk
         warnings: ["source='local' requires skill_dir."]
       };
     }
-    return addLocalSkill({
-      skillDir: input.skill_dir,
-      source: input.identifier,
-      syncProfiles: input.sync_profiles ?? true,
-      profileRoots: input.profile_roots,
-      discoverProfileRoots: input.discover_profile_roots
-    });
+    return formatResultSync(
+      await addLocalSkill({
+        skillDir: input.skill_dir,
+        source: input.identifier,
+        syncProfiles: input.sync_profiles ?? true,
+        profileRoots: input.profile_roots,
+        discoverProfileRoots: input.discover_profile_roots
+      }),
+      input.verbose
+    );
   }
 
-  return installSkill({
-    source: input.source,
-    identifier: input.identifier,
-    version: input.version
-  });
+  return formatResultSync(
+    await installSkill({
+      source: input.source,
+      identifier: input.identifier,
+      version: input.version
+    }),
+    input.verbose
+  );
 }

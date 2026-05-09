@@ -87,7 +87,7 @@ async function writeLocalSkill(
   input: { name: string; agents?: string[]; resources?: Record<string, string> }
 ): Promise<void> {
   await fs.mkdir(root, { recursive: true });
-  const agents = input.agents ? `agents: [${input.agents.join(", ")}]\n` : "";
+  const agents = `agents: [${(input.agents ?? ["codex"]).join(", ")}]\n`;
   const resourcePaths = Object.keys(input.resources ?? {});
   const resources = resourcePaths.length > 0
     ? `resources:\n${resourcePaths.map((resource) => `  - path: ${resource}`).join("\n")}\n`

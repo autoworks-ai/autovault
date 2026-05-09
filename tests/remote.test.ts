@@ -217,6 +217,7 @@ describe("remote MCP server", () => {
       skill_md: `---
 name: query-gated-remote-skill
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 capabilities:
@@ -328,6 +329,7 @@ async function seedSkills(): Promise<void> {
     skill_md: `---
 name: secret-remote-skill
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 capabilities:
@@ -380,6 +382,7 @@ function skillMd(name: string): string {
   return `---
 name: ${name}
 description: A description that is intentionally long enough to satisfy the schema check threshold.
+agents: [codex]
 metadata:
   version: "1.0.0"
 ---

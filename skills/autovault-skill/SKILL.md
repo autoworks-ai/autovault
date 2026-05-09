@@ -76,54 +76,51 @@ visible.
 
 The compatibility server exposes these MCP tools:
 
-- `list_skills` - returns metadata for every installed skill.
-- `search_skills(query, top_k?)` - metadata text search across name, title,
-  description, tags, category, and `when_to_use`. Returns ranked matches with
-  scores and structured match reasons.
-- `get_skill(name, agent?)` - returns the full SKILL.md plus parsed metadata,
-  capabilities, required secrets, and source provenance. Pass `agent` to see
-  the generated variant with matching transforms applied.
-- `read_skill_resource(skill_name, resource_path)` - reads a file packaged
-  alongside a skill. Path traversal is blocked.
-- `install_skill({source, identifier, version?, skill_md?})` - installs
-  from `github`, `agentskills` (`slug[@version]`), or `url` (https only).
-  GitHub identifiers may be `owner/repo[@ref][:path/to/SKILL.md]`, a blob
-  URL, or a repo-root/tree URL. Repo-root/tree URLs discover `SKILL.md`
-  candidates; if there is more than one, the tool returns
-  `outcome: "multiple_candidates"` with exact candidate identifiers. If
-  `skill_md` is provided, it is treated as inline content; otherwise the
-  source adapter fetches it.
-- `propose_skill({skill_md, resources?, source_session?})` - validates and
-  installs a new skill. Outcome is one of `accepted`, `duplicate`,
-  `invalid`, or `security_blocked`.
-- `propose_skill_transform({transform_md, replace?})` - validates and stores a
-  vault-local transform overlay for an installed base skill. The base skill is
-  not modified.
-- `list_skill_transforms({base?})` - lists transform overlays and integrity
-  status.
-- `remove_skill_transform({base, name})` - deletes a transform overlay and
-  refreshes generated profiles.
+- `get_skill({name?, query?, agent?, top_k?, include_resources?})` - finds and
+  loads an installed skill. Pass `name` for an exact skill, or `query` to
+  search and load the best match.
+- `add_skill({source, identifier, version?, skill_dir?, sync_profiles?,
+  profile_roots?, discover_profile_roots?, verbose?})` - installs from
+  `github`, `agentskills`, `url`, or a local bundle. Local bundles sync
+  configured profile roots by default.
+- `update_skill({name, source?, identifier?, skill_dir?, skill_md?, resources?,
+  reuse_existing_resources?, verbose?})` - refreshes or replaces an installed
+  skill. Use `source: "inline"` plus `reuse_existing_resources: true` for
+  SKILL.md-only frontmatter edits.
+- `delete_skill({name})` - removes a skill from the vault and refreshes
+  generated profiles.
+- `propose_skill({skill_md, resources?, source_session?,
+  allow_synthesized_frontmatter?, check?, verbose?})` - validates, dedups, and
+  installs a new skill. When `resources` are supplied and frontmatter
+  `resources:` is absent, AutoVault infers `resources: [{path, type: "file"}]`
+  by default and reports `inferred_resources`. Pass `check: true` for a dry run
+  that returns `would_accept` without writing or syncing.
+- `bulk_import({source_dir, agents?, allow_synthesized_frontmatter?,
+  sync_profiles?, profile_roots?, discover_profile_roots?, verbose?})` -
+  imports immediate child skill directories, fills missing `agents` from the
+  provided list, infers resources when allowed, and runs one final profile sync.
 - `check_updates(skill?)` - compares installed content hash against the
   recorded source. Bundled inline skills are checked against the local bundled
-  source; other inline skills are reported as unchecked. Changed transform
-  bases appear in `transform_reviews` with the pinned old base content.
+  source; other inline skills are reported as unchecked.
 
 ## Optional MCP workflow
 
-1. If `mcp__autovault__search_skills` is available, call `search_skills` with a
-   concise query.
-2. If a result has high confidence, call `get_skill` and follow it.
+1. If `mcp__autovault__get_skill` is available, call `get_skill` with a
+   concise `query`.
+2. If a result has high confidence, follow the returned skill.
 3. If nothing fits, author a new `SKILL.md` and call `propose_skill`.
    Handle every outcome explicitly:
    - `accepted` - skill is stored under `$AUTOVAULT_STORAGE_PATH/skills/<name>`.
+   - `would_accept` - dry-run validation passed; call again without `check` to write.
    - `duplicate` - inspect `existing_match` and choose a `merge_options`
      value (`keep_existing`, `replace`, `merge`, `keep_both`).
    - `invalid` - fix the listed schema errors and resubmit.
    - `security_blocked` - rewrite the content to remove flagged patterns.
-4. Use `propose_skill_transform` instead of forking a skill when the user wants
-   an agent/workspace-specific variant such as different research tools or
-   output channels.
-5. Periodically call `check_updates` to detect drift for skills installed from a remote source, bundled inline skills, or transforms pinned to an older base.
+4. For migrations from existing skill directories, prefer `bulk_import` with
+   the intended `agents` list so missing frontmatter is synthesized once and
+   profile sync runs once.
+5. Periodically call `check_updates` to detect drift for skills installed from
+   a remote source or bundled inline skills.
 
 Skip this workflow entirely when the MCP tools are not connected. Missing MCP
 tools are not an error for filesystem-synced skills.
@@ -134,6 +131,7 @@ tools are not an error for filesystem-synced skills.
 ---
 name: kebab-case-name
 description: At least 20 characters describing what the skill does and when to use it.
+agents: [claude-code, codex]
 metadata:
   version: "1.0.0"
 ---
@@ -141,7 +139,9 @@ metadata:
 
 Optional but recommended fields: `tags`, `category`, `license`,
 `capabilities` (`network`, `filesystem`, `tools`), and
-`requires-secrets`.
+`requires-secrets`. If the bundle ships files beyond `SKILL.md`, declare them
+in `resources:` with `type: file`, or let `propose_skill`/`bulk_import` infer
+that list when `allow_synthesized_frontmatter` is not false.
 
 ## Security expectations
 
