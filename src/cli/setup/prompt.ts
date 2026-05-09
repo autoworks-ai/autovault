@@ -64,29 +64,32 @@ export async function askChoice<T>(
   if (choices.length === 0) throw new Error("askChoice requires at least one choice");
   return withPromptStreams(async (stream) => {
     const byKey = new Map<string, { value: T; applyToAll: boolean }>();
-    const options: Array<{ value: string; label: string; hint?: string }> = [];
+    const options: Array<{ value: string; label: string; hint?: string; disabled?: boolean }> = [];
 
     for (const choice of choices) {
       byKey.set(choice.key, { value: choice.value, applyToAll: false });
       options.push({
         value: choice.key,
         label: choice.label,
-        hint: choice.hint
+        hint: choice.hint,
+        disabled: choice.disabled
       });
       if (choice.applyToAllKey) {
         byKey.set(choice.applyToAllKey, { value: choice.value, applyToAll: true });
         options.push({
           value: choice.applyToAllKey,
           label: choice.label,
-          hint: "apply to all remaining"
+          hint: "apply to all remaining",
+          disabled: choice.disabled
         });
       }
     }
 
+    const initialValue = choices.find((choice) => !choice.disabled)?.key ?? choices[0].key;
     const selected = await selectKey<string>({
       message: prompt,
       options,
-      initialValue: choices[0].key,
+      initialValue,
       caseSensitive: true,
       input: stream.input,
       output: stream.output,

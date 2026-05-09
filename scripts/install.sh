@@ -174,6 +174,14 @@ detect_arch() {
   esac
 }
 
+node_meets_minimum() {
+  [ "$NODE_MAJOR" -gt 20 ] && return 0
+  [ "$NODE_MAJOR" -lt 20 ] && return 1
+  [ "$NODE_MINOR" -gt 19 ] && return 0
+  [ "$NODE_MINOR" -lt 19 ] && return 1
+  [ "$NODE_PATCH" -ge 0 ]
+}
+
 path_contains_bin() {
   case ":$PATH:" in
     *":$BIN_DIR:"*) return 0 ;;
@@ -319,10 +327,12 @@ PLATFORM="$(detect_platform)"
 ARCH="$(detect_arch)"
 NODE_VERSION="$(node --version 2>/dev/null | sed 's/^v//' || printf 'unknown')"
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || printf '0')"
+NODE_MINOR="$(node -p "process.versions.node.split('.')[1]" 2>/dev/null || printf '0')"
+NODE_PATCH="$(node -p "process.versions.node.split('.')[2]" 2>/dev/null || printf '0')"
 
 completed "$PLATFORM $ARCH / Node $NODE_VERSION"
 
-[ "$NODE_MAJOR" -ge 20 ] || fail "Node.js >= 20 is required; found $(node --version 2>/dev/null || printf 'unknown')"
+node_meets_minimum || fail "Node.js >= 20.19.0 is required; found $(node --version 2>/dev/null || printf 'unknown')"
 
 if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
   plain "${BOLD}Install plan${RESET}"

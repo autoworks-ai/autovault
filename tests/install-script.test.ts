@@ -2,9 +2,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const INSTALL_SH = path.join(REPO_ROOT, "scripts", "install.sh");
 
 type RunResult = {
@@ -155,6 +156,39 @@ describe("install.sh", () => {
     expect(result.stdout).toContain("Seeding bundled skills... log tail");
     expect(result.stdout).toContain("stdout noise");
     expect(result.stdout).toContain("stderr noise");
+  });
+
+  it("rejects Node 20 builds below the package engine floor", async () => {
+    const fakeBin = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-node-test-"));
+    await fs.writeFile(
+      path.join(fakeBin, "node"),
+      [
+        "#!/bin/sh",
+        "case \"$1\" in",
+        "  --version) printf 'v20.18.0\\n'; exit 0 ;;",
+        "  -p)",
+        "    case \"$2\" in",
+        "      *\"[0]\"*) printf '20\\n' ;;",
+        "      *\"[1]\"*) printf '18\\n' ;;",
+        "      *\"[2]\"*) printf '0\\n' ;;",
+        "      *) printf '0\\n' ;;",
+        "    esac",
+        "    exit 0",
+        "    ;;",
+        "esac",
+        "exit 1"
+      ].join("\n"),
+      { mode: 0o755 }
+    );
+
+    const result = await runInstaller({
+      AUTOVAULT_NO_SETUP: "1",
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("Node.js >= 20.19.0 is required");
+    expect(result.stderr).toContain("v20.18.0");
   });
 
   it("reports when the shim directory is already on PATH", async () => {
