@@ -8,6 +8,7 @@ Cursor, Codex, AutoHub, Railway, Docker, or any other MCP-compatible host.
 
 - Node.js **>= 24.0.0** (use `node --version` to confirm)
 - `curl`, `tar`, and `npm`
+- `jq` for the verification probes in §5b (optional otherwise — pipe responses through `jq` for pretty JSON, or strip `| jq` to read raw)
 - An MCP-compatible host (Claude Code, Cursor, Codex, etc.)
 - Git, if you choose the manual clone path
 
