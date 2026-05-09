@@ -248,5 +248,28 @@ describe("install.sh", () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toMatch(/stage 6\/6\s+setup\s+deferred for non-interactive shell/);
     expect(result.stdout).not.toContain("fake setup ran");
+    expect(result.stdout).toContain("autovault setup");
+  });
+
+  it("auto-confirms without AUTOVAULT_YES when CLAUDE_CODE is set", async () => {
+    const result = await runInstaller({
+      AUTOVAULT_NO_SETUP: "1",
+      AUTOVAULT_YES: "",
+      CLAUDE_CODE: "1"
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Headless environment detected");
+  });
+
+  it("auto-confirms without AUTOVAULT_YES when CI is set", async () => {
+    const result = await runInstaller({
+      AUTOVAULT_NO_SETUP: "1",
+      AUTOVAULT_YES: "",
+      CI: "true"
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Headless environment detected");
   });
 });
