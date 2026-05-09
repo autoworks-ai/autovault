@@ -36,6 +36,18 @@ describe("profile sync", () => {
     expect(result.profiles["claude-code"]).toEqual(["claude-only", "shared-skill"]);
     expect(result.profiles.codex).toEqual(["shared-skill"]);
     expect(result.warnings.join("\n")).toContain("hidden-skill");
+    expect(result.profileStatus["claude-code"]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "shared-skill",
+          status: "installed",
+          linked_root: externalRoot,
+          visible_to_profile: true,
+          restart_required: true,
+          loaded_in_current_session: "unknown"
+        })
+      ])
+    );
 
     const profileLink = await fs.readlink(path.join(currentStorageRoot(), "profiles", "claude-code", "shared-skill"));
     expect(path.basename(profileLink)).toBe("shared-skill");
@@ -47,11 +59,20 @@ describe("profile sync", () => {
       path.join(currentStorageRoot(), "profiles", "claude-code", "stale-skill"),
       path.join(externalRoot, "stale-skill")
     );
-    await syncProfiles({
+    const unchanged = await syncProfiles({
       profileRoots: {
         "claude-code": externalRoot
       }
     });
+    expect(unchanged.profileStatus["claude-code"]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "shared-skill",
+          status: "unchanged",
+          restart_required: false
+        })
+      ])
+    );
     await expect(fs.lstat(path.join(externalRoot, "stale-skill"))).rejects.toThrow();
 
     await expect(fs.stat(path.join(externalRoot, "system-skill"))).resolves.toBeTruthy();
@@ -92,6 +113,16 @@ describe("profile sync", () => {
 
     const result = await syncProfiles({ profileRoots: { "claude-code": externalRoot } });
     expect(result.warnings.join("\n")).toMatch(/user-managed path already exists/);
+    expect(result.profileStatus["claude-code"]).toEqual([
+      expect.objectContaining({
+        name: "conflict",
+        status: "failed",
+        linked_root: externalRoot,
+        visible_to_profile: false,
+        restart_required: false,
+        loaded_in_current_session: "unknown"
+      })
+    ]);
     await expect(fs.stat(path.join(externalRoot, "conflict"))).resolves.toBeTruthy();
   });
 

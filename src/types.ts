@@ -1,10 +1,21 @@
 export type SkillSummary = {
   name: string;
+  title?: string;
   description: string;
   version: string;
   tags: string[];
   category?: string;
   agents: string[];
+  when_to_use?: string;
+  when_not_to_use?: string;
+  risk_level?: string;
+  capabilities: {
+    network: boolean;
+    filesystem: "readonly" | "readwrite";
+    tools: string[];
+  };
+  requires_tools: string[];
+  requires_secrets: Array<{ name: string; description?: string; required?: boolean }>;
 };
 
 export type SkillBinAction = {

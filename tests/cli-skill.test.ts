@@ -217,6 +217,41 @@ bin:
     expect(result.stdout).toMatch(/setup/);
   });
 
+  it("searches installed skills from the skill CLI", async () => {
+    await writeSkill("copilot-review", `---
+name: copilot-review
+description: Fix Copilot comments on a pull request and resolve review threads.
+tags:
+  - copilot
+  - pull-request
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`);
+    const result = await runCli(["skill", "search", "fix", "copilot", "comments"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("copilot-review");
+    expect(result.stdout).toContain("matched");
+    expect(result.stdout).toContain("tags: copilot, pull-request");
+  });
+
+  it("skill search reports empty matches", async () => {
+    const result = await runCli(["skill", "search", "nope-nope-nope"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("No matching skills.\n");
+  });
+
+  it("skill search honors --top-k", async () => {
+    await writeSkill("alpha-search", fixtureSkill("alpha-search"));
+    await writeSkill("beta-search", fixtureSkill("beta-search"));
+    const result = await runCli(["skill", "search", "search", "--top-k", "1"]);
+    expect(result.exitCode).toBe(0);
+    const resultLines = result.stdout.split("\n").filter((line) => /^[a-z].*\t/.test(line));
+    expect(resultLines).toHaveLength(1);
+  });
+
   it("prints the resolved script path + cwd via 'skill which' (no args case)", async () => {
     await writeSkill("which1", fixtureSkill("which1"), [
       { path: "bin/setup", content: "#!/usr/bin/env bash\nexit 0\n" }

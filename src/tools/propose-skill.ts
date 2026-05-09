@@ -277,9 +277,10 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
   // a dedup-rejected state instead of fixing the profile-root conflict. Surface
   // as a warning, log the detail, and return accepted.
   const postCommitWarnings: string[] = [];
+  let sync: Awaited<ReturnType<typeof syncProfiles>> | undefined;
   try {
-    const syncResult = await syncProfiles();
-    for (const w of syncResult.warnings) postCommitWarnings.push(w);
+    sync = await syncProfiles();
+    for (const w of sync.warnings) postCommitWarnings.push(w);
   } catch (error) {
     const message = `Profile sync failed after propose (vault state is correct): ${String(error)}`;
     log.warn("propose_skill.profile_sync_failed", { name: nextName, error: String(error) });
@@ -302,6 +303,7 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
       tier: dedup.tier,
       similarity: dedup.similarity,
       similar_to: dedup.existingName ?? null
-    }
+    },
+    sync
   };
 }

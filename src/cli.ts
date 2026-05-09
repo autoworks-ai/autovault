@@ -23,6 +23,7 @@ function usage(): never {
   autovault serve
   autovault skill <action> <name>
   autovault skill list
+  autovault skill search <query> [--top-k N]
   autovault skill which <name> [<action>]
 `);
   process.exit(1);

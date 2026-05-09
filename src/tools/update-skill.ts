@@ -235,6 +235,7 @@ function formatUpdateResult(result: Record<string, unknown>, verbose?: boolean):
   const syncRecord = sync as {
     profiles?: Record<string, string[]>;
     linkedRoots?: Record<string, string>;
+    profileStatus?: Record<string, unknown[]>;
     warnings?: string[];
   };
   const compactSync = {
@@ -242,6 +243,7 @@ function formatUpdateResult(result: Record<string, unknown>, verbose?: boolean):
       Object.entries(syncRecord.profiles ?? {}).map(([agent, names]) => [agent, names.length])
     ),
     linkedRoots: syncRecord.linkedRoots ?? {},
+    profileStatus: syncRecord.profileStatus ?? {},
     warningCount: syncRecord.warnings?.length ?? 0
   };
   const { sync: _sync, ...rest } = result;

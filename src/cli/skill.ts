@@ -12,6 +12,7 @@ import {
   skillDir,
   verifyInstalledIntegrity
 } from "../storage/index.js";
+import { searchSkills } from "../tools/search-skills.js";
 import { parseFrontmatter } from "../validation/frontmatter.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { verifyFile } from "../util/sign.js";
@@ -61,6 +62,8 @@ function usage(): never {
   autovault skill <action> <name> [args...]
                                       # run bin.<action> declared by skill <name>
   autovault skill list                # list installed skills and their declared bin actions
+  autovault skill search <query> [--top-k N]
+                                      # metadata text search across installed skills
   autovault skill which <name> [<action>]
                                        # print resolved script path(s) without running
 `);
@@ -88,6 +91,11 @@ export async function runSkillCommand(argv: string[]): Promise<void> {
     return;
   }
 
+  if (sub === "search") {
+    await searchAction(rest);
+    return;
+  }
+
   if (sub === "which") {
     const [name, action] = rest;
     if (!name) usage();
@@ -102,6 +110,42 @@ export async function runSkillCommand(argv: string[]): Promise<void> {
   const [name] = rest;
   if (!name) usage();
   await runAction(sub, name, rest.slice(1));
+}
+
+async function searchAction(args: string[]): Promise<void> {
+  let topK = 5;
+  const queryParts: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--top-k") {
+      const raw = args[i + 1];
+      const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+      if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 50) {
+        fail("--top-k must be an integer between 1 and 50");
+      }
+      topK = parsed;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("-")) usage();
+    queryParts.push(arg);
+  }
+
+  const query = queryParts.join(" ").trim();
+  if (query.length === 0) usage();
+
+  const result = await searchSkills(query, topK);
+  if (result.matches.length === 0) {
+    process.stdout.write("No matching skills.\n");
+    return;
+  }
+
+  for (const match of result.matches) {
+    process.stdout.write(`${match.name}\t${match.score.toFixed(3)}\t${match.reason}\n`);
+    process.stdout.write(`  ${match.description}\n`);
+    if (match.tags.length > 0) process.stdout.write(`  tags: ${match.tags.join(", ")}\n`);
+    if (match.category) process.stdout.write(`  category: ${match.category}\n`);
+  }
 }
 
 async function listAction(): Promise<void> {
