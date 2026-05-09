@@ -10,7 +10,7 @@
 #    - Triggers npm publish + GitHub Packages publish after the release is approved
 #
 # Commit message format:
-#   feat: add new feature          → minor version bump (patch while pre-1.0)
+#   feat: add new feature          → minor version bump
 #   fix: fix a bug                 → patch version bump
 #   feat!: breaking change         → major version bump
 #   chore/docs: no version bump
