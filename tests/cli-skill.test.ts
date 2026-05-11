@@ -2,7 +2,13 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { writeSkill } from "../src/storage/index.js";
+import {
+  readSkillSourceStatus,
+  skillDir,
+  verifyInstalledIntegrity,
+  writeSkill
+} from "../src/storage/index.js";
+import { bundleHash } from "../src/util/hash.js";
 import { currentStorageRoot } from "./setup.js";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -57,6 +63,17 @@ bin:
     command: bin/setup
 ${opts.args ? `    args: ${JSON.stringify(opts.args)}\n` : ""}    description: Run setup
     requires-tty: false
+---
+
+# Body
+`;
+
+const simpleSkill = (name: string) => `---
+name: ${name}
+description: A description that is intentionally long enough to satisfy schema length checks.
+metadata:
+  version: "1.0.0"
+agents: [codex]
 ---
 
 # Body
@@ -385,6 +402,109 @@ metadata:
     expect(parsed.skills[0]?.integrity.kind).toBe("tampered");
     await expect(fs.access(path.join(skillRoot, ".DS_Store"))).rejects.toThrow();
     await expect(fs.access(path.join(skillRoot, ".env"))).resolves.toBeUndefined();
+  });
+
+  it("doctor --repair signs an unsigned valid local skill and records local source metadata", async () => {
+    const name = "unsigned-repair";
+    const root = skillDir(name);
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, "SKILL.md"), simpleSkill(name), "utf-8");
+
+    const result = await runCli(["doctor", name, "--repair", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      summary: { ok: number; errors: number };
+      skills: Array<{ repaired: boolean; repair_status: string; repair_reason: string }>;
+    };
+    expect(parsed.summary).toMatchObject({ ok: 1, errors: 0 });
+    expect(parsed.skills[0]).toMatchObject({
+      repaired: true,
+      repair_status: "repaired"
+    });
+    expect(parsed.skills[0]?.repair_reason).toMatch(/local:unsigned-repair/);
+    await expect(verifyInstalledIntegrity(name)).resolves.toMatchObject({ kind: "ok" });
+    const source = await readSkillSourceStatus(name);
+    expect(source.kind).toBe("present");
+    if (source.kind === "present") {
+      expect(source.source.source).toBe("local");
+      expect(source.source.identifier).toBe("local:unsigned-repair");
+      expect(source.source.contentHash).toBe(bundleHash(simpleSkill(name), []));
+    }
+  });
+
+  it("doctor --repair re-signs a local-source SKILL.md edit and preserves its identifier", async () => {
+    const name = "local-repair";
+    const updated = `${simpleSkill(name)}\n## Local edit\n`;
+    await writeSkill(name, simpleSkill(name), [], {
+      source: "local",
+      identifier: "vendor/local-repair",
+      fetchedAt: new Date().toISOString(),
+      contentHash: "oldhash"
+    });
+    await fs.writeFile(path.join(skillDir(name), "SKILL.md"), updated, "utf-8");
+    await expect(verifyInstalledIntegrity(name)).resolves.toMatchObject({ kind: "tampered" });
+
+    const result = await runCli(["doctor", name, "--repair", "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      skills: Array<{ repaired: boolean; repair_status: string; repair_reason: string }>;
+    };
+    expect(parsed.skills[0]).toMatchObject({ repaired: true, repair_status: "repaired" });
+    await expect(verifyInstalledIntegrity(name)).resolves.toMatchObject({ kind: "ok" });
+    const source = await readSkillSourceStatus(name);
+    expect(source.kind).toBe("present");
+    if (source.kind === "present") {
+      expect(source.source.identifier).toBe("vendor/local-repair");
+      expect(source.source.contentHash).toBe(bundleHash(updated, []));
+    }
+  });
+
+  it("doctor --repair refuses to bless remote-source tampering", async () => {
+    const name = "remote-repair";
+    await writeSkill(name, simpleSkill(name), [], {
+      source: "github",
+      identifier: "owner/repo",
+      fetchedAt: new Date().toISOString(),
+      contentHash: "oldhash",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+    });
+    await fs.writeFile(path.join(skillDir(name), "SKILL.md"), `${simpleSkill(name)}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--repair", "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      skills: Array<{ repaired: boolean; repair_status: string; repair_reason: string }>;
+    };
+    expect(parsed.skills[0]).toMatchObject({
+      repaired: false,
+      repair_status: "refused"
+    });
+    expect(parsed.skills[0]?.repair_reason).toMatch(/remote source 'github'/);
+    await expect(verifyInstalledIntegrity(name)).resolves.toMatchObject({ kind: "tampered" });
+  });
+
+  it("doctor --repair refuses an invalid current bundle without writing a manifest", async () => {
+    const name = "invalid-repair";
+    const root = skillDir(name);
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, "SKILL.md"), simpleSkill(name), "utf-8");
+    await fs.writeFile(path.join(root, "extra.md"), "not declared\n", "utf-8");
+
+    const result = await runCli(["doctor", name, "--repair", "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      skills: Array<{ repaired: boolean; repair_status: string; repair_reason: string }>;
+    };
+    expect(parsed.skills[0]).toMatchObject({
+      repaired: false,
+      repair_status: "refused"
+    });
+    expect(parsed.skills[0]?.repair_reason).toMatch(/Bundle validation failed/);
+    await expect(fs.access(path.join(root, ".autovault-manifest"))).rejects.toThrow();
   });
 
   it("'skill which' resolves a backslash-form bin command via canonical normalization (round-32)", async () => {

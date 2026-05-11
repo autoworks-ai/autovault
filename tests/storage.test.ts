@@ -11,6 +11,7 @@ import {
   readSkillSource,
   readSkillSourceStatus,
   recoverOrphanBackups,
+  skillDir,
   verifyInstalledIntegrity,
   writeSkill,
   writeSkillResources
@@ -1091,5 +1092,58 @@ bin:
     await holder;
     await reader;
     expect(readerSettled).toBe(true);
+  });
+
+  it("deduplicates repeated SKILL.md integrity mismatches", async () => {
+    const name = "dedupe-mismatch";
+    await writeSkill(name, skillMd.replace("parsed-skill", name));
+    await fs.writeFile(
+      path.join(skillDir(name), "SKILL.md"),
+      `${skillMd.replace("parsed-skill", name)}\n# Tampered\n`,
+      "utf-8"
+    );
+
+    const status = await verifyInstalledIntegrity(name);
+
+    expect(status.kind).toBe("tampered");
+    if (status.kind === "tampered") {
+      expect(
+        status.mismatches.filter(
+          (mismatch) => mismatch.file === "SKILL.md" && mismatch.reason === "signature_invalid"
+        )
+      ).toHaveLength(1);
+    }
+  });
+
+  it("logs the same readSkill signature warning once per process", async () => {
+    const name = "warn-once";
+    await writeSkill(name, skillMd.replace("parsed-skill", name));
+    await fs.writeFile(
+      path.join(skillDir(name), "SKILL.md"),
+      `${skillMd.replace("parsed-skill", name)}\n# Tampered\n`,
+      "utf-8"
+    );
+
+    const calls: Array<{ msg: string; meta?: Record<string, unknown> }> = [];
+    const logModule = await import("../src/util/log.js");
+    const original = logModule.log.warn;
+    logModule.log.warn = (msg: string, meta?: Record<string, unknown>) => {
+      calls.push({ msg, meta });
+    };
+    try {
+      await readSkill(name);
+      await readSkill(name);
+    } finally {
+      logModule.log.warn = original;
+    }
+
+    expect(
+      calls.filter(
+        (entry) =>
+          entry.msg === "storage.signature_mismatch" &&
+          entry.meta?.name === name &&
+          entry.meta?.file === "SKILL.md"
+      )
+    ).toHaveLength(1);
   });
 });

@@ -20,7 +20,7 @@ function usage(): never {
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
   autovault setup [--json] [--review] [--advanced]
-  autovault doctor [skill-name] [--clean] [--json]
+  autovault doctor [skill-name] [--clean] [--repair] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
