@@ -14,6 +14,7 @@ beforeEach(() => {
   process.env.AUTOVAULT_STORAGE_PATH = tempRoot;
   delete process.env.AUTOVAULT_DB_PATH;
   delete process.env.AUTOVAULT_PROFILE_LINKS;
+  delete process.env.AUTOVAULT_PROFILE_CONFIG_PATH;
   delete process.env.AUTOVAULT_PUBLIC_URL;
   delete process.env.AUTOVAULT_HTTP_PORT;
   delete process.env.AUTOVAULT_ALLOWED_ORIGINS;
@@ -33,6 +34,7 @@ afterEach(() => {
     tempRoot = null;
   }
   process.env.AUTOVAULT_MODE = "local";
+  delete process.env.AUTOVAULT_PROFILE_CONFIG_PATH;
   delete process.env.AUTOVAULT_PUBLIC_URL;
   delete process.env.AUTOVAULT_HTTP_PORT;
   delete process.env.AUTOVAULT_ALLOWED_ORIGINS;

@@ -10,6 +10,7 @@ import {
   auditRepo,
   formatAuditRepoMarkdown,
   importAutohubCapabilities,
+  listConfiguredProfiles,
   resolveCapabilities,
   syncProfiles,
   type AddLocalSkillResult
@@ -19,6 +20,7 @@ function usage(): never {
   process.stderr.write(`Usage:
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
+  autovault profiles list [--json]
   autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
@@ -55,6 +57,34 @@ function hostRestartGuidance(): string[] {
     "restart Claude Code, Codex, or Cursor if they cache filesystem skills",
     "verify from the host by loading the autovault-skill skill"
   ];
+}
+
+function formatProfilesList(result: Awaited<ReturnType<typeof listConfiguredProfiles>>): string {
+  const theme = makeTheme(process.stdout);
+  const lines: string[] = [];
+  lines.push("");
+  lines.push(`${badge("profiles", theme)} ${theme.style.bold("Configured profiles")}`);
+  lines.push(`${theme.style.dim("config")} ${result.configPath}`);
+  if (result.profiles.length === 0) {
+    lines.push(`  ${theme.style.dim("No named profiles configured.")}`);
+    return `${lines.join("\n")}\n`;
+  }
+  for (const profile of result.profiles) {
+    const include =
+      profile.include_tags === "*" ? "*" : profile.include_tags.join(", ");
+    const exclude =
+      profile.exclude_tags.length === 0 ? "none" : profile.exclude_tags.join(", ");
+    lines.push(
+      `  ${theme.style.green(theme.symbol.check)} ${profile.name} ${theme.style.dim(profile.target)}`
+    );
+    lines.push(`    agent ${profile.agent}`);
+    lines.push(`    include ${include}`);
+    lines.push(`    exclude ${exclude}`);
+    lines.push(
+      `    skills ${profile.skills.length === 0 ? "none" : profile.skills.join(", ")}`
+    );
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): string {
@@ -145,6 +175,18 @@ async function main(): Promise<void> {
       )}\n`
     );
     for (const line of hostRestartGuidance()) process.stderr.write(`${line}\n`);
+    return;
+  }
+
+  if (command === "profiles") {
+    const [subcommand, ...profileArgs] = args;
+    if (subcommand !== "list") usage();
+    const result = await listConfiguredProfiles();
+    if (hasFlag(profileArgs, "--json")) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      process.stdout.write(formatProfilesList(result));
+    }
     return;
   }
 
