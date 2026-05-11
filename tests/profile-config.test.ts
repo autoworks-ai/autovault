@@ -81,7 +81,9 @@ describe("named profile config", () => {
       }),
       "utf-8"
     );
-    await expect(loadNamedProfileConfig()).rejects.toThrow(/profile name/i);
+    await expect(loadNamedProfileConfig()).rejects.toThrow(
+      new RegExp(`${currentStorageRoot()}.*profile name`, "s")
+    );
 
     await fs.writeFile(
       path.join(currentStorageRoot(), "profiles.config.json"),

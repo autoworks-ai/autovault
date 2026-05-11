@@ -94,7 +94,7 @@ export async function loadNamedProfileConfig(
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
       .join("; ");
-    throw new Error(`Invalid AutoVault profile config: ${issues}`);
+    throw new Error(`Invalid AutoVault profile config: ${configPath}: ${issues}`);
   }
 
   const names = new Map<string, number>();

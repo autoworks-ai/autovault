@@ -243,6 +243,33 @@ describe("profile sync", () => {
     await expect(fs.lstat(path.join(target, "shared-target-skill"))).rejects.toThrow();
   });
 
+  it("aborts when a named profile reuses a legacy profile name", async () => {
+    await ensureStorage();
+    await writeSkill("name-collision-skill", skill("name-collision-skill", ["codex"]));
+
+    const legacyTarget = path.join(currentStorageRoot(), "legacy-codex-target");
+    const namedTarget = path.join(currentStorageRoot(), "named-codex-target");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex",
+            agent: "codex",
+            target: namedTarget
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await expect(syncProfiles({ profileRoots: { codex: legacyTarget } })).rejects.toThrow(
+      /Duplicate profile name/
+    );
+    await expect(fs.lstat(path.join(legacyTarget, "name-collision-skill"))).rejects.toThrow();
+    await expect(fs.lstat(path.join(namedTarget, "name-collision-skill"))).rejects.toThrow();
+  });
+
   it("preserves non-symlink external skill conflicts with warnings", async () => {
     await ensureStorage();
     await writeSkill("conflict", skill("conflict", ["claude-code"]));

@@ -259,6 +259,15 @@ function assertNoDuplicateProfileTargets(
   namedProfiles: NamedProfile[]
 ): void {
   if (namedProfiles.length === 0) return;
+  const legacyNames = new Set(Object.keys(profileRoots));
+  for (const profile of namedProfiles) {
+    if (legacyNames.has(profile.name)) {
+      throw new Error(
+        `Duplicate profile name "${profile.name}" between generated agent profiles and named profiles. Choose a distinct named profile name.`
+      );
+    }
+  }
+
   const seen = new Map<string, string>();
   const add = (name: string, target: string): void => {
     const normalized = normalizeProfileTarget(expandHome(target));
