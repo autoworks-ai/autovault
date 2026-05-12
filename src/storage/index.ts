@@ -20,6 +20,8 @@ import { tryWithStorageLock, withStorageLock } from "./lock.js";
 const SOURCE_FILE = ".autovault-source.json";
 const SIGNATURE_FILE = ".autovault-signature";
 const MANIFEST_FILE = ".autovault-manifest";
+const emittedSignatureWarnings = new Set<string>();
+const MAX_EMITTED_SIGNATURE_WARNINGS = 1024;
 
 // Reserved on-disk filenames a resource MUST NOT canonicalize to. Without this
 // guard a caller-supplied resource named `SKILL.md` would overwrite the
@@ -386,6 +388,22 @@ async function readManifest(name: string): Promise<SignedManifest | null> {
   return parseManifest(raw);
 }
 
+function warnSignatureMismatchOnce(
+  name: string,
+  file: string,
+  fields: Record<string, unknown> = {}
+): void {
+  const reason = typeof fields.reason === "string" ? fields.reason : "";
+  const key = `${name}\0${file}\0${reason}`;
+  if (emittedSignatureWarnings.has(key)) return;
+  if (emittedSignatureWarnings.size >= MAX_EMITTED_SIGNATURE_WARNINGS) {
+    const oldest = emittedSignatureWarnings.values().next().value;
+    if (typeof oldest === "string") emittedSignatureWarnings.delete(oldest);
+  }
+  emittedSignatureWarnings.add(key);
+  log.warn("storage.signature_mismatch", { ...fields, name, file });
+}
+
 async function verifySignatureIfPresent(name: string, skillMd: string): Promise<void> {
   // A manifest file that exists but is corrupt or missing the SKILL.md entry
   // must still surface a warning — silently falling through to the legacy
@@ -395,22 +413,14 @@ async function verifySignatureIfPresent(name: string, skillMd: string): Promise<
   if (raw !== null) {
     const manifest = parseManifest(raw);
     if (!manifest) {
-      log.warn("storage.signature_mismatch", {
-        name,
-        file: "SKILL.md",
-        reason: "manifest_corrupt"
-      });
+      warnSignatureMismatchOnce(name, "SKILL.md", { reason: "manifest_corrupt" });
       return;
     }
     const result = await verifyFile(manifest, name, "SKILL.md", skillMd);
     if (!result.present) {
-      log.warn("storage.signature_mismatch", {
-        name,
-        file: "SKILL.md",
-        reason: "manifest_missing_skillmd"
-      });
+      warnSignatureMismatchOnce(name, "SKILL.md", { reason: "manifest_missing_skillmd" });
     } else if (!result.valid) {
-      log.warn("storage.signature_mismatch", { name, file: "SKILL.md" });
+      warnSignatureMismatchOnce(name, "SKILL.md", { reason: "signature_invalid" });
     }
     return;
   }
@@ -427,16 +437,12 @@ async function verifySignatureIfPresent(name: string, skillMd: string): Promise<
     // attacker deleted the integrity file to silence tamper warnings on a
     // mutated SKILL.md. writeSkill always writes a manifest, so on any skill
     // produced by this codebase reaching this branch is suspicious.
-    log.warn("storage.signature_mismatch", {
-      name,
-      file: "SKILL.md",
-      reason: "no_integrity_file"
-    });
+    warnSignatureMismatchOnce(name, "SKILL.md", { reason: "no_integrity_file" });
     return;
   }
   const ok = await verifyContent(skillMd, signature);
   if (!ok) {
-    log.warn("storage.signature_mismatch", { name, file: "SKILL.md" });
+    warnSignatureMismatchOnce(name, "SKILL.md", { reason: "signature_invalid" });
   }
 }
 
@@ -511,6 +517,7 @@ async function verifyIntegrityLocked(
     const realRoot = realpathIfExists(root) ?? resolvedRoot;
     const mismatches: Array<{ file: string; reason: IntegrityMismatchReason }> = [];
     const ignoredArtifacts: string[] = [];
+    const checked = new Set<string>();
     const verified = new Set<string>();
 
     async function readManifestEntry(
@@ -550,6 +557,7 @@ async function verifyIntegrityLocked(
     }
 
     async function verifyEntry(filePath: string, maxBytes: number): Promise<string | null> {
+      checked.add(filePath);
       const read = await readManifestEntry(filePath, maxBytes);
       if (read.kind === "mismatch") {
         mismatches.push({ file: filePath, reason: read.reason });
@@ -618,7 +626,7 @@ async function verifyIntegrityLocked(
     // and extra entries so an attacker who adds a stale extra entry still
     // produces a missing_on_disk or invalid-bytes mismatch.
     for (const filePath of Object.keys(manifest.files)) {
-      if (verified.has(filePath)) continue;
+      if (checked.has(filePath) || verified.has(filePath)) continue;
       await verifyEntry(
         filePath,
         filePath === "SKILL.md" ? MAX_SKILL_MD_BYTES : MAX_RESOURCE_BYTES
@@ -1296,20 +1304,12 @@ export async function readSkillSourceStatus(name: string): Promise<SkillSourceSt
       if (legacy.kind === "legacy") {
         return { kind: "legacy", source: parsed };
       }
-      log.warn("storage.signature_mismatch", {
-        name,
-        file: SOURCE_FILE,
-        reason: "no_manifest"
-      });
+      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "no_manifest" });
       return { kind: "tampered", reason: "manifest_missing_entry" };
     }
     const manifest = parseManifest(manifestRaw);
     if (!manifest) {
-      log.warn("storage.signature_mismatch", {
-        name,
-        file: SOURCE_FILE,
-        reason: "manifest_corrupt"
-      });
+      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "manifest_corrupt" });
       return { kind: "tampered", reason: "manifest_corrupt" };
     }
     const result = await verifyFile(manifest, name, SOURCE_FILE, raw);
@@ -1328,7 +1328,7 @@ export async function readSkillSourceStatus(name: string): Promise<SkillSourceSt
       return { kind: "tampered", reason: "manifest_missing_entry" };
     }
     if (!result.valid) {
-      log.warn("storage.signature_mismatch", { name, file: SOURCE_FILE });
+      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "signature_invalid" });
       return { kind: "tampered", reason: "signature_invalid" };
     }
     return { kind: "present", source: parsed };
