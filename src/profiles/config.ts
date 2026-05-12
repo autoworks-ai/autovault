@@ -72,12 +72,13 @@ export function normalizeProfileTarget(target: string): string {
 export async function loadNamedProfileConfig(
   configPath = loadConfig().profileConfigPath
 ): Promise<NamedProfileConfig> {
+  const resolvedPath = path.resolve(expandHome(configPath));
   let raw: string;
   try {
-    raw = await fs.readFile(configPath, "utf-8");
+    raw = await fs.readFile(resolvedPath, "utf-8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { path: configPath, profiles: [] };
+      return { path: resolvedPath, profiles: [] };
     }
     throw error;
   }
@@ -86,7 +87,7 @@ export async function loadNamedProfileConfig(
   try {
     parsedJson = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`Invalid AutoVault profile config: ${configPath}: ${String(error)}`);
+    throw new Error(`Invalid AutoVault profile config: ${resolvedPath}: ${String(error)}`);
   }
 
   const parsed = profileConfigSchema.safeParse(parsedJson);
@@ -94,7 +95,7 @@ export async function loadNamedProfileConfig(
     const issues = parsed.error.issues
       .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
       .join("; ");
-    throw new Error(`Invalid AutoVault profile config: ${configPath}: ${issues}`);
+    throw new Error(`Invalid AutoVault profile config: ${resolvedPath}: ${issues}`);
   }
 
   const names = new Map<string, number>();
@@ -103,7 +104,7 @@ export async function loadNamedProfileConfig(
     const existing = names.get(profile.name);
     if (existing !== undefined) {
       throw new Error(
-        `Invalid AutoVault profile config: Duplicate named profile "${profile.name}" at profiles.${existing} and profiles.${index}`
+        `Invalid AutoVault profile config: ${resolvedPath}: Duplicate named profile "${profile.name}" at profiles.${existing} and profiles.${index}`
       );
     }
     names.set(profile.name, index);
@@ -113,7 +114,7 @@ export async function loadNamedProfileConfig(
     const existingTarget = targets.get(normalizedTarget);
     if (existingTarget) {
       throw new Error(
-        `Invalid AutoVault profile config: Duplicate named profile target "${normalizedTarget}" for "${existingTarget}" and "${profile.name}"`
+        `Invalid AutoVault profile config: ${resolvedPath}: Duplicate named profile target "${normalizedTarget}" for "${existingTarget}" and "${profile.name}"`
       );
     }
     targets.set(normalizedTarget, profile.name);
@@ -127,5 +128,5 @@ export async function loadNamedProfileConfig(
     };
   });
 
-  return { path: configPath, profiles };
+  return { path: resolvedPath, profiles };
 }
