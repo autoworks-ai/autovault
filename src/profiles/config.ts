@@ -10,6 +10,15 @@ export type NamedProfile = {
   target: string;
   includeTags: "*" | string[];
   excludeTags: string[];
+  // Opt-in (claude-code only): also emit a `skillOverrides` block to a Claude
+  // Code settings.json so the agent's live manifest actually shrinks. The
+  // per-project symlink farm alone is additive — Claude Code merges it with
+  // ~/.claude/skills/ — so without this flag the project still loads every
+  // global skill. `true` → derived path `<dirname(target)>/settings.json`;
+  // a string → absolute or resolved against `dirname(target)`. AutoVault owns
+  // the `skillOverrides` key entirely for managed projects; manual edits to
+  // that key are overwritten on next sync.
+  exportSkillOverrides?: boolean | string;
 };
 
 export type NamedProfileConfig = {
@@ -58,7 +67,8 @@ const rawProfileSchema = z.object({
     .regex(SAFE_SLUG_PATTERN, "agent must match ^[a-z][a-z0-9-]*$"),
   target: z.string().min(1),
   include_tags: z.union([z.literal("*"), tagArray("include_tags")]).optional(),
-  exclude_tags: tagArray("exclude_tags").optional()
+  exclude_tags: tagArray("exclude_tags").optional(),
+  export_skill_overrides: z.union([z.boolean(), z.string().min(1)]).optional()
 });
 
 const profileConfigSchema = z.object({
@@ -124,7 +134,8 @@ export async function loadNamedProfileConfig(
       agent: profile.agent,
       target,
       includeTags: profile.include_tags ?? "*",
-      excludeTags: profile.exclude_tags ?? []
+      excludeTags: profile.exclude_tags ?? [],
+      exportSkillOverrides: profile.export_skill_overrides
     };
   });
 

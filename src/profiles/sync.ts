@@ -17,6 +17,7 @@ import {
 import { withProfileSyncLock, withStorageLock } from "../storage/lock.js";
 import { materializeRenderedSkillForAgent, pruneRenderedSkills } from "../transforms/index.js";
 import { log } from "../util/log.js";
+import { emitClaudeSkillOverrides } from "./skill-overrides.js";
 
 export type SyncProfilesInput = {
   profileRoots?: Record<string, string>;
@@ -478,6 +479,29 @@ async function syncProfilesApply(
       }
     }
     linkedRoots[profileName] = externalRoot;
+  }
+
+  // Phase-2 emission: claude-code profiles can opt in to a Claude Code
+  // `skillOverrides` block alongside the symlink farm. The block writes
+  // <slug>: "off" for every claude-code skill the profile's tag filter
+  // excluded, which is the only mechanism that actually shrinks the
+  // additively-merged Claude Code skill manifest. Failures are surfaced as
+  // warnings rather than aborting the sync — the symlinks have already
+  // landed and a stale settings.json is recoverable on the next run.
+  for (const profile of namedProfiles) {
+    if (!profile.exportSkillOverrides) continue;
+    const included = managedProfiles.get(profile.name)?.names ?? [];
+    try {
+      await emitClaudeSkillOverrides({
+        profile,
+        skills: snapshot.skills,
+        includedNames: included
+      });
+    } catch (error) {
+      warnings.push(
+        `Failed to emit skillOverrides for "${profile.name}" — ${String(error)}`
+      );
+    }
   }
 
   const profileStatus = Object.fromEntries(
