@@ -19,6 +19,7 @@ import { ignoredArtifactNamesDescription } from "../util/ignored-artifacts.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { validateSkillInput } from "../validation/index.js";
+import { withStorageLock } from "../storage/lock.js";
 import { badge, sectionTitle } from "./ui/messages.js";
 import { bulletList, keyValueRows } from "./ui/table.js";
 import { makeTheme } from "./ui/theme.js";
@@ -179,7 +180,7 @@ async function repairSkillInstall(
 
   let bundle: Awaited<ReturnType<typeof collectLocalSkillBundle>>;
   try {
-    bundle = await collectLocalSkillBundle(skillDir(name));
+    bundle = await withStorageLock(() => collectLocalSkillBundle(skillDir(name)));
   } catch (error) {
     if (error instanceof LocalBundleLimitError) {
       return repairRefused(`Bundle validation failed: ${error.errors.join("; ")}`);
@@ -188,7 +189,11 @@ async function repairSkillInstall(
   }
 
   const { output: normalizedSkillMd } = attemptRepair(bundle.skillMd);
-  const validation = validateSkillInput(bundle.skillMd, bundle.resources);
+  const resources = bundle.resources.map((resource) => ({
+    path: resource.path,
+    content: resource.content
+  }));
+  const validation = validateSkillInput(normalizedSkillMd, resources);
   if (!validation.valid) {
     return repairRefused(`Bundle validation failed: ${validation.errors.join("; ")}`);
   }
@@ -206,10 +211,6 @@ async function repairSkillInstall(
     );
   }
 
-  const resources = bundle.resources.map((resource) => ({
-    path: resource.path,
-    content: resource.content
-  }));
   const source: SkillSource = {
     source: "local",
     identifier,

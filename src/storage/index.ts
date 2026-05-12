@@ -21,6 +21,7 @@ const SOURCE_FILE = ".autovault-source.json";
 const SIGNATURE_FILE = ".autovault-signature";
 const MANIFEST_FILE = ".autovault-manifest";
 const emittedSignatureWarnings = new Set<string>();
+const MAX_EMITTED_SIGNATURE_WARNINGS = 1024;
 
 // Reserved on-disk filenames a resource MUST NOT canonicalize to. Without this
 // guard a caller-supplied resource named `SKILL.md` would overwrite the
@@ -395,8 +396,12 @@ function warnSignatureMismatchOnce(
   const reason = typeof fields.reason === "string" ? fields.reason : "";
   const key = `${name}\0${file}\0${reason}`;
   if (emittedSignatureWarnings.has(key)) return;
+  if (emittedSignatureWarnings.size >= MAX_EMITTED_SIGNATURE_WARNINGS) {
+    const oldest = emittedSignatureWarnings.values().next().value;
+    if (typeof oldest === "string") emittedSignatureWarnings.delete(oldest);
+  }
   emittedSignatureWarnings.add(key);
-  log.warn("storage.signature_mismatch", { name, file, ...fields });
+  log.warn("storage.signature_mismatch", { ...fields, name, file });
 }
 
 async function verifySignatureIfPresent(name: string, skillMd: string): Promise<void> {
@@ -415,7 +420,7 @@ async function verifySignatureIfPresent(name: string, skillMd: string): Promise<
     if (!result.present) {
       warnSignatureMismatchOnce(name, "SKILL.md", { reason: "manifest_missing_skillmd" });
     } else if (!result.valid) {
-      warnSignatureMismatchOnce(name, "SKILL.md");
+      warnSignatureMismatchOnce(name, "SKILL.md", { reason: "signature_invalid" });
     }
     return;
   }
@@ -437,7 +442,7 @@ async function verifySignatureIfPresent(name: string, skillMd: string): Promise<
   }
   const ok = await verifyContent(skillMd, signature);
   if (!ok) {
-    warnSignatureMismatchOnce(name, "SKILL.md");
+    warnSignatureMismatchOnce(name, "SKILL.md", { reason: "signature_invalid" });
   }
 }
 
@@ -1323,7 +1328,7 @@ export async function readSkillSourceStatus(name: string): Promise<SkillSourceSt
       return { kind: "tampered", reason: "manifest_missing_entry" };
     }
     if (!result.valid) {
-      warnSignatureMismatchOnce(name, SOURCE_FILE);
+      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "signature_invalid" });
       return { kind: "tampered", reason: "signature_invalid" };
     }
     return { kind: "present", source: parsed };
