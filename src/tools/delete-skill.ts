@@ -9,6 +9,8 @@ import { log } from "../util/log.js";
 
 export type DeleteSkillInput = {
   name: string;
+  profile_roots?: Record<string, string>;
+  discover_profile_roots?: boolean;
 };
 
 export async function deleteSkill(input: DeleteSkillInput): Promise<Record<string, unknown>> {
@@ -28,7 +30,10 @@ export async function deleteSkill(input: DeleteSkillInput): Promise<Record<strin
 
   const warnings: string[] = [];
   try {
-    const sync = await syncProfiles();
+    const sync = await syncProfiles({
+      profileRoots: input.profile_roots,
+      discover: input.discover_profile_roots
+    });
     warnings.push(...sync.warnings);
     return { deleted, name: input.name, warnings, sync };
   } catch (error) {
