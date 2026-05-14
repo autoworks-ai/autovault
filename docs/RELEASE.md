@@ -29,6 +29,11 @@ docker build -t autoworks/autovault:test .
 npm audit --omit=dev --audit-level=critical
 ```
 
+5. Confirm npm trusted publishing is configured for
+   <https://www.npmjs.com/package/@autoworks-ai/autovault>. Before the first
+   public publish, this page may return 404; after the release workflow
+   completes, it must resolve to the package and show the released version.
+
 ## Versioning
 
 AutoVault currently follows pre-1.0 semver:
@@ -65,7 +70,9 @@ The preferred workflow is:
 4. Merge the Release Please PR after npm publishing is configured and approved.
 
 Release Please creates the GitHub Release and tag. The container workflow then
-publishes GHCR images from the tagged commit only.
+publishes GHCR images from the tagged commit only. The npm publish job uses
+trusted publishing for `@autoworks-ai/autovault` and should make the package
+available at <https://www.npmjs.com/package/@autoworks-ai/autovault>.
 
 ## Rollback
 
@@ -114,6 +121,7 @@ tar -xzf autovault-backup-<date>.tgz -C "$HOME"
 - [ ] Release Please PR includes expected version updates for `package.json`,
       `package-lock.json`, `.release-please-manifest.json`, and `server.json`
 - [ ] Release Please PR includes the expected `CHANGELOG.md` entry
+- [ ] npm package page resolves after publish and shows the released version
 - [ ] Build passes
 - [ ] Tests pass
 - [ ] Smoke test passes
