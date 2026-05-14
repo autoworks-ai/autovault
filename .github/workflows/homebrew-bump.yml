@@ -1,0 +1,33 @@
+# Auto-bump the Homebrew tap (autoworks-ai/homebrew-tap) when a GitHub
+# release is published by release-please.
+#
+# Requires RELEASE_PLEASE_TOKEN (org-level PAT) with contents:write +
+# pull-requests:write on autoworks-ai/homebrew-tap. We use no_fork so the
+# action pushes a branch directly to the tap repo rather than forking via
+# the token owner.
+#
+# The `release: published` event cascades reliably here because
+# release-please-action creates the GitHub Release using RELEASE_PLEASE_TOKEN
+# (a PAT) — releases created by GITHUB_TOKEN do NOT trigger downstream
+# workflows, which is the failure mode this avoids.
+
+name: Homebrew bump
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew-bump:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dawidd6/action-homebrew-bump-formula@v7
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          tap: autoworks-ai/homebrew-tap
+          formula: autovault
+          no_fork: true
