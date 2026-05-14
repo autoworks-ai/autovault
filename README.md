@@ -6,7 +6,7 @@
   <a href="https://github.com/autoworks-ai/homebrew-tap/blob/main/Formula/autovault.rb"><img alt="Homebrew tap" src="https://img.shields.io/badge/homebrew-autoworks--ai%2Ftap%2Fautovault-FBB040?logo=homebrew"></a>
   <a href="https://github.com/autoworks-ai/autovault/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/autoworks-ai/autovault/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/autoworks-ai/autovault/actions/workflows/security.yml"><img alt="Security" src="https://github.com/autoworks-ai/autovault/actions/workflows/security.yml/badge.svg"></a>
-  <a href="package.json"><img alt="Node >=24" src="https://img.shields.io/badge/node-%3E%3D24-339933"></a>
+  <a href="package.json"><img alt="Node >=22" src="https://img.shields.io/badge/node-%3E%3D22-339933"></a>
   <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
   <a href="docs/adr/0001-transport.md"><img alt="MCP stdio + HTTP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-6f42c1"></a>
 </p>
@@ -57,7 +57,7 @@ views from that source.
 
 Requirements:
 
-- Node.js `>=24.0.0`
+- Node.js `>=22.0.0`
 - `curl`, `tar`, and `npm`
 - macOS 13+, Linux x64/arm64, or Windows through WSL2
 
@@ -137,7 +137,7 @@ Distribution:
 The CLI is the local operator surface:
 
 ```text
-autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
+autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
 autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault sync-profiles [--discover] [--link agent=/path/to/skills]
 autovault profiles list [--json]
@@ -162,9 +162,10 @@ autovault doctor --clean
 autovault doctor --repair
 
 # Import a local skill bundle through the same gate used by MCP installs.
+autovault add-local ./path/to/your-skill --sync-profiles
+autovault add-local ./path/to/your-skill/SKILL.md --sync-profiles
 autovault add-local ./path/to/your-skill \
-  --source vendor/skills \
-  --sync-profiles
+  --source https://github.com/org/repo/tree/main/skills/your-skill
 
 # Search installed skills locally.
 autovault skill search code-review --top-k 5
@@ -172,6 +173,11 @@ autovault skill search code-review --top-k 5
 # Remove a vaulted skill and refresh managed profile links.
 autovault remove skill-author --json
 ```
+
+`add-local` accepts a bundle directory or a direct `SKILL.md` path. If
+`--source` is omitted, AutoVault records the normalized absolute bundle
+directory as local provenance; pass `--source` only when you want a repository
+URL or other canonical provenance string.
 
 `autovault setup` is the first-run adoption wizard. It scans the vault, bundled
 skills, and discovered native roots such as `~/.claude/skills`,
