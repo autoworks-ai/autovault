@@ -8,6 +8,7 @@ import { listInstalledSkillNames } from "../../storage/index.js";
 import { skillDir } from "../../storage/index.js";
 import { bundleHash } from "../../util/hash.js";
 import { parseFrontmatter } from "../../validation/frontmatter.js";
+import { synthesizeSkillFrontmatter } from "../../validation/frontmatter-synthesis.js";
 import { validateSkillInput } from "../../validation/index.js";
 
 export type DriftCategory =
@@ -33,6 +34,7 @@ export type SkillSourceView = {
     warnings: string[];
     securityFlags: string[];
   };
+  inferredAgents?: string[];
   loadError?: string;
 };
 
@@ -82,8 +84,19 @@ async function loadSourceView(
   const target = path.join(rootDir, name);
   try {
     const bundle = await collectLocalSkillBundle(target, { followRootSymlink: true });
+    let skillMdForValidation = bundle.skillMd;
+    let inferredAgents: string[] = [];
+    if (options?.runValidation && origin === "native" && agent) {
+      try {
+        const synthesized = synthesizeSkillFrontmatter(bundle.skillMd, { agents: [agent] });
+        skillMdForValidation = synthesized.skillMd;
+        inferredAgents = synthesized.inferredAgents;
+      } catch {
+        skillMdForValidation = bundle.skillMd;
+      }
+    }
     const validation = options?.runValidation
-      ? validateSkillInput(bundle.skillMd, bundle.resources)
+      ? validateSkillInput(skillMdForValidation, bundle.resources)
       : undefined;
     return {
       origin,
@@ -99,7 +112,8 @@ async function loadSourceView(
             warnings: validation.warnings,
             securityFlags: validation.securityFlags
           }
-        : undefined
+        : undefined,
+      ...(inferredAgents.length > 0 ? { inferredAgents } : {})
     };
   } catch (error) {
     return {

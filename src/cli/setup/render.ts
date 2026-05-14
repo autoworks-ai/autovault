@@ -145,6 +145,11 @@ function renderSkillDetail(skill: SkillView, theme: Theme): string[] {
   }
   for (const native of skill.native) {
     lines.push(formatSourceLine(theme, native.agent ?? "native", native.hash, native.skillDir));
+    if (native.inferredAgents && native.inferredAgents.length > 0) {
+      lines.push(
+        `      ${theme.style.green(`${theme.symbol.check} inferred agent:`)} ${native.inferredAgents.join(", ")} ${theme.style.dim("from native root")}`
+      );
+    }
     if (native.validation && !native.validation.valid) {
       const reason =
         native.validation.errors[0] ??

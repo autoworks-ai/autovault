@@ -79,6 +79,41 @@ describe("setup apply", () => {
     expect(await exists(path.join(skillDir("user-skill"), "SKILL.md"))).toBe(true);
   });
 
+  it("backup mode adopts a native skill missing agents by inferring the source root agent", async () => {
+    await ensureStorage();
+
+    const nativeRoot = path.join(currentStorageRoot(), "fake-claude-infer");
+    await fs.mkdir(nativeRoot, { recursive: true });
+    await writeNative(
+      nativeRoot,
+      "agentless-skill",
+      skillMd("agentless-skill", "agentless native body")
+    );
+
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { "claude-code": nativeRoot }
+    });
+
+    const skill = report.skills.find((s) => s.name === "agentless-skill");
+    expect(skill?.native[0]?.validation?.valid).toBe(true);
+    expect((skill?.native[0] as { inferredAgents?: string[] } | undefined)?.inferredAgents).toEqual([
+      "claude-code"
+    ]);
+
+    const outcomes = await applyDecisions({
+      mode: "backup",
+      candidates: skill ? [skill] : [],
+      collisions: [],
+      profileRoots: { "claude-code": nativeRoot }
+    });
+
+    expect(outcomes.find((o) => o.name === "agentless-skill" && o.action === "adopt")?.ok).toBe(true);
+
+    const installed = await readSkill("agentless-skill");
+    expect(installed?.agents).toEqual(["claude-code"]);
+  });
+
   it("backup mode refuses to overwrite a pre-existing backup", async () => {
     await ensureStorage();
 

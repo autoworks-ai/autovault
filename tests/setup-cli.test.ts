@@ -3,7 +3,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { resolveMcpServerPath, runSetup } from "../src/cli/setup.js";
-import { renderCompactScanSummary } from "../src/cli/setup/render.js";
+import { renderCompactScanSummary, renderReviewSkill } from "../src/cli/setup/render.js";
 import { scanDrift } from "../src/cli/setup/scan.js";
 import { ensureStorage, writeSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
@@ -107,5 +107,33 @@ describe("setup CLI", () => {
     expect(stdout).not.toContain("native-only");
     expect(stdout).not.toContain(nativeRoot);
     expect(stdout).not.toMatch(/[a-f0-9]{8}/);
+  });
+
+  it("explains when setup inferred a missing native agents declaration", async () => {
+    await ensureStorage();
+
+    const nativeRoot = path.join(currentStorageRoot(), "native-agentless-root");
+    await fs.mkdir(path.join(nativeRoot, "agentless"), { recursive: true });
+    await fs.writeFile(
+      path.join(nativeRoot, "agentless", "SKILL.md"),
+      skillMd("agentless", "native agentless"),
+      "utf-8"
+    );
+
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { "claude-code": nativeRoot },
+      discover: false
+    });
+    const skill = report.skills.find((entry) => entry.name === "agentless");
+    expect(skill).toBeDefined();
+
+    const stdout = await captureStdout(async () => {
+      renderReviewSkill(skill!);
+    });
+
+    expect(stdout).toContain("inferred agent");
+    expect(stdout).toContain("claude-code");
+    expect(stdout).not.toContain("agents: at least one agent is required");
   });
 });

@@ -29,13 +29,119 @@ function usage(): never {
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
-  autovault serve
+  autovault serve [--help]
   autovault skill <action> <name>
   autovault skill list
   autovault skill search <query> [--top-k N]
   autovault skill which <name> [<action>]
 `);
   process.exit(1);
+}
+
+function serveHelp(): string {
+  return `Usage:
+  autovault serve
+
+Starts the remote AutoVault service: an OAuth-protected Streamable HTTP MCP
+server for shared or deployed vaults. This is not the local first-run setup
+path; for local installation and native skill intake, run:
+
+  autovault setup
+
+Required before first remote boot:
+  AUTOVAULT_PUBLIC_URL=http://localhost:3000
+  AUTOVAULT_ADMIN_EMAIL=admin@example.com
+  AUTOVAULT_ADMIN_PASSWORD=<long random password, min 12 chars>
+
+Endpoints:
+  /mcp      Streamable HTTP MCP endpoint
+  /healthz  service health check
+
+Local remote test:
+  AUTOVAULT_PUBLIC_URL=http://localhost:3000 \\
+  AUTOVAULT_ADMIN_EMAIL=admin@example.com \\
+  AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \\
+  autovault serve
+
+Production example:
+  AUTOVAULT_PUBLIC_URL=https://<service>.up.railway.app autovault serve
+`;
+}
+
+function missingPublicUrlMessage(): string {
+  return `AutoVault remote serve needs a public URL.
+
+autovault serve starts the OAuth-protected Streamable HTTP MCP service at /mcp.
+It is for remote/shared deployments, not local first-run setup.
+
+For local setup, run:
+  autovault setup
+
+For a local remote test, run:
+  AUTOVAULT_PUBLIC_URL=http://localhost:3000 \\
+  AUTOVAULT_ADMIN_EMAIL=admin@example.com \\
+  AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \\
+  autovault serve
+
+For production, set the externally reachable origin, for example:
+  AUTOVAULT_PUBLIC_URL=https://<service>.up.railway.app
+`;
+}
+
+function missingAdminCredentialsMessage(missing: string[]): string {
+  return `AutoVault remote serve needs first-owner credentials.
+
+No owner account exists yet, so AutoVault must seed the first owner account on
+remote boot. Set the missing variable${missing.length === 1 ? "" : "s"}:
+  ${missing.join("\n  ")}
+
+Example:
+  AUTOVAULT_PUBLIC_URL=http://localhost:3000 \\
+  AUTOVAULT_ADMIN_EMAIL=admin@example.com \\
+  AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \\
+  autovault serve
+`;
+}
+
+async function remoteOwnerExists(): Promise<boolean> {
+  const { openCapabilityDb } = await import("./capabilities/db.js");
+  const row = openCapabilityDb()
+    .prepare("SELECT id FROM remote_users WHERE role = 'owner' LIMIT 1")
+    .get() as { id: string } | undefined;
+  return Boolean(row);
+}
+
+async function runServeCommand(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(serveHelp());
+    return;
+  }
+  if (args.length > 0) usage();
+
+  process.env.AUTOVAULT_MODE = "remote";
+
+  if (!process.env.AUTOVAULT_PUBLIC_URL) {
+    process.stderr.write(missingPublicUrlMessage());
+    process.exit(2);
+  }
+
+  const ownerExists = await remoteOwnerExists();
+  const missingAdmin = [
+    !process.env.AUTOVAULT_ADMIN_EMAIL ? "AUTOVAULT_ADMIN_EMAIL=admin@example.com" : "",
+    !process.env.AUTOVAULT_ADMIN_PASSWORD
+      ? "AUTOVAULT_ADMIN_PASSWORD=<long random password, min 12 chars>"
+      : ""
+  ].filter((value) => value.length > 0);
+  if (!ownerExists && missingAdmin.length > 0) {
+    process.stderr.write(missingAdminCredentialsMessage(missingAdmin));
+    process.exit(2);
+  }
+
+  process.stderr.write(
+    "Starting AutoVault remote service (OAuth-protected Streamable HTTP MCP at /mcp). For local first-run setup, use `autovault setup`.\n"
+  );
+  const { startRemoteServer } = await import("./remote/server.js");
+  await startRemoteServer();
 }
 
 function readFlag(args: string[], name: string): string | undefined {
@@ -380,9 +486,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "serve") {
-    process.env.AUTOVAULT_MODE ??= "remote";
-    const { startRemoteServer } = await import("./remote/server.js");
-    await startRemoteServer();
+    await runServeCommand(args);
     return;
   }
 

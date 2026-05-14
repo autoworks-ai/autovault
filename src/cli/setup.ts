@@ -315,7 +315,9 @@ async function runReviewPicker(
       {
         label: "adopt with backup",
         value: "adopt-backup",
-        hint: "copy into vault and move original to <root>.bak",
+        hint: canAdoptWithBackup(choice)
+          ? "copy into vault and move original to <root>.bak"
+          : "cannot adopt until validation errors are fixed",
         disabled: !canAdoptWithBackup(choice)
       },
       {
