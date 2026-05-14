@@ -3,7 +3,7 @@
   "name": "io.github.autoworks-ai/autovault",
   "title": "AutoVault",
   "description": "Validates, signs, scopes, and serves agent SKILL.md files over local stdio MCP and remote Streamable HTTP MCP.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "websiteUrl": "https://github.com/autoworks-ai/autovault",
   "repository": {
     "url": "https://github.com/autoworks-ai/autovault",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "@autoworks-ai/autovault",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "transport": {
         "type": "stdio"
       }
