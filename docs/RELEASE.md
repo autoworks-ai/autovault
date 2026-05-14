@@ -30,9 +30,12 @@ npm audit --omit=dev --audit-level=critical
 ```
 
 5. Confirm npm trusted publishing is configured for
-   <https://www.npmjs.com/package/@autoworks-ai/autovault>. Before the first
-   public publish, this page may return 404; after the release workflow
-   completes, it must resolve to the package and show the released version.
+   <https://www.npmjs.com/package/@autoworks-ai/autovault>. The package page
+   should resolve before release work starts and show the new version after the
+   release workflow completes.
+6. Confirm the Homebrew tap bump workflow opened or updated
+   `autoworks-ai/homebrew-tap` for the released tag, and that
+   `brew install autoworks-ai/tap/autovault` installs the current release.
 
 ## Versioning
 

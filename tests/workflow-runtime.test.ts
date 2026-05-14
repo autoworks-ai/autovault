@@ -78,13 +78,18 @@ describe("workflow runtime policy", () => {
     expect(packageJson.devDependencies["@types/node"]).toBe("^24.12.4");
   });
 
-  it("documents npm distribution with the canonical package link", () => {
+  it("documents live package distribution with canonical install paths", () => {
     const npmPackageUrl = "https://www.npmjs.com/package/@autoworks-ai/autovault";
+    const homebrewTapUrl = "https://github.com/autoworks-ai/homebrew-tap";
     const docsText = ["README.md", "INSTALL.md", "docs/RELEASE.md"]
       .map(readText)
       .join("\n");
 
     expect(docsText).toContain(npmPackageUrl);
-    expect(docsText).not.toContain("npm install -g @autoworks-ai/autovault");
+    expect(docsText).toContain(homebrewTapUrl);
+    expect(docsText).toContain("npm install -g @autoworks-ai/autovault");
+    expect(docsText).toContain("brew install autoworks-ai/tap/autovault");
+    expect(docsText).not.toContain("first public npm publish");
+    expect(docsText).not.toContain("npm page still returns 404");
   });
 });
