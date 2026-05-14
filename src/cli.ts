@@ -8,16 +8,19 @@ import { makeTheme } from "./cli/ui/theme.js";
 import {
   addLocalSkill,
   auditRepo,
+  deleteSkill,
   formatAuditRepoMarkdown,
   importAutohubCapabilities,
   resolveCapabilities,
   syncProfiles,
   type AddLocalSkillResult
 } from "./library.js";
+import { formatResultSync } from "./util/sync-format.js";
 
 function usage(): never {
   process.stderr.write(`Usage:
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
+  autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
   autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--repair] [--json]
@@ -124,6 +127,41 @@ function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): st
   return `${lines.join("\n")}\n`;
 }
 
+function formatRemoveResult(result: Record<string, unknown>): string {
+  const theme = makeTheme(process.stdout);
+  const lines: string[] = [];
+  const name = typeof result.name === "string" ? result.name : "(unknown)";
+  const deleted = result.deleted === true;
+  const warnings = Array.isArray(result.warnings)
+    ? result.warnings.filter((warning): warning is string => typeof warning === "string")
+    : [];
+  lines.push("");
+  lines.push(`${badge("vault", theme)} ${theme.style.bold("AutoVault remover")}`);
+  lines.push(sectionTitle("Removal receipt", theme));
+  lines.push(
+    keyValueRows(
+      [
+        { label: "skill", value: name, status: deleted ? "ok" : "warn" },
+        { label: "vault", value: deleted ? "removed" : "not installed", status: deleted ? "ok" : "warn" }
+      ],
+      theme
+    )
+  );
+  if (warnings.length > 0) {
+    lines.push("");
+    lines.push(`${badge("warn", theme, "warn")} warnings`);
+    lines.push(bulletList(warnings, theme));
+  }
+  lines.push(
+    renderSuccessOutro(
+      deleted ? "Skill removed" : "Skill was not installed",
+      hostRestartGuidance().map((line) => `${theme.style.dim("next")} ${line}`),
+      process.stdout
+    ).trimEnd()
+  );
+  return `${lines.join("\n")}\n`;
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command || command === "--help" || command === "-h") usage();
@@ -186,6 +224,47 @@ async function main(): Promise<void> {
       process.stdout.write(formatAddLocalResult(result, skillDir));
     }
     if (!result.success) process.exit(1);
+    return;
+  }
+
+  if (command === "remove") {
+    let name: string | undefined;
+    let discoverProfileRoots = true;
+    const profileRoots: Record<string, string> = {};
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i];
+      if (arg === "--link") {
+        const value = args[i + 1];
+        const [agent, root] = parseProfileLink(value);
+        profileRoots[agent] = root;
+        i += 1;
+        continue;
+      }
+      if (arg === "--discover") {
+        discoverProfileRoots = true;
+        continue;
+      }
+      if (arg === "--no-discover") {
+        discoverProfileRoots = false;
+        continue;
+      }
+      if (arg === "--json") continue;
+      if (arg.startsWith("-")) usage();
+      if (name) usage();
+      name = arg;
+    }
+    if (!name) usage();
+    const result = await deleteSkill({
+      name,
+      profile_roots: profileRoots,
+      discover_profile_roots: discoverProfileRoots
+    });
+    const output = formatResultSync(result, false);
+    if (hasFlag(args, "--json")) {
+      process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+    } else {
+      process.stdout.write(formatRemoveResult(output));
+    }
     return;
   }
 
