@@ -6,6 +6,22 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 while it remains in pre-1.0 development.
 
+## [0.3.0](https://github.com/autoworks-ai/autovault/compare/v0.2.1...v0.3.0) (2026-05-14)
+
+
+### Features
+
+* **cli:** add remove command for vaulted skills ([#56](https://github.com/autoworks-ai/autovault/issues/56)) ([61cf25a](https://github.com/autoworks-ai/autovault/commit/61cf25a2a587d3e8f225054ac6af2fccfddd4129))
+* **doctor:** add --repair for unsigned local skills; dedupe signature warnings ([#51](https://github.com/autoworks-ai/autovault/issues/51)) ([0c0d78a](https://github.com/autoworks-ai/autovault/commit/0c0d78acfcfbfbd47201f96eb0e96ca16b089650))
+* **profiles:** add tag-filtered project profiles ([#50](https://github.com/autoworks-ai/autovault/issues/50)) ([386f4cc](https://github.com/autoworks-ai/autovault/commit/386f4cc5b7240e9645605c913b96f051ee7f5610))
+* **skills:** harden v1 migration imports ([#41](https://github.com/autoworks-ai/autovault/issues/41)) ([4a3475a](https://github.com/autoworks-ai/autovault/commit/4a3475ad0750496cc362701639a2338b8c950157))
+
+
+### Bug Fixes
+
+* **cli:** smooth onboarding setup and serve UX ([#58](https://github.com/autoworks-ai/autovault/issues/58)) ([aa90ee5](https://github.com/autoworks-ai/autovault/commit/aa90ee56ee07c523125880cb8d21c58f9cc91e64))
+* **installer:** resolve TTY, Node version, and setup wizard friction ([#48](https://github.com/autoworks-ai/autovault/issues/48)) ([3c23d46](https://github.com/autoworks-ai/autovault/commit/3c23d46b4bb841a218521c6f89fc94191b035392))
+
 ## [Unreleased]
 
 ### Added
