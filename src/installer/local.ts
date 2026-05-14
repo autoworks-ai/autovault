@@ -360,8 +360,8 @@ export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocal
         repaired: false,
         errors: limitErrors,
         warnings: [],
-          securityFlags: []
-        },
+        securityFlags: []
+      },
       warnings: [],
       bundleRoot: bundle.root,
       sourceInferred
