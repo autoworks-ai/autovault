@@ -289,6 +289,36 @@ describe("local installer", () => {
     expect(unsafeResult.stderr).toContain("Invalid skill name");
   });
 
+  it("remove can skip native profile discovery when requested", async () => {
+    const fakeHome = path.join(currentStorageRoot(), "remove-no-discover-home");
+    const codexRoot = path.join(fakeHome, ".codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+    const sourceDir = path.join(currentStorageRoot(), "remove-no-discover-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "remove-no-discover",
+      agents: ["codex"]
+    });
+
+    const addResult = await runCli(
+      ["add-local", sourceDir, "--source", "vendor/repo", "--sync-profiles", "--json"],
+      { HOME: fakeHome }
+    );
+    expect(addResult.exitCode).toBe(0);
+    await expect(fs.lstat(path.join(codexRoot, "remove-no-discover"))).resolves.toBeTruthy();
+
+    const removeResult = await runCli(["remove", "remove-no-discover", "--no-discover", "--json"], {
+      HOME: fakeHome
+    });
+
+    expect(removeResult.exitCode).toBe(0);
+    const parsed = JSON.parse(removeResult.stdout) as {
+      sync?: { linkedRoots: Record<string, string> };
+    };
+    expect(parsed.sync?.linkedRoots).toEqual({});
+    await expect(fs.lstat(path.join(currentStorageRoot(), "profiles", "codex", "remove-no-discover"))).rejects.toBeDefined();
+    await expect(fs.lstat(path.join(codexRoot, "remove-no-discover"))).resolves.toBeTruthy();
+  });
+
   it("MCP local add syncs configured profile roots by default", async () => {
     const externalRoot = path.join(currentStorageRoot(), "external-codex-skills");
     const previousProfileLinks = process.env.AUTOVAULT_PROFILE_LINKS;

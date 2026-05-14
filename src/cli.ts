@@ -20,7 +20,7 @@ import { formatResultSync } from "./util/sync-format.js";
 function usage(): never {
   process.stderr.write(`Usage:
   autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
-  autovault remove <skill-name> [--discover] [--link agent=/path/to/skills] [--json]
+  autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
   autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--repair] [--json]
@@ -229,6 +229,7 @@ async function main(): Promise<void> {
 
   if (command === "remove") {
     let name: string | undefined;
+    let discoverProfileRoots = true;
     const profileRoots: Record<string, string> = {};
     for (let i = 0; i < args.length; i += 1) {
       const arg = args[i];
@@ -239,7 +240,15 @@ async function main(): Promise<void> {
         i += 1;
         continue;
       }
-      if (arg === "--discover" || arg === "--json") continue;
+      if (arg === "--discover") {
+        discoverProfileRoots = true;
+        continue;
+      }
+      if (arg === "--no-discover") {
+        discoverProfileRoots = false;
+        continue;
+      }
+      if (arg === "--json") continue;
       if (arg.startsWith("-")) usage();
       if (name) usage();
       name = arg;
@@ -248,7 +257,7 @@ async function main(): Promise<void> {
     const result = await deleteSkill({
       name,
       profile_roots: profileRoots,
-      discover_profile_roots: true
+      discover_profile_roots: discoverProfileRoots
     });
     const output = formatResultSync(result, false);
     if (hasFlag(args, "--json")) {
