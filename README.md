@@ -1,200 +1,283 @@
 # AutoVault
 
-AutoVault is a **capability library backed by SQLite**, with local stdio and
-remote Streamable HTTP Model Context Protocol (MCP) entry points. It gives
-agents and agent hosts a single place to resolve tools, MCP servers, and
-reusable `SKILL.md` files.
+<p align="center">
+  <a href="https://www.npmjs.com/package/@autoworks-ai/autovault"><img alt="npm" src="https://img.shields.io/npm/v/%40autoworks-ai%2Fautovault?color=cb3837"></a>
+  <a href="https://www.npmjs.com/package/@autoworks-ai/autovault"><img alt="npm downloads" src="https://img.shields.io/npm/dm/%40autoworks-ai%2Fautovault?color=cb3837"></a>
+  <a href="https://github.com/autoworks-ai/homebrew-tap/blob/main/Formula/autovault.rb"><img alt="Homebrew tap" src="https://img.shields.io/badge/homebrew-autoworks--ai%2Ftap%2Fautovault-FBB040?logo=homebrew"></a>
+  <a href="https://github.com/autoworks-ai/autovault/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/autoworks-ai/autovault/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/autoworks-ai/autovault/actions/workflows/security.yml"><img alt="Security" src="https://github.com/autoworks-ai/autovault/actions/workflows/security.yml/badge.svg"></a>
+  <a href="package.json"><img alt="Node >=24" src="https://img.shields.io/badge/node-%3E%3D24-339933"></a>
+  <a href="LICENSE"><img alt="License MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <a href="docs/adr/0001-transport.md"><img alt="MCP stdio + HTTP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-6f42c1"></a>
+</p>
 
-In plain English: AutoVault is the capability layer. Locally, it stores
-filesystem-native skill directories and can generate per-agent profile symlinks.
-Remotely, it serves the same vault over MCP with OAuth and role-aware access
-checks. It does **not** execute skills itself. It validates and serves content;
-the host or downstream agent decides how to use it.
+<p align="center"><code>[ SKILL.md ] -> [ validate ] -> [ sign ] -> [ scope ] -> [ render ]</code></p>
 
-## What It Is
+<p align="center"><strong>A local-first vault for the skills your agents actually use.</strong></p>
 
-AutoVault is a Node/TypeScript library and compatibility MCP server that:
+`SKILL.md` files already move through GitHub repos, team docs, public indexes,
+Slack threads, and agent-written drafts. AutoVault gives those files one
+canonical home: validate them at admission time, sign what passes, track where
+they came from, and render the right view for each agent without maintaining
+forks by hand.
 
-- stores skills on the local filesystem or a mounted service volume
-- indexes profiles, callers, tool groups, aliases, context rules, and MCP servers in SQLite
-- resolves scoped capabilities through `resolveCapabilities()`
-- generates per-agent and tag-filtered project skill profile symlinks in local mode
-- applies vault-local skill transforms when generating per-agent profiles
-- validates submitted or imported skill content
-- exposes existing skill lifecycle operations over MCP tools
-- tracks where installed skills came from
-- detects when an installed skill has drifted from its upstream source
+AutoVault is a Node/TypeScript capability library, CLI, and MCP server. It has
+local stdio and remote Streamable HTTP MCP entry points, both backed by the same
+filesystem vault and SQLite capability index.
 
-The local compatibility server still runs over stdio. An MCP host can spawn
-`node dist/index.js` and communicate over stdin/stdout, while source checkouts
-can import the built library entry point directly. Remote deployments use
-`node dist/remote.js` and expose Streamable HTTP MCP at `/mcp`.
+It does **not** execute skills through the MCP server. The server validates and
+serves skill content; the host agent decides how to use that content inside its
+own tool sandbox. The separate user-invoked `autovault skill <action>` CLI can
+run signed `bin:` actions from installed skills, and that surface is documented
+under [Security Model](#security-model).
 
-See [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md) for the runtime decision.
+Docs and public site: <https://autovault.dev>
 
-## Distribution
+## Why AutoVault
 
-- Source and release artifacts: <https://github.com/autoworks-ai/autovault>
+The SKILL.md format is intentionally plain. The hard part is everything around
+it:
+
+- **Skill drift** - the same skill gets copy-pasted into Claude Code, Codex,
+  Cursor, and project folders with no upstream tracking.
+- **Supply-chain risk** - remote skill bytes should be treated like untrusted
+  package contents until they pass a gate.
+- **Duplicate explosion** - agents can author near-identical skills unless new
+  proposals are deduplicated before storage.
+- **Platform mismatch** - one agent says `read`, another says `file_read`, and a
+  third expects a different filesystem tool name.
+- **Scope leakage** - local dev skills should not silently show up in prod or in
+  another client's project.
+
+AutoVault's answer is deliberately simple: keep one canonical skill folder,
+record provenance, sign the admitted content, and sync or serve agent-specific
+views from that source.
+
+## Quick Start
+
+Requirements:
+
+- Node.js `>=24.0.0`
+- `curl`, `tar`, and `npm`
+- macOS 13+, Linux x64/arm64, or Windows through WSL2
+
+Install the local vault:
+
+```bash
+curl -fsSL https://autovault.sh | sh
+export PATH="$HOME/.autovault/bin:$PATH"
+autovault doctor
+autovault setup --review
+autovault skill list
+```
+
+Install with Homebrew:
+
+```bash
+brew install autoworks-ai/tap/autovault
+autovault setup
+```
+
+Install the packaged CLI/library directly from npm:
+
+```bash
+npm install -g @autoworks-ai/autovault
+autovault setup --review
+autovault doctor
+```
+
+Manual source install:
+
+```bash
+git clone https://github.com/autoworks-ai/autovault.git
+cd autovault
+npm ci
+npm run build
+node scripts/bootstrap-skills.mjs
+node dist/cli.js doctor
+```
+
+The shell installer builds the app under `~/.autovault/app`, preserves
+`~/.autovault` as user-owned vault storage, installs the `autovault` CLI shim,
+and bootstraps bundled skills unless `AUTOVAULT_NO_BOOTSTRAP=1` is set.
+
+## What Ships Today
+
+AutoVault supports:
+
+- local filesystem storage under `AUTOVAULT_STORAGE_PATH`
+- a SQLite capability index for callers, profiles, tool groups, aliases,
+  context rules, and MCP servers
+- per-agent and tag-filtered profile symlink generation
+- vault-local skill transforms that render agent-specific variants without
+  forking upstream `SKILL.md`
+- install, update, proposal, bulk-import, removal, resource-read, and drift-check
+  workflows
+- source adapters for GitHub, `agentskills`, arbitrary HTTPS URLs, local bundles,
+  and inline MCP-proposed content
+- three-tier deduplication for proposals
+- Ed25519 signatures and manifest checks for stored skills and executable
+  resources
+- local stdio MCP and remote Streamable HTTP MCP at `/mcp` with OAuth-backed
+  bearer auth
+
+The npm package and Homebrew formula are live. The shell installer is still the
+easiest local bootstrap path because it provisions `~/.autovault`, installs the
+CLI shim, and seeds bundled skills in one pass.
+
+Distribution:
+
+- Source and releases: <https://github.com/autoworks-ai/autovault>
 - NPM package page: <https://www.npmjs.com/package/@autoworks-ai/autovault>
+- Homebrew tap: <https://github.com/autoworks-ai/homebrew-tap>
 - Container image: `ghcr.io/autoworks-ai/autovault:<tag>`
 
-Release Please publishes the npm package with trusted publishing after a
-Release Please PR is merged. Until the npm package page resolves publicly, use
-`autovault.sh`, a source checkout, or the GHCR image as the install path.
+## CLI Surface
 
-## What It Does
+The CLI is the local operator surface:
 
-AutoVault supports local capability resolution plus the skill lifecycle:
+```text
+autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
+autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
+autovault sync-profiles [--discover] [--link agent=/path/to/skills]
+autovault profiles list [--json]
+autovault setup [--json] [--review] [--advanced]
+autovault doctor [skill-name] [--clean] [--repair] [--json]
+autovault audit-repo --repo /path/to/repo [--format json|markdown]
+autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
+autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
+autovault serve [--help]
+autovault skill list
+autovault skill search <query> [--top-k N]
+autovault skill which <name> [<action>]
+autovault skill <action> <name>
+```
 
-1. **Resolve** tools, skills, and MCP servers for a caller/context
-2. **Sync** skills into per-agent profile directories
-3. **Discover** installed skills via search or listing
-4. **Inspect** a skill's full `SKILL.md`, metadata, capabilities, and provenance
-5. **Read** resource files packaged alongside a skill
-6. **Propose** new skills with validation, dedup, and security gating
-7. **Install** skills from GitHub, agentskills, or arbitrary HTTPS URLs
-8. **Add local bundles** from third-party installers with `autovault add-local`
-9. **Remove vaulted skills** with `autovault remove <skill-name>` and refresh managed profile links
-10. **Track provenance** with a per-skill sidecar file and content hash
-11. **Check updates** to detect upstream drift
-12. **Transform** skills per agent/workspace without forking upstream content
+Common flows:
 
-## Why Use It
+```bash
+# Inspect vault health and integrity.
+autovault doctor
+autovault doctor --clean
+autovault doctor --repair
 
-AutoVault is useful when you want:
+# Import a local skill bundle through the same gate used by MCP installs.
+autovault add-local ./path/to/your-skill \
+  --source vendor/skills \
+  --sync-profiles
 
-- a consistent source of truth for agent capabilities
-- per-caller and per-channel capability scoping
-- a safer workflow than ad hoc copy/paste skill files
-- deduplication before new skills get added
-- filesystem-native skill profiles for Claude Code, Codex, and other agents
-- project-specific skill curation from existing `tags` and `agents` frontmatter
-- a lightweight local registry that still works with MCP-native tools
-- provenance and drift visibility for imported skills
+# Search installed skills locally.
+autovault skill search code-review --top-k 5
 
-## Core Capabilities
+# Remove a vaulted skill and refresh managed profile links.
+autovault remove skill-author --json
+```
 
-### MCP Tool Surface
+`autovault setup` is the first-run adoption wizard. It scans the vault, bundled
+skills, and discovered native roots such as `~/.claude/skills`,
+`~/.codex/skills`, and `~/.cursor/skills`, then asks how to adopt each skill.
+Run it from a real terminal; without a TTY the installer defers setup and tells
+you to rerun the wizard manually.
 
-AutoVault still exposes the core MCP tools:
+## MCP Tool Surface
 
-- `get_skill` - search by query or fetch by name, with optional packaged resource contents
-- `add_skill` - add from `github`, `agentskills`, `url`, or a local bundle
-- `update_skill` - refresh or replace an installed skill
-- `delete_skill` - remove an installed skill and refresh generated profiles
-- `propose_skill` - validate and store a newly proposed skill
-- `check_updates` - compare installed content to upstream source state
+MCP hosts can spawn the local stdio server with `node dist/index.js`, while
+remote clients connect to `dist/remote.js` at `/mcp`.
 
-### Library Surface
+Registered tools:
 
-AutoVault exports an ESM library API:
+- `get_skill` - search by query or fetch by exact name, optionally rendering for
+  an agent and including packaged resources.
+- `add_skill` - install a known skill from `github`, `agentskills`, `url`, or
+  `local`.
+- `propose_skill` - submit newly authored SKILL.md bytes for validation,
+  security scan, deduplication, signing, and storage.
+- `bulk_import` - import every immediate child directory containing a `SKILL.md`.
+- `update_skill` - refresh from the recorded source or replace from a new
+  source, local bundle, or inline bytes.
+- `delete_skill` - remove an installed skill and its vault-local transforms,
+  then refresh generated profiles.
+- `check_updates` - compare installed skills against upstream source state and
+  report drift or transform-review work.
 
-- `resolveCapabilities()` / `resolve_capabilities()` - resolve tools, skills, and MCP servers for a scoped caller request
-- `syncProfiles()` - regenerate per-agent profile symlinks from skill frontmatter
-- `discoverProfileRoots()` - detect existing native host skill roots
-- `addSkill()` / `updateSkill()` / `deleteSkill()` - CRUD-oriented skill lifecycle helpers
-- `auditRepo()` - classify repo-local scripts, tools, workflows, and shims for migration into AutoVault skills
-- `installSkill()` - install and validate a skill from a configured source
-- `addLocalSkill()` - install and validate a local skill bundle with local provenance
-- `proposeSkill()` - validate, deduplicate, and store proposed skill content
-- `proposeSkillTransform()` / `listSkillTransforms()` / `removeSkillTransform()` - manage vault-local skill overlays
-- `renderSkillForAgent()` - preview the generated skill body for one agent
-- `importAutohubCapabilities()` / `ensureAutohubSeeded()` - import legacy AutoHub JSON state into SQLite
+Tool handlers return plain objects. `src/mcp/server.ts` wraps and serializes
+them into the MCP `content[0].text` envelope. Remote mode applies an additional
+policy layer for scopes and skill visibility.
+
+## Library Surface
+
+The source package exports the same helpers used by the CLI and MCP server:
+
+- `resolveCapabilities()` / `resolve_capabilities()`
+- `syncProfiles()` and `discoverProfileRoots()`
+- `addSkill()`, `updateSkill()`, `deleteSkill()`, `installSkill()`,
+  `addLocalSkill()`, `proposeSkill()`, and `bulkImport()`
+- `proposeSkillTransform()`, `listSkillTransforms()`,
+  `removeSkillTransform()`, and `renderSkillForAgent()`
+- `auditRepo()`
+- `importAutohubCapabilities()` / `ensureAutohubSeeded()`
 
 Unknown callers fail closed. Register callers explicitly or map unknown users to
-a known restricted caller such as `guest`.
+a restricted caller such as `guest`.
 
-### Validation and Safety
+## Validation Gate
 
-Every install/propose path goes through a validation pipeline that includes:
+Every install, update, proposal, and bulk import runs through the same
+validation path:
 
-- frontmatter parsing and normalization
-- schema validation via `zod`
-- denylist-based security scanning (12 patterns, extensible)
-- capability-declaration cross-check (e.g., `network: false` vs. a `curl` in content)
-- three-tier deduplication: exact content-hash match, near-exact text similarity, functional-overlap warning
-- Ed25519 signing of every stored skill (log-only verification in V1)
-- safe path handling for skill names and resource reads/writes
+1. Repair and normalize frontmatter formatting.
+2. Parse YAML frontmatter with `gray-matter`.
+3. Validate schema with `zod`.
+4. Scan content against the denylist in `scripts/security/patterns.json`.
+5. Cross-check declared capabilities against observed behavior.
+6. Deduplicate exact, near-exact, and functionally similar proposals.
+7. Write the skill, source sidecar, signed manifest, and Ed25519 signature.
 
-### Source Adapters
+In strict mode (`AUTOVAULT_SECURITY_STRICT=true`, the default), denylist hits
+block writes. In non-strict mode they become warnings.
 
-AutoVault currently supports:
+## Storage Layout
 
-- `github`: `owner/repo[@ref][:path/to/SKILL.md]`, GitHub blob URLs, or GitHub repo-root/tree URLs for `SKILL.md` discovery
-- `agentskills`: `slug[@version]`
-- `url`: HTTPS URLs only
-
-Remote content is treated as untrusted until it passes validation.
-
-### Provenance and Drift Detection
-
-Installed skills are stored with two sidecar files:
-
-- `.autovault-source.json` — source, identifier, upstream SHA, content hash, timestamps
-- `.autovault-signature` — detached Ed25519 signature over the SKILL.md content
-
-`check_updates` uses the content hash to detect upstream drift for remote
-sources and bundled inline skills. Non-bundled inline skills are reported as
-unchecked. Transform overlays are compared against their pinned base
-`SKILL.md`; changed bases appear in `transform_reviews`. The signature detects
-post-install tampering (log-only warning in V1).
-
-## Benefits
-
-- **Reusable**: skills become searchable and retrievable through MCP
-- **Safer**: malformed or obviously risky content is gated before persistence
-- **Traceable**: imported skills keep source metadata and drift info
-- **Simple**: plain filesystem storage, plain `SKILL.md` files, easy backup
-- **MCP-native**: works with local stdio hosts and remote MCP clients
-
-## Architecture Overview
-
-The server is intentionally simple:
-
-- `src/mcp/` - MCP server wiring and tool registration
-- `src/library.ts` - public library exports
-- `src/capabilities/` - SQLite schema, AutoHub import, and capability resolver
-- `src/profiles/` - per-agent skill profile symlink generation
-- `src/tools/` - tool handlers
-- `src/validation/` - parsing, schema validation, security scanning, dedup
-- `src/sources/` - remote source adapters
-- `src/storage/` - local skill storage and provenance sidecars
-- `src/util/` - shared helpers
-
-Storage layout:
+Default storage is `~/.autovault`; override it with
+`AUTOVAULT_STORAGE_PATH`.
 
 ```text
 $AUTOVAULT_STORAGE_PATH/
-  autovault.sqlite            # capability index
-  .signing-key.json            # Ed25519 keypair (0600)
+  autovault.sqlite             # capability index
+  .signing-key.json            # Ed25519 keypair, mode 0600
   skills/
     <name>/
       SKILL.md
       .autovault-source.json   # source, hash, timestamps
-      .autovault-signature     # detached Ed25519 signature (0600)
+      .autovault-signature     # detached Ed25519 signature, mode 0600
+      .autovault-manifest      # signed manifest for declared resources/bin
       <resources...>
   transforms/
     <base-skill>/<transform>/
-      TRANSFORM.md              # vault-local overlay instructions
-      BASE_SKILL.md             # pinned old base snapshot for review
-      .autovault-transform.json # pinned hashes and metadata
-      .autovault-manifest       # signed transform manifest
+      TRANSFORM.md
+      BASE_SKILL.md
+      .autovault-transform.json
+      .autovault-manifest
   rendered/
-    <agent>/<skill>/            # disposable generated variants
+    <agent>/<skill>/            # generated variants
   profiles/
-    <agent>/
-      <skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
-    <named-profile>/
-      <skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
-  profiles.config.json         # optional tag-filtered named profile config
+    <agent>/<skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
+    <named-profile>/<skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
+  profiles.config.json
 ```
 
-### Skill Transforms
+Skills are plain files. Back them up like dotfiles:
 
-Transforms let a workspace or agent adjust a skill without forking the upstream
-`SKILL.md`. A transform is stored under the vault, not inside the installed
-skill directory, and profile sync materializes a generated `SKILL.md` only for
-matching agents.
+```bash
+tar -czf autovault-backup-$(date +%F).tgz -C "$HOME" .autovault
+```
+
+## Skill Transforms
+
+Transforms let a workspace or agent adjust a skill without editing the upstream
+`SKILL.md`. AutoVault stores the transform under the vault, appends transform
+instructions to the base skill at render time, applies declared capability
+metadata overrides, and materializes generated variants under `rendered/`.
 
 Example `TRANSFORM.md`:
 
@@ -218,110 +301,15 @@ metadata:
 Use `mcp__perplexity__search` instead of `web_search` for research.
 ```
 
-Transforms are deterministic compose overlays: AutoVault appends the transform
-instructions to the base skill and applies declared capability metadata
-overrides. It does not call an LLM during sync. When the base skill changes,
-`check_updates` continues rendering the transform but returns
-`transform_reviews` with the pinned old base `SKILL.md` so the delta can be
+When the base skill changes, `check_updates` continues rendering the transform
+but returns `transform_reviews` with the pinned old base so the delta can be
 reviewed.
-
-## Quick Start
-
-```bash
-curl -fsSL https://autovault.sh | sh
-export PATH="$HOME/.autovault/bin:$PATH"
-autovault skill list
-autovault doctor
-```
-
-## Install Once, Render Everywhere
-
-Third-party installers can hand AutoVault a local skill bundle instead of
-copying the same files into every host-specific skill directory:
-
-```bash
-autovault add-local ./path/to/your-skill --source vendor/skills --sync-profiles
-```
-
-`add-local` requires `SKILL.md`, collects sibling resources, refuses symlinks,
-runs the normal validation/signing pipeline, records `source: "local"`, and
-then optionally syncs rendered profile links. With `--sync-profiles`, AutoVault
-discovers existing native roots such as `~/.claude/skills`, `~/.codex/skills`,
-and `~/.cursor/skills`, while preserving user-managed native files on conflict.
-Sync output includes per-skill profile status, linked root, restart guidance,
-and `loaded_in_current_session: "unknown"` because host session visibility is
-not observable from AutoVault alone.
-The MCP `add_skill` local-bundle path syncs configured profile links by default;
-pass `sync_profiles: false` only when a caller intentionally wants storage-only
-install.
-
-Use `autovault skill search <query> [--top-k N]` to debug installed skill
-discovery locally. This is metadata text search over skill names, titles,
-descriptions, tags, categories, and `when_to_use`; embedding-backed semantic
-search is a future backend, not the current behavior. The `skill` CLI reserves
-`list`, `search`, and `which` as subcommands, so those names are not available
-as executable `bin` action shorthands.
-
-Use `autovault remove <skill-name>` to remove a vaulted skill and refresh
-managed profile links in one operation. Removal deletes
-`$AUTOVAULT_STORAGE_PATH/skills/<skill-name>`, regenerates the internal
-`profiles/` tree, removes vault-local transforms for that skill, and prunes
-AutoVault-managed symlinks from discovered native host roots such as
-`~/.claude/skills`, `~/.codex/skills`, and `~/.cursor/skills`. Native discovery
-is on by default; pass `--no-discover` when you only want the vault's internal
-profile tree refreshed. Use `--link agent=/path/to/skills` for an explicit host
-root and `--json` for script-friendly output.
-
-Use `autovault doctor` to inspect vault health. `autovault doctor --clean`
-removes only ignored OS/editor metadata artifacts such as `.DS_Store`,
-`Thumbs.db`, `desktop.ini`, and AppleDouble `._*` files; unknown extra files
-and changed signed content remain integrity failures.
-
-Vendors can use the drop-in helper in
-[`scripts/vendor-autovault-install.sh`](scripts/vendor-autovault-install.sh).
-The routing mode is controlled by `AUTOVAULT_SKILL_INSTALL`:
-
-| Mode | Behavior |
-|------|----------|
-| unset, `prefer`, `prefer-autovault` | Use AutoVault when available, otherwise native install. |
-| `both` | Install through AutoVault and the vendor's native path. |
-| `native` | Try native first, then AutoVault as fallback. |
-| `native-only` | Only run the native path. |
-| `off` | Skip skill installation. |
-
-Note: `node dist/index.js` is meant to be **spawned by an MCP host**, not used
-as a long-running interactive CLI. The installer builds the Node app under
-`~/.autovault/app`, keeps installed skills and signatures under `~/.autovault`,
-and exposes the user-facing CLI as `~/.autovault/bin/autovault`. See
-[`INSTALL.md`](INSTALL.md) for manual clone and MCP host setup instructions.
-
-For development:
-
-```bash
-npm run dev
-npm test
-```
-
-## Repo Tooling Audit
-
-Use `audit-repo` to inventory an AutoHub-style repository before moving local
-scripts and operator workflows into AutoVault:
-
-```bash
-autovault audit-repo --repo ../autohub --format markdown
-autovault audit-repo --repo ../autohub --format json
-```
-
-Each item includes `path`, `kind`, `classification`, `target`, `risk`, and
-`reasons`. Secret-shaped values are never echoed; the audit reports only
-redacted file/key findings.
 
 ## Remote Deploy
 
-Remote mode is for a shared or managed vault: Docker, Railway, or any platform
-that can run a Node container with a persistent volume. It serves Streamable
-HTTP MCP at `/mcp`, uses OAuth for client registration/login/token issuance,
-and stores the vault under the mounted `AUTOVAULT_STORAGE_PATH`.
+Remote mode is for a shared or managed vault. It serves Streamable HTTP MCP at
+`/mcp`, uses OAuth for client registration/login/token issuance, and stores the
+vault under the mounted `AUTOVAULT_STORAGE_PATH`.
 
 ```bash
 npm run build
@@ -340,161 +328,119 @@ AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \
 docker compose up --build
 ```
 
-Railway:
-
-1. Create a Railway service from this repository.
-2. Add a volume mounted at `/data/autovault`.
-3. Set `AUTOVAULT_PUBLIC_URL=https://<service>.up.railway.app`.
-4. Set `AUTOVAULT_ADMIN_EMAIL` and `AUTOVAULT_ADMIN_PASSWORD`.
-5. Deploy the included `Dockerfile`; Railway provides `PORT`, and AutoVault
-   binds to `0.0.0.0:$PORT`.
-
-Remote MCP URL:
-
-```text
-http://localhost:3000/mcp
-https://<service>.up.railway.app/mcp
-```
-
-Remote mode cannot create symlinks on client machines. `sync-profiles` remains
+Remote mode cannot create symlinks on client machines. `sync-profiles` is
 local-only because a remote MCP server has no filesystem access to
-`~/.codex/skills`, `~/.claude/skills`, or other host skill roots. Remote clients
-should discover and read skills directly through `get_skill`. A later local
-mirror helper can pull permitted remote skills into local profile directories if
-filesystem-native host skills are required.
-
-## Using It With Cursor
-
-Cursor supports project-local MCP config via `.cursor/mcp.json`.
-
-Example:
-
-```json
-{
-  "mcpServers": {
-    "autovault": {
-      "type": "stdio",
-      "command": "/usr/local/bin/node",
-      "args": ["${workspaceFolder}/dist/index.js"]
-    }
-  }
-}
-```
-
-After saving the config, reload Cursor and verify the server under
-`Tools & MCP`.
+`~/.codex/skills`, `~/.claude/skills`, or other host roots. Remote clients
+should discover and read skills directly through `get_skill`.
 
 ## Configuration
 
-All config is environment-based and validated at startup.
+Runtime environment:
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
-| `AUTOVAULT_MODE` | `local` | `local` for stdio/library use, `remote` for the HTTP MCP service. |
+| --- | --- | --- |
+| `AUTOVAULT_MODE` | `local` | `local` for stdio/library use, `remote` for HTTP MCP. |
 | `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
-| `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite path for capability metadata. |
-| `AUTOVAULT_PROFILE_LINKS` | _unset_ | Comma-separated `agent=/skills/root` links to refresh during profile sync, e.g. `codex=~/.codex/skills,claude-code=~/.claude/skills`. |
-| `AUTOVAULT_PROFILE_CONFIG_PATH` | `$AUTOVAULT_STORAGE_PATH/profiles.config.json` | Optional JSON file defining named, tag-filtered project profiles. |
-| `AUTOVAULT_SKILL_INSTALL` | `prefer-autovault` | Vendor installer routing contract for local skill bundles: `prefer-autovault`, `both`, `native`, `native-only`, or `off`. |
-| `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
-| `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently metadata text search only). |
-| `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`. |
-| `AUTOVAULT_PUBLIC_URL` | _required in remote mode_ | Public origin for OAuth metadata and Railway/custom-domain callbacks. |
-| `AUTOVAULT_HTTP_PORT` | `3000` | Local HTTP port when `PORT` is not provided by the platform. |
-| `AUTOVAULT_ALLOWED_ORIGINS` | _unset_ | Optional comma-separated browser origins allowed to call the service. |
-| `AUTOVAULT_ADMIN_EMAIL` | _required until an owner exists_ | Email for the first owner account seeded on remote boot. |
-| `AUTOVAULT_ADMIN_PASSWORD` | _required until an owner exists_ | Password for the first owner account; must be at least 12 characters. |
-| `GITHUB_TOKEN` | _unset_ | Optional. Used for GitHub API rate-limit headroom. |
-| `AUTOVAULT_AGENTSKILLS_BASE` | `https://agentskills.io/api/v1` | Override the agentskills base URL. |
+| `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite capability index. |
+| `AUTOVAULT_PROFILE_LINKS` | unset | Comma-separated `agent=/skills/root` links for profile sync. |
+| `AUTOVAULT_PROFILE_CONFIG_PATH` | `$AUTOVAULT_STORAGE_PATH/profiles.config.json` | Optional named profile config. |
+| `AUTOVAULT_SKILL_INSTALL` | `prefer-autovault` | Vendor routing: `prefer-autovault`, `both`, `native`, `native-only`, or `off`. |
+| `AUTOVAULT_SECURITY_STRICT` | `true` | Block denylist hits when true; warn when false. |
+| `AUTOVAULT_SEARCH_MODE` | `text` | Search backend. Metadata text search is the current implementation. |
+| `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
+| `AUTOVAULT_PUBLIC_URL` | required in remote mode | Public origin for OAuth metadata and callbacks. |
+| `AUTOVAULT_HTTP_PORT` | `3000` | HTTP port when `PORT` is not injected by the platform. |
+| `AUTOVAULT_ALLOWED_ORIGINS` | unset | Optional CORS allowlist for remote mode. |
+| `AUTOVAULT_ADMIN_EMAIL` | required until owner exists | First remote owner email. |
+| `AUTOVAULT_ADMIN_PASSWORD` | required until owner exists | First remote owner password, at least 12 characters. |
+| `GITHUB_TOKEN` | unset | Optional GitHub API rate-limit headroom. |
+| `AUTOVAULT_AGENTSKILLS_BASE` | `https://agentskills.io/api/v1` | Override the agentskills API base. |
 
-Installer-only variables:
+Installer-only environment:
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
-| `AUTOVAULT_HOME` | `~/.autovault` | Install root for the app, shim, and default storage. |
-| `AUTOVAULT_BIN_DIR` | `$AUTOVAULT_HOME/bin` | Directory where the `autovault` shim is written. |
+| --- | --- | --- |
+| `AUTOVAULT_HOME` | `~/.autovault` | Install root for app, shim, and default storage. |
+| `AUTOVAULT_BIN_DIR` | `$AUTOVAULT_HOME/bin` | Directory for the `autovault` shim. |
 | `AUTOVAULT_REF` | `main` | GitHub branch or tag downloaded by `autovault.sh`. |
-| `AUTOVAULT_TARBALL_URL` | _derived from `AUTOVAULT_REF`_ | Fully override the source archive URL. |
+| `AUTOVAULT_TARBALL_URL` | derived from `AUTOVAULT_REF` | Fully override the source archive URL. |
 | `AUTOVAULT_NO_BOOTSTRAP` | `0` | Set to `1` to skip bundled-skill bootstrap. |
 
 ## Security Model
 
-AutoVault has two distinct surfaces with different execution properties.
+AutoVault has two execution surfaces with different boundaries.
 
-**The MCP servers** (`dist/index.js` over stdio and `dist/remote.js` over Streamable HTTP) are storage-and-validation services. They never execute skill content. Agents call their tools to install, propose, search, and read skills; the bytes sit on disk afterward. Remote sources are treated as untrusted input, validated through the schema/security/capability pipeline, and rejected (or, in non-strict mode, warned about) before any write. Path inputs are checked to prevent traversal, and all diagnostics go to stderr so stdout stays reserved for MCP framing on the stdio path. Remote mode additionally requires OAuth bearer tokens and filters skill visibility for non-owner users.
+**The MCP servers** (`dist/index.js` over stdio and `dist/remote.js` over
+Streamable HTTP) are storage-and-validation services. They never execute skill
+content. Remote sources are treated as untrusted input and must pass schema,
+security, capability, dedup, signing, and path-safety checks before any write.
+All diagnostics go to stderr so stdout stays reserved for stdio MCP framing.
+Remote mode additionally requires OAuth bearer tokens and filters skill
+visibility for non-owner users.
 
-**The `autovault skill <action>` CLI** (e.g. `autovault skill setup <name>`) is a separate, user-invoked surface that *does* execute the bin resources a skill declares in its `bin:` frontmatter block. It is the explicit "user runs this in their own terminal" path for skills that need out-of-band setup (registering MCP servers, writing host config, prompting for secrets). The CLI runs the script as the invoking user, with the user's full filesystem and network access. These checks apply before exec:
+**The `autovault skill <action>` CLI** is a user-invoked execution surface for
+skills that declare signed `bin:` actions. It runs the script as the invoking
+user, with that user's filesystem and network access. Before execution, the CLI
+hard-fails if the signed manifest, `SKILL.md`, or declared bin resources have
+been changed post-install.
 
-- **Manifest signature verification, hard-fail.** Every byte of SKILL.md and every declared bin resource is signed at install time. If either has been mutated post-install, the CLI refuses to run and exits non-zero. This is hard enforcement, not log-only — but the trust root is the keypair at `$AUTOVAULT_STORAGE_PATH/.signing-key.json`, which lives inside the directory the manifest is protecting. The verification therefore detects tampering by callers *outside* the storage-root trust domain (the MCP API, which exposes no key-write tool; accidental corruption; weaker-privilege processes that can read but not write the storage tree). It does **not** defend against a same-uid attacker who already has storage-root writes — they can rewrite the keypair and re-sign tampered bytes. Treat storage-root write access as full vault compromise; see `docs/THREAT-MODEL.md` for the deliberate v1 trade and the v2 keychain lift.
-- **Benign metadata ignore.** The open-set integrity walk ignores regular OS/editor metadata artifacts (`.DS_Store`, `Thumbs.db`, `desktop.ini`, and AppleDouble `._*`) because Finder/editor browsing should not look like skill tampering. Symlinks, special files, unknown hidden files, unsigned helpers, and changed signed files are still integrity failures. Run `autovault doctor --clean` to remove ignored artifacts.
-- **Storage-root only.** The CLI execs from `$AUTOVAULT_STORAGE_PATH/skills/<name>/`, never from a synced host mirror (`~/.claude/skills/`, `~/.cursor/skills/`). Mirrors are read-only copies maintained by `sync-profiles`; only the storage root carries the manifest the CLI was authored against.
-- **Interactive-TTY gate (defense-in-depth).** `bin.<action>.requires-tty` is accepted as declarative metadata, but the CLI currently requires an interactive TTY for every bin action regardless of that value. The gate is unconditional — no environment variable disables it. **Treat the TTY check as advisory, not as proof a human is present**: an agent that can allocate a pseudo-terminal (Node `pty`, Python `pexpect`) will satisfy `process.stdin.isTTY` without any user review. The gate raises the bar against the simplest exfiltration path (`echo $SECRET | autovault skill setup foo`) but does not, on its own, walls off agents from invoking signed bin scripts. The hard boundary is install-time validation + manifest signing, not TTY presence at exec time. See `docs/THREAT-MODEL.md` for the full discussion.
+Important limits:
 
-Residual risks the CLI does not protect against: (a) a malicious skill that passes the install-time security scan and then runs legitimately-shaped commands (the user is the gate of last resort — `autovault skill which <name> <action>` prints the resolved script path and full signed argv for review); (b) within-boot PID reuse interacting with a stalled writer (documented in `docs/THREAT-MODEL.md` — manual `.autovault-write-lock` removal is the recourse); (c) an attacker who already holds write access to `$AUTOVAULT_STORAGE_PATH` (same-uid compromise is out of scope for v1 manifest verification).
+- The trust root is the keypair at `$AUTOVAULT_STORAGE_PATH/.signing-key.json`.
+  Treat storage-root write access as full vault compromise.
+- `autovault doctor --clean` removes only ignored OS/editor metadata such as
+  `.DS_Store`, `Thumbs.db`, `desktop.ini`, and AppleDouble `._*` files.
+- Unknown hidden files, symlinks, special files, unsigned helpers, and changed
+  signed files remain integrity failures.
+- The CLI requires an interactive TTY for bin actions as defense in depth, but a
+  pseudo-terminal can satisfy that check. The hard boundary is validation plus
+  manifest signing, not proof of a human at the keyboard.
 
-For the full threat model, including trust boundaries and accepted risks, see [`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
+For the full model and accepted risks, read
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md).
 
-## Backup and Restore
-
-Skills are plain files, so backup is straightforward:
-
-```bash
-tar -czf autovault-backup-$(date +%F).tgz -C "$HOME" .autovault
-```
-
-To restore, place the skill directory back under `AUTOVAULT_STORAGE_PATH`.
-
-For release/rollback guidance, see [`docs/RELEASE.md`](docs/RELEASE.md).
-
-## Testing and Verification
-
-The project includes:
-
-- unit and integration tests via `vitest`
-- end-to-end smoke verification in `scripts/smoke.mjs`
-- remote HTTP/OAuth smoke verification in `scripts/remote-smoke.mjs`
-- negative-path probing in `scripts/probe.mjs`
-- GitHub Actions CI for build, test, and audit checks
-
-Run locally:
+## Development
 
 ```bash
+npm ci
 npm run build
-npm test -- --coverage
+npm test
 node scripts/smoke.mjs
 node scripts/remote-smoke.mjs
 node scripts/probe.mjs
 ```
 
-## Docker
+The smoke, probe, and remote-smoke scripts require `npm run build` first because
+they spawn compiled files from `dist/`.
 
-Docker defaults to the remote service entry point:
+Architecture map:
 
-```bash
-AUTOVAULT_ADMIN_EMAIL=admin@example.com \
-AUTOVAULT_ADMIN_PASSWORD=replace-with-a-long-random-password \
-docker compose up --build
-```
+- `src/index.ts` - local stdio MCP entry point
+- `src/remote.ts` - remote Streamable HTTP MCP entry point
+- `src/mcp/` - tool registration and serialization
+- `src/tools/` - MCP tool handlers
+- `src/cli/` - local operator CLI and UI
+- `src/library.ts` - public ESM exports
+- `src/capabilities/` - SQLite schema, resolver, AutoHub import
+- `src/profiles/` - profile discovery, filtering, and symlink sync
+- `src/validation/` - frontmatter repair, schema, security, dedup
+- `src/sources/` - source adapters
+- `src/storage/` - filesystem storage, locks, manifests, signing
+- `src/util/` - shared helpers
 
-The compose service maps `localhost:3000` to `/mcp` and persists the vault in
-the `autovault-data` volume mounted at `/data/autovault`. For local stdio use,
-run `node dist/index.js` directly or override the container command.
+Release and operations docs:
 
-## Release Status
-
-See the latest release and release process:
-
+- [`INSTALL.md`](INSTALL.md)
 - [`CHANGELOG.md`](CHANGELOG.md)
 - [`docs/RELEASE.md`](docs/RELEASE.md)
-- [GitHub Releases](https://github.com/autoworks-ai/autovault/releases)
+- [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md)
 
 ## Roadmap
 
-Likely next areas of expansion:
+Likely next areas:
 
-- signature verification enforcement (currently log-only)
+- stronger key storage for signature enforcement
 - semantic search via local embeddings
-- description optimization loop (from skill-creator)
-- Hermes-style agent filesystem watchers for post-hoc consolidation
-- additional source adapters (ClawHub, LobeHub, Tessl)
-- secret resolver (brainstorm pending)
+- additional source adapters such as ClawHub, LobeHub, and Tessl
+- local mirror helper for permitted remote skills
+- secret resolver design, without storing secret values in the vault
