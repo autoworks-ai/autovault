@@ -32,6 +32,16 @@ can import the built library entry point directly. Remote deployments use
 
 See [`docs/adr/0001-transport.md`](docs/adr/0001-transport.md) for the runtime decision.
 
+## Distribution
+
+- Source and release artifacts: <https://github.com/autoworks-ai/autovault>
+- NPM package page: <https://www.npmjs.com/package/@autoworks-ai/autovault>
+- Container image: `ghcr.io/autoworks-ai/autovault:<tag>`
+
+Release Please publishes the npm package with trusted publishing after a
+Release Please PR is merged. Until the npm package page resolves publicly, use
+`autovault.sh`, a source checkout, or the GHCR image as the install path.
+
 ## What It Does
 
 AutoVault supports local capability resolution plus the skill lifecycle:

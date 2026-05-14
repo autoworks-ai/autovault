@@ -18,6 +18,12 @@ Cursor, Codex, AutoHub, Railway, Docker, or any other MCP-compatible host.
 curl -fsSL https://autovault.sh | sh
 ```
 
+The canonical npm package page is
+<https://www.npmjs.com/package/@autoworks-ai/autovault>. Release Please
+publishes that package through npm trusted publishing after a release PR is
+merged. If the npm page still returns 404, the first public npm publish has not
+completed yet; use the shell installer, source checkout, or GHCR image.
+
 The installer downloads the AutoVault source release, builds the Node app under
 `~/.autovault/app`, preserves the rest of `~/.autovault/` as vault storage, and
 creates a shim at `~/.autovault/bin/autovault`.
@@ -287,8 +293,9 @@ http://localhost:3000/mcp
 Railway pulls the multi-arch image published on every GitHub release at
 `ghcr.io/autoworks-ai/autovault:<tag>`. The image is built by
 [`.github/workflows/docker-publish.yml`](.github/workflows/docker-publish.yml)
-on `release: published`. The package must be public for Railway to pull it
-without registry credentials — confirm at
+on `release: published`. This is separate from the npm package at
+<https://www.npmjs.com/package/@autoworks-ai/autovault>. The GHCR package must
+be public for Railway to pull it without registry credentials; confirm at
 <https://github.com/orgs/autoworks-ai/packages/container/autovault/settings>.
 
 Order of operations matters because the server refuses to boot in remote mode
