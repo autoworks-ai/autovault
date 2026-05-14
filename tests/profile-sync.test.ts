@@ -7,15 +7,25 @@ import { ensureStorage, writeSkill } from "../src/storage/index.js";
 import { withProfileSyncLock, withStorageLock } from "../src/storage/lock.js";
 import { currentStorageRoot } from "./setup.js";
 
-const skill = (name: string, agents?: string[]): string => `---
+type SkillOptions = {
+  agents?: string[];
+  tags?: string[];
+};
+
+const skill = (name: string, agentsOrOptions?: string[] | SkillOptions): string => {
+  const options = Array.isArray(agentsOrOptions)
+    ? { agents: agentsOrOptions }
+    : agentsOrOptions ?? {};
+  return `---
 name: ${name}
 description: ${name} test skill with enough description text.
-${agents ? `agents: [${agents.join(", ")}]\n` : ""}metadata:
+${options.tags ? `tags: [${options.tags.join(", ")}]\n` : ""}${options.agents ? `agents: [${options.agents.join(", ")}]\n` : ""}metadata:
   version: "1.0.0"
 ---
 
 # ${name}
 `;
+};
 
 describe("profile sync", () => {
   it("generates per-agent symlinks and preserves unrelated external skills", async () => {
@@ -102,6 +112,162 @@ describe("profile sync", () => {
     await expect(fs.readlink(path.join(overrideRoot, "configured-skill"))).resolves.toContain(
       path.join("profiles", "claude-code", "configured-skill")
     );
+  });
+
+  it("syncs tag-filtered named profiles and keeps agent filtering authoritative", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "autohub-codex",
+      skill("autohub-codex", { agents: ["codex"], tags: ["autohub", "mcp"] })
+    );
+    await writeSkill(
+      "autohub-claude",
+      skill("autohub-claude", { agents: ["claude-code"], tags: ["autohub"] })
+    );
+    await writeSkill(
+      "commerce-codex",
+      skill("commerce-codex", { agents: ["codex"], tags: ["autohub", "commerce"] })
+    );
+    await writeSkill("plain-codex", skill("plain-codex", { agents: ["codex"] }));
+
+    const target = path.join(currentStorageRoot(), "project-codex-skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex-autohub",
+            agent: "codex",
+            target,
+            include_tags: ["autohub"],
+            exclude_tags: ["commerce"]
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    const result = await syncProfiles();
+
+    expect(result.profiles["codex-autohub"]).toEqual(["autohub-codex"]);
+    expect(result.linkedRoots["codex-autohub"]).toBe(target);
+    await expect(fs.readlink(path.join(target, "autohub-codex"))).resolves.toContain(
+      path.join("profiles", "codex-autohub", "autohub-codex")
+    );
+    await expect(fs.lstat(path.join(target, "commerce-codex"))).rejects.toThrow();
+    await expect(fs.lstat(path.join(target, "autohub-claude"))).rejects.toThrow();
+
+    const unchanged = await syncProfiles();
+    expect(unchanged.profileStatus["codex-autohub"]).toEqual([
+      expect.objectContaining({
+        name: "autohub-codex",
+        status: "unchanged",
+        restart_required: false
+      })
+    ]);
+  });
+
+  it("treats omitted include tags as all agent skills and prunes dropped managed links only", async () => {
+    await ensureStorage();
+    await writeSkill("keep-one", skill("keep-one", { agents: ["codex"], tags: ["autohub"] }));
+    await writeSkill("drop-one", skill("drop-one", { agents: ["codex"], tags: ["video"] }));
+
+    const target = path.join(currentStorageRoot(), "target-prune");
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(path.join(target, "debug-issue.md"), "local project note\n", "utf-8");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex-project",
+            agent: "codex",
+            target
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+    await expect(fs.readlink(path.join(target, "drop-one"))).resolves.toContain(
+      path.join("profiles", "codex-project", "drop-one")
+    );
+
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex-project",
+            agent: "codex",
+            target,
+            exclude_tags: ["video"]
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    const result = await syncProfiles();
+
+    expect(result.profiles["codex-project"]).toEqual(["keep-one"]);
+    await expect(fs.lstat(path.join(target, "drop-one"))).rejects.toThrow();
+    await expect(fs.readFile(path.join(target, "debug-issue.md"), "utf-8")).resolves.toBe(
+      "local project note\n"
+    );
+  });
+
+  it("aborts before writing when named profiles and legacy links share a target", async () => {
+    await ensureStorage();
+    await writeSkill("shared-target-skill", skill("shared-target-skill", ["codex"]));
+
+    const target = path.join(currentStorageRoot(), "duplicate-target");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex-project",
+            agent: "codex",
+            target
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await expect(syncProfiles({ profileRoots: { codex: target } })).rejects.toThrow(
+      /Duplicate profile target/
+    );
+    await expect(fs.lstat(path.join(target, "shared-target-skill"))).rejects.toThrow();
+  });
+
+  it("aborts when a named profile reuses a legacy profile name", async () => {
+    await ensureStorage();
+    await writeSkill("name-collision-skill", skill("name-collision-skill", ["codex"]));
+
+    const legacyTarget = path.join(currentStorageRoot(), "legacy-codex-target");
+    const namedTarget = path.join(currentStorageRoot(), "named-codex-target");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex",
+            agent: "codex",
+            target: namedTarget
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await expect(syncProfiles({ profileRoots: { codex: legacyTarget } })).rejects.toThrow(
+      /Duplicate profile name/
+    );
+    await expect(fs.lstat(path.join(legacyTarget, "name-collision-skill"))).rejects.toThrow();
+    await expect(fs.lstat(path.join(namedTarget, "name-collision-skill"))).rejects.toThrow();
   });
 
   it("preserves non-symlink external skill conflicts with warnings", async () => {
@@ -506,5 +672,289 @@ metadata:
     } finally {
       readdirSpy.mockRestore();
     }
+  });
+
+  // Phase-2 skillOverrides emission: a per-project symlink farm under
+  // <project>/.claude/skills is additive to ~/.claude/skills — Claude Code
+  // merges them. The only mechanism that actually shrinks the merged manifest
+  // is the per-skill on/off map in .claude/settings.json. These tests cover
+  // emitting that map alongside the symlink sync.
+
+  async function readJsonFile(filePath: string): Promise<Record<string, unknown>> {
+    return JSON.parse(await fs.readFile(filePath, "utf-8")) as Record<string, unknown>;
+  }
+
+  it("emits skillOverrides for an opt-in claude-code profile", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "kept-skill",
+      skill("kept-skill", { agents: ["claude-code"], tags: ["autohub"] })
+    );
+    await writeSkill(
+      "dropped-skill",
+      skill("dropped-skill", { agents: ["claude-code"], tags: ["video"] })
+    );
+    await writeSkill(
+      "codex-only",
+      skill("codex-only", { agents: ["codex"], tags: ["autohub"] })
+    );
+
+    const target = path.join(currentStorageRoot(), "myproject", ".claude", "skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "claude-myproject",
+            agent: "claude-code",
+            target,
+            include_tags: ["autohub"],
+            export_skill_overrides: true
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+
+    const settingsPath = path.join(currentStorageRoot(), "myproject", ".claude", "settings.json");
+    const settings = await readJsonFile(settingsPath);
+    expect(settings.skillOverrides).toEqual({ "dropped-skill": "off" });
+    // Included skills are absent (default "on"); non-claude-code skills are absent.
+    expect(Object.keys(settings.skillOverrides as object)).not.toContain("kept-skill");
+    expect(Object.keys(settings.skillOverrides as object)).not.toContain("codex-only");
+  });
+
+  it("preserves unrelated keys when patching settings.json", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "drop-me",
+      skill("drop-me", { agents: ["claude-code"], tags: ["video"] })
+    );
+
+    const projectDir = path.join(currentStorageRoot(), "myproject", ".claude");
+    const target = path.join(projectDir, "skills");
+    await fs.mkdir(projectDir, { recursive: true });
+    const settingsPath = path.join(projectDir, "settings.json");
+    await fs.writeFile(
+      settingsPath,
+      JSON.stringify(
+        {
+          mcpServers: { foo: { command: "node", args: ["foo.js"] } },
+          env: { FOO: "bar" }
+        },
+        null,
+        2
+      ),
+      "utf-8"
+    );
+
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "claude-myproject",
+            agent: "claude-code",
+            target,
+            include_tags: ["autohub"],
+            export_skill_overrides: true
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+
+    const settings = await readJsonFile(settingsPath);
+    expect(settings.mcpServers).toEqual({ foo: { command: "node", args: ["foo.js"] } });
+    expect(settings.env).toEqual({ FOO: "bar" });
+    expect(settings.skillOverrides).toEqual({ "drop-me": "off" });
+  });
+
+  it("resolves an explicit relative export_skill_overrides path", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "drop-me",
+      skill("drop-me", { agents: ["claude-code"], tags: ["video"] })
+    );
+
+    const target = path.join(currentStorageRoot(), "myproject", ".claude", "skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "claude-myproject",
+            agent: "claude-code",
+            target,
+            exclude_tags: ["video"],
+            export_skill_overrides: "settings.local.json"
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+
+    const expectedPath = path.join(
+      currentStorageRoot(),
+      "myproject",
+      ".claude",
+      "settings.local.json"
+    );
+    const settings = await readJsonFile(expectedPath);
+    expect(settings.skillOverrides).toEqual({ "drop-me": "off" });
+    // The default settings.json must NOT exist (we used an explicit override path).
+    const defaultPath = path.join(
+      currentStorageRoot(),
+      "myproject",
+      ".claude",
+      "settings.json"
+    );
+    await expect(fs.stat(defaultPath)).rejects.toThrow();
+  });
+
+  it("does not emit when export_skill_overrides is omitted", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "drop-me",
+      skill("drop-me", { agents: ["claude-code"], tags: ["video"] })
+    );
+
+    const target = path.join(currentStorageRoot(), "myproject", ".claude", "skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "claude-myproject",
+            agent: "claude-code",
+            target,
+            include_tags: ["autohub"]
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+
+    const settingsPath = path.join(currentStorageRoot(), "myproject", ".claude", "settings.json");
+    await expect(fs.stat(settingsPath)).rejects.toThrow();
+  });
+
+  it("does not emit skillOverrides for non-claude-code profiles", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "drop-me",
+      skill("drop-me", { agents: ["codex"], tags: ["video"] })
+    );
+
+    const target = path.join(currentStorageRoot(), "codex-project", ".codex", "skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "codex-project",
+            agent: "codex",
+            target,
+            export_skill_overrides: true
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+
+    const settingsPath = path.join(currentStorageRoot(), "codex-project", ".codex", "settings.json");
+    await expect(fs.stat(settingsPath)).rejects.toThrow();
+  });
+
+  it("re-sync replaces a stale skillOverrides entry (AutoVault owns the key)", async () => {
+    await ensureStorage();
+    await writeSkill(
+      "kept",
+      skill("kept", { agents: ["claude-code"], tags: ["autohub"] })
+    );
+    await writeSkill(
+      "dropped",
+      skill("dropped", { agents: ["claude-code"], tags: ["video"] })
+    );
+
+    const target = path.join(currentStorageRoot(), "myproject", ".claude", "skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "claude-myproject",
+            agent: "claude-code",
+            target,
+            include_tags: ["autohub"],
+            export_skill_overrides: true
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+    const settingsPath = path.join(currentStorageRoot(), "myproject", ".claude", "settings.json");
+    let settings = await readJsonFile(settingsPath);
+    expect(settings.skillOverrides).toEqual({ dropped: "off" });
+
+    // Manually pollute the block with a bogus entry — re-sync must replace it.
+    settings.skillOverrides = { ...(settings.skillOverrides as object), "bogus-skill": "off" };
+    await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf-8");
+
+    await syncProfiles();
+    settings = await readJsonFile(settingsPath);
+    expect(settings.skillOverrides).toEqual({ dropped: "off" });
+  });
+
+  it("never writes plugin-namespaced slugs into skillOverrides", async () => {
+    await ensureStorage();
+    // Bypass schema gate by writing the skill dir directly — AutoVault's
+    // SAFE_SLUG_PATTERN rejects colons at install time, so a colon-bearing
+    // slug can only arrive via a hostile/legacy on-disk dir. This test pins
+    // the defense-in-depth filter inside the emitter.
+    await writeSkill(
+      "codex:setup",
+      skill("codex:setup", { agents: ["claude-code"], tags: ["video"] })
+    );
+    await writeSkill(
+      "ordinary",
+      skill("ordinary", { agents: ["claude-code"], tags: ["video"] })
+    );
+
+    const target = path.join(currentStorageRoot(), "myproject", ".claude", "skills");
+    await fs.writeFile(
+      path.join(currentStorageRoot(), "profiles.config.json"),
+      JSON.stringify({
+        profiles: [
+          {
+            name: "claude-myproject",
+            agent: "claude-code",
+            target,
+            include_tags: ["autohub"],
+            export_skill_overrides: true
+          }
+        ]
+      }),
+      "utf-8"
+    );
+
+    await syncProfiles();
+
+    const settingsPath = path.join(currentStorageRoot(), "myproject", ".claude", "settings.json");
+    const settings = await readJsonFile(settingsPath);
+    expect(Object.keys(settings.skillOverrides as object)).toContain("ordinary");
+    expect(Object.keys(settings.skillOverrides as object)).not.toContain("codex:setup");
   });
 });

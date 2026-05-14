@@ -8,6 +8,22 @@ while it remains in pre-1.0 development.
 
 ## [Unreleased]
 
+### Added
+- Named profiles can opt in to emitting a Claude Code `skillOverrides` block
+  alongside the project-local symlink farm. Without this, the per-project
+  `<project>/.claude/skills/` symlinks are purely additive to
+  `~/.claude/skills/` — Claude Code merges both sources, so the manifest a
+  project sees never shrinks. Set `export_skill_overrides: true` on a
+  `claude-code` profile to write `<dirname(target)>/settings.json` with
+  `"<slug>": "off"` for every claude-code skill the profile's tag filter
+  excluded. A string value resolves to an explicit settings path (relative
+  paths anchor at `dirname(target)`).
+- AutoVault owns the `skillOverrides` key for managed projects — manual
+  edits to that key are overwritten on next sync. Other top-level keys
+  (`mcpServers`, `env`, hooks, etc.) are preserved verbatim. Plugin-namespaced
+  skills (`foo:bar`) are intentionally never written — Claude Code's
+  `skillOverrides` does not affect plugin skills (manage those via `/plugin`).
+
 ## [0.2.1] - 2026-05-09
 
 ### Added

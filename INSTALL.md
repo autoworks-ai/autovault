@@ -163,6 +163,53 @@ Discovery currently checks:
 - `~/.codex/skills` as `codex`
 - `~/.cursor/skills` as `cursor`
 
+### Project-scoped named profiles
+
+For project-specific curation, define named profiles in
+`$AUTOVAULT_STORAGE_PATH/profiles.config.json` (default:
+`~/.autovault/profiles.config.json`). Set `AUTOVAULT_PROFILE_CONFIG_PATH` to use
+another JSON file. Named profiles refine the skill's `agents` frontmatter with
+exact tag matches: `exclude_tags` wins over `include_tags`, and omitted
+`include_tags` or `"*"` means all skills for that agent.
+
+```json
+{
+  "profiles": [
+    {
+      "name": "claude-code-autohub",
+      "agent": "claude-code",
+      "target": "~/Projects/OpenAI/autohub/.claude/skills",
+      "include_tags": [
+        "general",
+        "autohub",
+        "voice",
+        "tui",
+        "mcp",
+        "slack",
+        "discord",
+        "home-assistant",
+        "cloudflare",
+        "git"
+      ],
+      "exclude_tags": ["commerce", "clerk-auth", "brand", "video", "social"]
+    }
+  ]
+}
+```
+
+Syncing profiles now refreshes both legacy agent roots and configured named
+profiles:
+
+```bash
+autovault sync-profiles
+autovault profiles list --json
+```
+
+Named profile targets must be distinct from each other and from legacy
+`AUTOVAULT_PROFILE_LINKS`/`--link` targets when named profiles are enabled.
+AutoVault still only removes symlinks that already point into its managed
+profile tree; project-local files such as `.md` notes are left alone.
+
 ## 4b. Add a local skill bundle
 
 Third-party installers should use `add-local` when they already have a local

@@ -71,6 +71,7 @@ const schema = z.object({
   AUTOVAULT_STORAGE_PATH: z.string().min(1).default("~/.autovault"),
   AUTOVAULT_DB_PATH: z.string().min(1).optional(),
   AUTOVAULT_PROFILE_LINKS: profileLinks,
+  AUTOVAULT_PROFILE_CONFIG_PATH: z.string().min(1).optional(),
   AUTOVAULT_SECURITY_STRICT: booleanish.default(true),
   AUTOVAULT_SEARCH_MODE: z.enum(["text"]).default("text"),
   AUTOVAULT_LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
@@ -96,6 +97,7 @@ export type Config = {
   storagePath: string;
   dbPath: string;
   profileRoots: Record<string, string>;
+  profileConfigPath: string;
   strictSecurity: boolean;
   searchMode: "text";
   logLevel: "debug" | "info" | "warn" | "error";
@@ -133,6 +135,7 @@ export function loadConfig(): Config {
     AUTOVAULT_STORAGE_PATH: process.env.AUTOVAULT_STORAGE_PATH,
     AUTOVAULT_DB_PATH: process.env.AUTOVAULT_DB_PATH,
     AUTOVAULT_PROFILE_LINKS: process.env.AUTOVAULT_PROFILE_LINKS,
+    AUTOVAULT_PROFILE_CONFIG_PATH: process.env.AUTOVAULT_PROFILE_CONFIG_PATH,
     AUTOVAULT_SECURITY_STRICT: process.env.AUTOVAULT_SECURITY_STRICT,
     AUTOVAULT_SEARCH_MODE: process.env.AUTOVAULT_SEARCH_MODE,
     AUTOVAULT_LOG_LEVEL: process.env.AUTOVAULT_LOG_LEVEL,
@@ -162,6 +165,9 @@ export function loadConfig(): Config {
       ? expandHome(parsed.data.AUTOVAULT_DB_PATH)
       : path.join(storagePath, "autovault.sqlite"),
     profileRoots: parsed.data.AUTOVAULT_PROFILE_LINKS,
+    profileConfigPath: parsed.data.AUTOVAULT_PROFILE_CONFIG_PATH
+      ? expandHome(parsed.data.AUTOVAULT_PROFILE_CONFIG_PATH)
+      : path.join(storagePath, "profiles.config.json"),
     strictSecurity: parsed.data.AUTOVAULT_SECURITY_STRICT,
     searchMode: parsed.data.AUTOVAULT_SEARCH_MODE,
     logLevel: parsed.data.AUTOVAULT_LOG_LEVEL,

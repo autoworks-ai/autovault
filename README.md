@@ -18,7 +18,7 @@ AutoVault is a Node/TypeScript library and compatibility MCP server that:
 - stores skills on the local filesystem or a mounted service volume
 - indexes profiles, callers, tool groups, aliases, context rules, and MCP servers in SQLite
 - resolves scoped capabilities through `resolveCapabilities()`
-- generates per-agent skill profile symlinks in local mode
+- generates per-agent and tag-filtered project skill profile symlinks in local mode
 - applies vault-local skill transforms when generating per-agent profiles
 - validates submitted or imported skill content
 - exposes existing skill lifecycle operations over MCP tools
@@ -67,6 +67,7 @@ AutoVault is useful when you want:
 - a safer workflow than ad hoc copy/paste skill files
 - deduplication before new skills get added
 - filesystem-native skill profiles for Claude Code, Codex, and other agents
+- project-specific skill curation from existing `tags` and `agents` frontmatter
 - a lightweight local registry that still works with MCP-native tools
 - provenance and drift visibility for imported skills
 
@@ -182,6 +183,9 @@ $AUTOVAULT_STORAGE_PATH/
   profiles/
     <agent>/
       <skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
+    <named-profile>/
+      <skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
+  profiles.config.json         # optional tag-filtered named profile config
 ```
 
 ### Skill Transforms
@@ -379,6 +383,7 @@ All config is environment-based and validated at startup.
 | `AUTOVAULT_STORAGE_PATH` | `~/.autovault` | Root path for installed skills. |
 | `AUTOVAULT_DB_PATH` | `$AUTOVAULT_STORAGE_PATH/autovault.sqlite` | SQLite path for capability metadata. |
 | `AUTOVAULT_PROFILE_LINKS` | _unset_ | Comma-separated `agent=/skills/root` links to refresh during profile sync, e.g. `codex=~/.codex/skills,claude-code=~/.claude/skills`. |
+| `AUTOVAULT_PROFILE_CONFIG_PATH` | `$AUTOVAULT_STORAGE_PATH/profiles.config.json` | Optional JSON file defining named, tag-filtered project profiles. |
 | `AUTOVAULT_SKILL_INSTALL` | `prefer-autovault` | Vendor installer routing contract for local skill bundles: `prefer-autovault`, `both`, `native`, `native-only`, or `off`. |
 | `AUTOVAULT_SECURITY_STRICT` | `true` | If true, denylist hits block install/propose; if false, they become warnings. |
 | `AUTOVAULT_SEARCH_MODE` | `text` | Search backend (currently metadata text search only). |
