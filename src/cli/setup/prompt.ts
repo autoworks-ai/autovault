@@ -96,8 +96,10 @@ export async function askChoice<T>(
       withGuide: true
     });
     handleCancel(selected, stream);
-    const result = byKey.get(selected);
-    if (!result) throw new Error(`unrecognized choice: ${selected}`);
+    const defaultResult = byKey.get(initialValue) ?? [...byKey.values()][0];
+    if (!defaultResult) throw new Error("No enabled setup choices are available.");
+    const result = typeof selected === "string" ? byKey.get(selected) : defaultResult;
+    if (!result) return defaultResult;
     return result;
   });
 }

@@ -20,6 +20,7 @@ import {
 import { canonicalRelPath } from "../util/path.js";
 import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
+import { synthesizeSkillFrontmatter } from "../validation/frontmatter-synthesis.js";
 import { validateSkillInput } from "../validation/index.js";
 
 export type LocalSkillResource = {
@@ -39,6 +40,7 @@ export type AddLocalSkillInput = {
   syncProfiles?: boolean;
   profileRoots?: Record<string, string>;
   discoverProfileRoots?: boolean;
+  inferredAgents?: string[];
 };
 
 export type AddLocalSkillResult = {
@@ -216,8 +218,19 @@ export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocal
     };
   }
 
-  const { output: normalizedSkillMd } = attemptRepair(bundle.skillMd);
-  const validation = validateSkillInput(bundle.skillMd, bundle.resources);
+  const { output: repairedSkillMd } = attemptRepair(bundle.skillMd);
+  let normalizedSkillMd = repairedSkillMd;
+  if ((input.inferredAgents?.length ?? 0) > 0) {
+    try {
+      const synthesized = synthesizeSkillFrontmatter(repairedSkillMd, {
+        agents: input.inferredAgents
+      });
+      normalizedSkillMd = synthesized.skillMd;
+    } catch {
+      normalizedSkillMd = repairedSkillMd;
+    }
+  }
+  const validation = validateSkillInput(normalizedSkillMd, bundle.resources);
   if (!validation.valid) {
     return {
       success: false,

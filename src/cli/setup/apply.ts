@@ -99,7 +99,8 @@ async function adoptOne(
 
   const result = await addLocalSkill({
     skillDir: bundleSource,
-    source: `native:${native.agent ?? "unknown"}`
+    source: `native:${native.agent ?? "unknown"}`,
+    inferredAgents: native.inferredAgents
   });
   if (!result.success) {
     const reason =
