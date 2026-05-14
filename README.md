@@ -265,12 +265,12 @@ as executable `bin` action shorthands.
 Use `autovault remove <skill-name>` to remove a vaulted skill and refresh
 managed profile links in one operation. Removal deletes
 `$AUTOVAULT_STORAGE_PATH/skills/<skill-name>`, regenerates the internal
-`profiles/` tree, and prunes AutoVault-managed symlinks from discovered native
-host roots such as `~/.claude/skills`, `~/.codex/skills`, and
-`~/.cursor/skills`. Native discovery is on by default; pass `--no-discover`
-when you only want the vault's internal profile tree refreshed. Use
-`--link agent=/path/to/skills` for an explicit host root and `--json` for
-script-friendly output.
+`profiles/` tree, removes vault-local transforms for that skill, and prunes
+AutoVault-managed symlinks from discovered native host roots such as
+`~/.claude/skills`, `~/.codex/skills`, and `~/.cursor/skills`. Native discovery
+is on by default; pass `--no-discover` when you only want the vault's internal
+profile tree refreshed. Use `--link agent=/path/to/skills` for an explicit host
+root and `--json` for script-friendly output.
 
 Use `autovault doctor` to inspect vault health. `autovault doctor --clean`
 removes only ignored OS/editor metadata artifacts such as `.DS_Store`,
