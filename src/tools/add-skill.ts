@@ -4,7 +4,7 @@ import { installSkill } from "./install-skill.js";
 
 export type AddSkillInput = {
   source: "github" | "agentskills" | "url" | "local";
-  identifier: string;
+  identifier?: string;
   version?: string;
   skill_dir?: string;
   sync_profiles?: boolean;
@@ -33,6 +33,15 @@ export async function addSkill(input: AddSkillInput): Promise<Record<string, unk
       }),
       input.verbose
     );
+  }
+
+  if (!input.identifier) {
+    return {
+      success: false,
+      name: "",
+      validation: {},
+      warnings: [`source='${input.source}' requires identifier.`]
+    };
   }
 
   return formatResultSync(

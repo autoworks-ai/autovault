@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { resetConfigCache } from "../src/config.js";
-import { addLocalSkill } from "../src/installer/local.js";
+import { addLocalSkill, type AddLocalSkillResult } from "../src/installer/local.js";
 import {
   normalizeSkillInstallMode,
   skillInstallSteps
@@ -84,10 +84,11 @@ function escapeRegExp(value: string): string {
 
 async function writeLocalSkill(
   root: string,
-  input: { name: string; agents?: string[]; resources?: Record<string, string> }
+  input: { name: string; agents?: string[] | null; resources?: Record<string, string> }
 ): Promise<void> {
   await fs.mkdir(root, { recursive: true });
-  const agents = `agents: [${(input.agents ?? ["codex"]).join(", ")}]\n`;
+  const agents =
+    input.agents === null ? "" : `agents: [${(input.agents ?? ["codex"]).join(", ")}]\n`;
   const resourcePaths = Object.keys(input.resources ?? {});
   const resources = resourcePaths.length > 0
     ? `resources:\n${resourcePaths.map((resource) => `  - path: ${resource}`).join("\n")}\n`
@@ -139,6 +140,124 @@ describe("local installer", () => {
     expect(source?.identifier).toBe("vendor/repo");
   });
 
+  it("infers local source provenance from the bundle directory when --source is omitted", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "inferred-source-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "inferred-source-local"
+    });
+
+    const result = await addLocalSkill({
+      skillDir: sourceDir
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.bundleRoot).toBe(path.resolve(sourceDir));
+    expect(result.sourceInferred).toBe(true);
+    expect(result.source?.identifier).toBe(path.resolve(sourceDir));
+    const source = await readSkillSource("inferred-source-local");
+    expect(source?.identifier).toBe(path.resolve(sourceDir));
+  });
+
+  it("accepts a direct SKILL.md path and treats its parent as the bundle root", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "direct-skill-md-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "direct-skill-md-local"
+    });
+
+    const result = await addLocalSkill({
+      skillDir: path.join(sourceDir, "SKILL.md")
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.bundleRoot).toBe(path.resolve(sourceDir));
+    expect(result.sourceInferred).toBe(true);
+    expect(result.source?.identifier).toBe(path.resolve(sourceDir));
+    await expect(readSkillManifest("direct-skill-md-local")).resolves.toBeTruthy();
+  });
+
+  it("CLI add-local works without --source and reports inferred provenance in JSON", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "cli-inferred-source-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "cli-inferred-source-local"
+    });
+
+    const result = await runCli(["add-local", sourceDir, "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as AddLocalSkillResult;
+    expect(parsed.success).toBe(true);
+    expect(parsed.bundleRoot).toBe(path.resolve(sourceDir));
+    expect(parsed.sourceInferred).toBe(true);
+    expect(parsed.source?.identifier).toBe(path.resolve(sourceDir));
+  });
+
+  it("CLI add-local accepts direct SKILL.md input", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "cli-direct-skill-md-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "cli-direct-skill-md-local"
+    });
+
+    const result = await runCli(["add-local", path.join(sourceDir, "SKILL.md"), "--json"]);
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as AddLocalSkillResult;
+    expect(parsed.success).toBe(true);
+    expect(parsed.bundleRoot).toBe(path.resolve(sourceDir));
+    expect(parsed.source?.identifier).toBe(path.resolve(sourceDir));
+  });
+
+  it("CLI add-local reports a specific error for non-SKILL.md file input", async () => {
+    const inputPath = path.join(currentStorageRoot(), "not-a-skill.md");
+    await fs.writeFile(inputPath, "# not a skill\n", "utf-8");
+
+    const result = await runCli(["add-local", inputPath]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("Local skill file must be named SKILL.md");
+    expect(result.stderr).not.toContain("Usage:");
+  });
+
+  it("infers missing agents from a legacy Claude-style skill root only during sync", async () => {
+    const fakeHome = path.join(currentStorageRoot(), "legacy-home");
+    const claudeRoot = path.join(fakeHome, ".agents", "skills");
+    const sourceDir = path.join(claudeRoot, "legacy-local");
+    await writeLocalSkill(sourceDir, {
+      name: "legacy-local",
+      agents: null
+    });
+
+    const result = await runCli(["add-local", sourceDir, "--sync-profiles", "--json"], {
+      HOME: fakeHome
+    });
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as AddLocalSkillResult;
+    expect(parsed.success).toBe(true);
+    expect(parsed.inferredAgents).toEqual(["claude-code"]);
+    expect(parsed.agentInferenceReason).toContain(".agents/skills");
+    expect(parsed.source?.identifier).toBe(path.resolve(sourceDir));
+  });
+
+  it("does not infer agents for explicit empty agents arrays", async () => {
+    const fakeHome = path.join(currentStorageRoot(), "empty-agents-home");
+    const claudeRoot = path.join(fakeHome, ".claude", "skills");
+    const sourceDir = path.join(claudeRoot, "empty-agents-local");
+    await writeLocalSkill(sourceDir, {
+      name: "empty-agents-local",
+      agents: []
+    });
+
+    const result = await runCli(["add-local", sourceDir, "--sync-profiles", "--json"], {
+      HOME: fakeHome
+    });
+
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout) as AddLocalSkillResult;
+    expect(parsed.success).toBe(false);
+    expect(parsed.validation.errors.join("\n")).toContain("agents: at least one agent is required");
+    expect(parsed.inferredAgents).toBeUndefined();
+  });
+
   it("reinstall replaces removed and changed local resources", async () => {
     const sourceDir = path.join(currentStorageRoot(), "replace-bundle");
     await writeLocalSkill(sourceDir, {
@@ -165,6 +284,45 @@ describe("local installer", () => {
     await expect(
       fs.readFile(path.join(currentStorageRoot(), "skills", "replace-local", "references", "new.md"), "utf-8")
     ).resolves.toBe("new\n");
+  });
+
+  it("reinstall restores executable mode on declared local bin scripts", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "bin-mode-bundle");
+    const writeBinBundle = async (body: string): Promise<void> => {
+      await fs.mkdir(path.join(sourceDir, "bin"), { recursive: true });
+      await fs.writeFile(
+        path.join(sourceDir, "SKILL.md"),
+        `---
+name: bin-mode-local
+description: A description that is intentionally long enough to satisfy schema checks.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+bin:
+  setup:
+    command: bin/setup
+    description: setup
+---
+
+# bin-mode-local
+`,
+        "utf-8"
+      );
+      await fs.writeFile(path.join(sourceDir, "bin", "setup"), body, "utf-8");
+    };
+
+    await writeBinBundle("#!/usr/bin/env bash\necho v1\n");
+    await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+    const installedPath = path.join(currentStorageRoot(), "skills", "bin-mode-local", "bin", "setup");
+    await fs.chmod(installedPath, 0o644);
+
+    await writeBinBundle("#!/usr/bin/env bash\necho v2\n");
+    const result = await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+
+    expect(result.success).toBe(true);
+    const stat = await fs.stat(installedPath);
+    expect(stat.mode & 0o777).toBe(0o755);
+    await expect(fs.readFile(installedPath, "utf-8")).resolves.toBe("#!/usr/bin/env bash\necho v2\n");
   });
 
   it("reports local installs as unchecked for updates", async () => {
@@ -349,6 +507,27 @@ describe("local installer", () => {
       }
       resetConfigCache();
     }
+  });
+
+  it("MCP local add infers provenance when identifier is omitted", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "mcp-local-inferred-source");
+    await writeLocalSkill(sourceDir, {
+      name: "mcp-local-inferred-source"
+    });
+
+    const result = await addSkill({
+      source: "local",
+      skill_dir: sourceDir,
+      sync_profiles: false
+    });
+
+    const parsed = result as AddLocalSkillResult;
+    expect(parsed.success).toBe(true);
+    expect(parsed.source).toMatchObject({
+      source: "local",
+      identifier: path.resolve(sourceDir)
+    });
+    expect(parsed.sourceInferred).toBe(true);
   });
 
   it("preserves external native directory conflicts with warnings", async () => {

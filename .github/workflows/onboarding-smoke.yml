@@ -1,0 +1,74 @@
+name: Onboarding Smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-pack-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm pack --pack-destination "$RUNNER_TEMP"
+      - name: Install packed CLI and smoke first-run commands
+        env:
+          AUTOVAULT_STORAGE_PATH: ${{ runner.temp }}/vault
+          AUTOVAULT_LOG_LEVEL: error
+        run: |
+          npm install -g "$RUNNER_TEMP"/autoworks-ai-autovault-*.tgz --prefix "$RUNNER_TEMP/npm-global"
+          echo "$RUNNER_TEMP/npm-global/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/npm-global/bin/autovault" setup --json
+          "$RUNNER_TEMP/npm-global/bin/autovault" doctor --json
+          "$RUNNER_TEMP/npm-global/bin/autovault" serve --help
+
+  source-installer-headless:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Build local source archive
+        run: git archive --format=tar --prefix=autovault/ HEAD | gzip > "$RUNNER_TEMP/autovault.tgz"
+      - name: Run installer without TTY
+        env:
+          AUTOVAULT_ASCII: "1"
+          AUTOVAULT_HOME: ${{ runner.temp }}/autovault-home
+          AUTOVAULT_NO_SETUP: "1"
+          AUTOVAULT_TARBALL_URL: file://${{ runner.temp }}/autovault.tgz
+          AUTOVAULT_YES: "1"
+          CI: "1"
+          CLAUDE_CODE: "1"
+        run: sh scripts/install.sh </dev/null
+      - name: Smoke installed CLI
+        env:
+          AUTOVAULT_HOME: ${{ runner.temp }}/autovault-home
+          AUTOVAULT_STORAGE_PATH: ${{ runner.temp }}/autovault-home
+          AUTOVAULT_LOG_LEVEL: error
+          CI: "1"
+          CLAUDE_CODE: "1"
+        run: |
+          "$AUTOVAULT_HOME/bin/autovault" setup --json
+          "$AUTOVAULT_HOME/bin/autovault" doctor --json
+          "$AUTOVAULT_HOME/bin/autovault" serve --help

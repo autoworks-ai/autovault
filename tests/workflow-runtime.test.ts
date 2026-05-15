@@ -68,14 +68,33 @@ describe("workflow runtime policy", () => {
     expect(workflowText).not.toContain("ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION");
   });
 
-  it("aligns package metadata to the Node 24 runtime", () => {
+  it("aligns package metadata to the Node 22+ runtime", () => {
     const packageJson = readJson<{
       engines: Record<string, string>;
       devDependencies: Record<string, string>;
     }>("package.json");
 
-    expect(packageJson.engines.node).toBe(">=24.0.0");
+    expect(packageJson.engines.node).toBe(">=22.0.0");
     expect(packageJson.devDependencies["@types/node"]).toBe("^24.12.4");
+  });
+
+  it("runs CI and onboarding smoke on the supported Node matrix", () => {
+    const ci = readText(".github/workflows/ci.yml");
+    const onboarding = readText(".github/workflows/onboarding-smoke.yml");
+    const release = readText(".github/workflows/release-please.yml");
+
+    expect(ci).toContain("node: [22, 24]");
+    expect(ci).toContain("build-test-matrix:");
+    expect(ci).toContain("name: build-test (${{ matrix.node }})");
+    expect(ci).toContain("needs: [build-test-matrix]");
+    expect(ci).toContain("Require Node matrix to pass");
+    expect(onboarding).toContain("node: [22, 24]");
+    expect(onboarding).toContain("CLAUDE_CODE");
+    expect(onboarding).toContain("setup --json");
+    expect(onboarding).toContain("doctor --json");
+    expect(onboarding).toContain("serve --help");
+    expect(release).toContain('node-version: "24"');
+    expect(release).toContain("npm publish --provenance --access public");
   });
 
   it("documents live package distribution with canonical install paths", () => {

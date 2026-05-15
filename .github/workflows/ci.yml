@@ -10,22 +10,36 @@ on:
 permissions:
   contents: read
 
-env:
-  NODE_VERSION: "24"
-
 jobs:
-  build-test:
+  build-test-matrix:
+    name: build-test (${{ matrix.node }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       - run: npm run build
       - run: npm test
       - run: npm audit --omit=dev --audit-level=high
+
+  build-test:
+    needs: [build-test-matrix]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Node matrix to pass
+        run: |
+          if [ "${{ needs.build-test-matrix.result }}" != "success" ]; then
+            echo "build-test matrix result: ${{ needs.build-test-matrix.result }}"
+            exit 1
+          fi
 
   docs-drift-dispatch:
     needs: [build-test]

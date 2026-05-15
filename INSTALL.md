@@ -6,7 +6,7 @@ Cursor, Codex, AutoHub, Railway, Docker, or any other MCP-compatible host.
 
 ## Prerequisites
 
-- Node.js **>= 24.0.0** (use `node --version` to confirm)
+- Node.js **>= 22.0.0** (use `node --version` to confirm)
 - `curl`, `tar`, and `npm`
 - `jq` for the verification probes in §5b (optional otherwise — pipe responses through `jq` for pretty JSON, or strip `| jq` to read raw)
 - An MCP-compatible host (Claude Code, Cursor, Codex, etc.)
@@ -230,19 +230,28 @@ Third-party installers should use `add-local` when they already have a local
 skill directory on disk:
 
 ```bash
-autovault add-local ./path/to/your-skill --source vendor/skills --sync-profiles
+autovault add-local ./path/to/your-skill --sync-profiles
+autovault add-local ./path/to/your-skill/SKILL.md --sync-profiles
+autovault add-local ./path/to/your-skill \
+  --source https://github.com/org/repo/tree/main/skills/your-skill
 ```
 
-The command requires `SKILL.md`, walks sibling resources in deterministic
-order, skips AutoVault metadata files, refuses symlinks, runs the same
-validation/signing pipeline as other install paths, and records honest
-`source: "local"` provenance. Local installs are reported as unchecked by
-`check_updates`; rerun the vendor installer to refresh them.
+The command accepts a bundle directory or a direct `SKILL.md` path. If
+`--source` is omitted, AutoVault records the normalized absolute bundle
+directory as local provenance; pass `--source` when you want a repository URL
+or other canonical provenance string. It walks sibling resources in
+deterministic order, skips AutoVault metadata files, refuses symlinks, runs the
+same validation/signing pipeline as other install paths, and records honest
+`source: "local"` provenance. With `--sync-profiles`, legacy skills that omit
+`agents` can infer agents from explicit/discovered profile roots or
+`~/.claude/skills` / `~/.agents/skills`; explicit `agents: []` stays invalid.
+Local installs are reported as unchecked by `check_updates`; rerun the vendor
+installer to refresh them.
 
 Machine-readable output:
 
 ```bash
-autovault add-local ./path/to/your-skill --source vendor/skills --sync-profiles --json
+autovault add-local ./path/to/your-skill --sync-profiles --json
 ```
 
 Vendor drop-in pattern:

@@ -20,7 +20,7 @@ import { formatResultSync } from "./util/sync-format.js";
 
 function usage(): never {
   process.stderr.write(`Usage:
-  autovault add-local <skill-dir> --source <repo-or-url> [--sync-profiles] [--link agent=/path/to/skills] [--json]
+  autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
   autovault profiles list [--json]
@@ -161,6 +161,11 @@ function parseProfileLink(value: string | undefined): [string, string] {
   return [agent, root];
 }
 
+function fail(message: string, exitCode = 2): never {
+  process.stderr.write(`${message}\n`);
+  process.exit(exitCode);
+}
+
 function hostRestartGuidance(): string[] {
   return [
     "restart Claude Code, Codex, or Cursor if they cache filesystem skills",
@@ -222,7 +227,24 @@ function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): st
           { label: "sign", value: result.name, status: "ok" },
           ...(result.paths ? [{ label: "storage", value: result.paths.skill, status: "ok" as const }] : []),
           ...(result.source
-            ? [{ label: "source", value: result.source.identifier, status: "muted" as const }]
+            ? [
+                {
+                  label: "source",
+                  value: result.sourceInferred
+                    ? `${result.source.identifier} (inferred)`
+                    : result.source.identifier,
+                  status: "muted" as const
+                }
+              ]
+            : []),
+          ...(result.inferredAgents && result.inferredAgents.length > 0
+            ? [
+                {
+                  label: "agents",
+                  value: `${result.inferredAgents.join(", ")} (${result.agentInferenceReason ?? "inferred"})`,
+                  status: "muted" as const
+                }
+              ]
             : [])
         ],
         theme
@@ -342,7 +364,7 @@ async function main(): Promise<void> {
       const arg = args[i];
       if (arg === "--source") {
         source = args[i + 1];
-        if (!source) usage();
+        if (!source) fail("autovault add-local --source requires a provenance value.");
         i += 1;
         continue;
       }
@@ -358,7 +380,7 @@ async function main(): Promise<void> {
       if (skillDir) usage();
       skillDir = arg;
     }
-    if (!skillDir || !source) usage();
+    if (!skillDir) fail("autovault add-local requires a local skill directory or SKILL.md path.");
     const result = await addLocalSkill({
       skillDir,
       source,
