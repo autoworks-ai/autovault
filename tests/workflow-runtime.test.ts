@@ -84,6 +84,10 @@ describe("workflow runtime policy", () => {
     const release = readText(".github/workflows/release-please.yml");
 
     expect(ci).toContain("node: [22, 24]");
+    expect(ci).toContain("build-test-matrix:");
+    expect(ci).toContain("name: build-test (${{ matrix.node }})");
+    expect(ci).toContain("needs: [build-test-matrix]");
+    expect(ci).toContain("Require Node matrix to pass");
     expect(onboarding).toContain("node: [22, 24]");
     expect(onboarding).toContain("CLAUDE_CODE");
     expect(onboarding).toContain("setup --json");
