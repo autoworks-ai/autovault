@@ -31,7 +31,7 @@ type RunResult = {
   binDir: string;
 };
 
-async function createFakeArchive(root: string): Promise<string> {
+async function createFakeArchive(root: string, version = "0.0.0"): Promise<string> {
   const packageRoot = path.join(root, "autovault-main");
   await fs.mkdir(path.join(packageRoot, "scripts"), { recursive: true });
   await fs.writeFile(
@@ -39,7 +39,7 @@ async function createFakeArchive(root: string): Promise<string> {
     JSON.stringify(
       {
         name: "fake-autovault",
-        version: "0.0.0",
+        version,
         type: "module",
         scripts: { build: "node scripts/build.mjs" }
       },
@@ -58,7 +58,7 @@ async function createFakeArchive(root: string): Promise<string> {
         packages: {
           "": {
             name: "fake-autovault",
-            version: "0.0.0"
+            version
           }
         }
       },
@@ -104,22 +104,34 @@ async function createFakeArchive(root: string): Promise<string> {
   return tarball;
 }
 
-async function runInstaller(extraEnv: Record<string, string> = {}): Promise<RunResult> {
+type InstallerFixtureOptions = {
+  args?: string[];
+  archiveVersion?: string;
+  beforeRun?: (paths: { home: string; avHome: string; binDir: string }) => Promise<void>;
+};
+
+async function runInstaller(
+  extraEnv: Record<string, string> = {},
+  options: InstallerFixtureOptions = {}
+): Promise<RunResult> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-install-test-"));
   const home = path.join(root, "home");
   const avHome = path.join(home, ".autovault");
   const binDir = path.join(avHome, "bin");
   await fs.mkdir(home, { recursive: true });
-  const tarball = await createFakeArchive(root);
+  const tarball = await createFakeArchive(root, options.archiveVersion);
+  await options.beforeRun?.({ home, avHome, binDir });
 
   return await new Promise<RunResult>((resolve, reject) => {
-    const child = spawn("sh", [INSTALL_SH], {
+    const child = spawn("sh", [INSTALL_SH, ...(options.args ?? [])], {
       env: {
         ...process.env,
         HOME: home,
         AUTOVAULT_HOME: avHome,
         AUTOVAULT_BIN_DIR: binDir,
+        AUTOVAULT_STORAGE_PATH: avHome,
         AUTOVAULT_TARBALL_URL: `file://${tarball}`,
+        AUTOVAULT_LATEST_VERSION: options.archiveVersion ?? "0.0.0",
         AUTOVAULT_YES: "1",
         PATH: process.env.PATH ?? "",
         ...extraEnv
@@ -165,13 +177,104 @@ describe("install.sh", () => {
     expect(result.stdout).toMatch(/stage 5\/6\s+path\s+installing the autovault shim/);
     expect(result.stdout).toMatch(/stage 6\/6\s+setup\s+skipped by AUTOVAULT_NO_SETUP=1/);
     expect(result.stdout).not.toContain("[1/6]");
-    expect(result.stdout).not.toContain("Install plan");
+    expect(result.stdout).toContain("Install plan");
+    expect(result.stdout).toContain("platform");
+    expect(result.stdout).toContain("node");
+    expect(result.stdout).toContain(path.join(result.home, "app"));
+    expect(result.stdout).toContain(`storage  ${result.home}`);
+    expect(result.stdout).toContain("state    fresh install");
+    expect(result.stdout).toContain("target   v0.0.0");
     expect(result.stdout).not.toContain("stdout noise");
     expect(result.stderr).not.toContain("stderr noise");
     await expect(fs.access(path.join(result.binDir, "autovault"))).resolves.toBeUndefined();
   });
 
-  it("shows install details and captured logs only in verbose mode", async () => {
+  it("classifies upgrades, reinstalls, downgrades, and storage adoption before writing", async () => {
+    const upgrade = await runInstaller(
+      { AUTOVAULT_NO_SETUP: "1" },
+      {
+        archiveVersion: "2.0.0",
+        beforeRun: async ({ avHome }) => {
+          await fs.mkdir(path.join(avHome, "app"), { recursive: true });
+          await fs.writeFile(
+            path.join(avHome, "app", "package.json"),
+            JSON.stringify({ version: "1.0.0" })
+          );
+        }
+      }
+    );
+    expect(upgrade.stdout).toContain("state    upgrade");
+    expect(upgrade.stdout).toContain("current  1.0.0");
+    expect(upgrade.stdout).toContain("target   v2.0.0");
+
+    const reinstall = await runInstaller(
+      { AUTOVAULT_NO_SETUP: "1" },
+      {
+        archiveVersion: "2.0.0",
+        beforeRun: async ({ avHome }) => {
+          await fs.mkdir(path.join(avHome, "app"), { recursive: true });
+          await fs.writeFile(
+            path.join(avHome, "app", "package.json"),
+            JSON.stringify({ version: "2.0.0" })
+          );
+        }
+      }
+    );
+    expect(reinstall.stdout).toContain("state    reinstall");
+
+    const downgrade = await runInstaller(
+      { AUTOVAULT_NO_SETUP: "1" },
+      {
+        archiveVersion: "1.0.0",
+        beforeRun: async ({ avHome }) => {
+          await fs.mkdir(path.join(avHome, "app"), { recursive: true });
+          await fs.writeFile(
+            path.join(avHome, "app", "package.json"),
+            JSON.stringify({ version: "2.0.0" })
+          );
+        }
+      }
+    );
+    expect(downgrade.stdout).toContain("state    downgrade");
+
+    const adoption = await runInstaller(
+      { AUTOVAULT_NO_SETUP: "1" },
+      {
+        beforeRun: async ({ avHome }) => {
+          await fs.mkdir(path.join(avHome, "skills", "existing"), { recursive: true });
+        }
+      }
+    );
+    expect(adoption.stdout).toContain("state    repair/adopt existing storage");
+  });
+
+  it("supports dry-run without writing the app, shim, or profile files", async () => {
+    const result = await runInstaller(
+      { AUTOVAULT_NO_SETUP: "1" },
+      { args: ["--dry-run"] }
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("Dry run only; no changes made.");
+    await expect(fs.access(path.join(result.home, "app"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.access(path.join(result.binDir, "autovault"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
+  it("supports quiet non-interactive installs", async () => {
+    const result = await runInstaller(
+      { AUTOVAULT_NO_SETUP: "1" },
+      { args: ["--yes", "--quiet"] }
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
+    await expect(fs.access(path.join(result.binDir, "autovault"))).resolves.toBeUndefined();
+  });
+
+  it("hides successful bootstrap logs even in verbose mode", async () => {
     const result = await runInstaller({
       AUTOVAULT_NO_SETUP: "1",
       AUTOVAULT_VERBOSE: "1"
@@ -179,9 +282,22 @@ describe("install.sh", () => {
 
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("Install plan");
-    expect(result.stdout).toContain("Seeding bundled skills... log tail");
-    expect(result.stdout).toContain("stdout noise");
-    expect(result.stdout).toContain("stderr noise");
+    expect(result.stdout).not.toContain("Seeding bundled skills... log tail");
+    expect(result.stdout).not.toContain("stdout noise");
+    expect(result.stdout).not.toContain("stderr noise");
+  });
+
+  it("keeps bootstrap failure logs visible", async () => {
+    const result = await runInstaller({
+      AUTOVAULT_NO_SETUP: "1",
+      AUTOVAULT_VERBOSE: "1",
+      FAKE_BOOTSTRAP_STATUS: "1"
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("Seeding bundled skills... failed");
+    expect(result.stderr).toContain("stdout noise");
+    expect(result.stderr).toContain("stderr noise");
   });
 
   it("rejects Node builds below the package engine floor", async () => {

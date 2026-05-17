@@ -5,7 +5,8 @@ import {
   applyDecisions,
   type AdoptionMode,
   type CollisionAction,
-  type CollisionDecision
+  type CollisionDecision,
+  type RepairDecision
 } from "./setup/apply.js";
 import {
   askChoice,
@@ -21,11 +22,16 @@ import {
   renderDriftReport,
   renderSetupIntro,
   renderFinalSummary,
-  renderReviewSkill,
   reviewReason,
   reviewSkills,
   startSpinner
 } from "./setup/render.js";
+import {
+  buildReviewPlan,
+  enabledReviewActions,
+  renderReviewPlan,
+  type ReviewActionId
+} from "./setup/review.js";
 import {
   adoptionCandidates,
   bundledNativeCollisions,
@@ -232,20 +238,8 @@ async function runAdvancedSetup(
 type ReviewSelection = {
   candidates: SkillView[];
   collisions: CollisionDecision[];
+  repairs: RepairDecision[];
 };
-
-function nativeFailsValidation(skill: SkillView): boolean {
-  return skill.native.some((native) => native.validation && !native.validation.valid);
-}
-
-function canAdoptWithBackup(skill: SkillView): boolean {
-  return skill.native.length > 0 && !nativeFailsValidation(skill) && skill.category !== "invalid";
-}
-
-function canUseBundled(skill: SkillView): boolean {
-  const nativeHash = skill.native[0]?.hash;
-  return Boolean(skill.bundled && nativeHash && skill.bundled.hash !== nativeHash);
-}
 
 function reviewChoiceLabel(skill: SkillView): string {
   return `${reviewReason(skill)}: ${skill.name}`;
@@ -273,7 +267,7 @@ async function runReviewPicker(
     return false;
   }
 
-  const selection: ReviewSelection = { candidates: [], collisions: [] };
+  const selection: ReviewSelection = { candidates: [], collisions: [], repairs: [] };
   const handled = new Set<string>();
 
   while (true) {
@@ -299,42 +293,24 @@ async function runReviewPicker(
     );
 
     if (choice === "finish") break;
-    renderReviewSkill(choice);
+    const plan = await buildReviewPlan(choice);
+    renderReviewPlan(plan);
+    const actions = enabledReviewActions(plan);
 
-    const actions: Array<{
-      label: string;
-      value: "leave" | "adopt-backup" | "use-bundled";
-      hint?: string;
-      disabled?: boolean;
-    }> = [
-      {
-        label: "leave native for now",
-        value: "leave",
-        hint: "safe default"
-      },
-      {
-        label: "adopt with backup",
-        value: "adopt-backup",
-        hint: canAdoptWithBackup(choice)
-          ? "copy into vault and move original to <root>.bak"
-          : "cannot adopt until validation errors are fixed",
-        disabled: !canAdoptWithBackup(choice)
-      },
-      {
-        label: "use bundled",
-        value: "use-bundled",
-        hint: "back up native copy and keep bundled version",
-        disabled: !canUseBundled(choice)
-      }
-    ];
-
-    const action = await askSelect("Action for this skill", actions, {
-      initialValue: "leave"
+    const action = await askSelect<ReviewActionId>("Action for this skill", actions.map((reviewAction) => ({
+      label: reviewAction.label,
+      value: reviewAction.id,
+      hint: reviewAction.hint
+    })), {
+      initialValue: plan.recommendedAction
     });
     handled.add(choice.name);
 
     if (action === "adopt-backup") {
       selection.candidates.push(choice);
+    } else if (action === "repair-adopt-backup" && plan.repair) {
+      selection.candidates.push(choice);
+      selection.repairs.push({ name: choice.name, repair: plan.repair });
     } else if (action === "use-bundled") {
       selection.candidates.push(choice);
       selection.collisions.push({ name: choice.name, action: "use-bundled" });
@@ -349,6 +325,7 @@ async function runReviewPicker(
       mode: "backup",
       candidates: selection.candidates,
       collisions: selection.collisions,
+      repairs: selection.repairs,
       profileRoots,
       discover: options.discover ?? true
     });

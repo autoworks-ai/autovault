@@ -66,6 +66,7 @@ Install the local vault:
 ```bash
 curl -fsSL https://autovault.sh | sh
 export PATH="$HOME/.autovault/bin:$PATH"
+autovault --version
 autovault doctor
 autovault setup --review
 autovault skill list
@@ -99,7 +100,9 @@ node dist/cli.js doctor
 
 The shell installer builds the app under `~/.autovault/app`, preserves
 `~/.autovault` as user-owned vault storage, installs the `autovault` CLI shim,
-and bootstraps bundled skills unless `AUTOVAULT_NO_BOOTSTRAP=1` is set.
+and bootstraps bundled skills unless `AUTOVAULT_NO_BOOTSTRAP=1` is set. By
+default it installs the latest stable release; set `AUTOVAULT_REF=main` only
+when you explicitly want the unreleased main branch.
 
 ## What Ships Today
 
@@ -368,7 +371,7 @@ Installer-only environment:
 | --- | --- | --- |
 | `AUTOVAULT_HOME` | `~/.autovault` | Install root for app, shim, and default storage. |
 | `AUTOVAULT_BIN_DIR` | `$AUTOVAULT_HOME/bin` | Directory for the `autovault` shim. |
-| `AUTOVAULT_REF` | `main` | GitHub branch or tag downloaded by `autovault.sh`. |
+| `AUTOVAULT_REF` | latest stable release | GitHub branch or tag downloaded by `autovault.sh`; use `main` for the unreleased branch. |
 | `AUTOVAULT_TARBALL_URL` | derived from `AUTOVAULT_REF` | Fully override the source archive URL. |
 | `AUTOVAULT_NO_BOOTSTRAP` | `0` | Set to `1` to skip bundled-skill bootstrap. |
 

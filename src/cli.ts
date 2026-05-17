@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { runDoctorCommand } from "./cli/doctor.js";
 import { runSkillCommand } from "./cli/skill.js";
 import { renderSuccessOutro } from "./cli/ui/brand.js";
@@ -18,8 +23,13 @@ import {
 } from "./library.js";
 import { formatResultSync } from "./util/sync-format.js";
 
-function usage(): never {
-  process.stderr.write(`Usage:
+const PACKAGE_NAME = "@autoworks-ai/autovault";
+const REPO = "autoworks-ai/autovault";
+const RELEASES_URL = `https://github.com/${REPO}/releases`;
+
+function usageText(): string {
+  return `Usage:
+  autovault --version
   autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills]
@@ -30,12 +40,22 @@ function usage(): never {
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
   autovault serve [--help]
+  autovault update [version|latest|stable|main] [--dry-run] [--notes]
+  autovault version [--json]
   autovault skill <action> <name>
   autovault skill list
   autovault skill search <query> [--top-k N]
   autovault skill which <name> [<action>]
-`);
-  process.exit(1);
+`;
+}
+
+function printUsage(exitCode: number, stream: NodeJS.WritableStream): never {
+  stream.write(usageText());
+  process.exit(exitCode);
+}
+
+function usage(): never {
+  return printUsage(1, process.stderr);
 }
 
 function serveHelp(): string {
@@ -164,6 +184,268 @@ function parseProfileLink(value: string | undefined): [string, string] {
 function fail(message: string, exitCode = 2): never {
   process.stderr.write(`${message}\n`);
   process.exit(exitCode);
+}
+
+type PackageMetadata = {
+  root: string;
+  version: string;
+};
+
+type VersionInfo = {
+  version: string;
+  node: string;
+  installPath: string;
+  storagePath: string;
+  installMethod: string;
+};
+
+function findPackageRoot(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const candidate = path.join(dir, "package.json");
+    if (fs.existsSync(candidate)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(candidate, "utf8")) as { name?: string };
+        if (parsed.name === PACKAGE_NAME) return dir;
+      } catch {
+        // Continue walking; a malformed nearby package.json is not our root.
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error("Could not locate AutoVault package metadata.");
+}
+
+function readPackageMetadata(): PackageMetadata {
+  const root = findPackageRoot();
+  const parsed = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+    version?: string;
+  };
+  return { root, version: parsed.version ?? "0.0.0" };
+}
+
+function detectInstallMethod(packageRoot: string): string {
+  const resolved = path.resolve(packageRoot);
+  const sourceInstall = path.join(os.homedir(), ".autovault", "app");
+  if (resolved === sourceInstall || resolved.endsWith(`${path.sep}.autovault${path.sep}app`)) {
+    return "source";
+  }
+  if (
+    resolved.includes(`${path.sep}node_modules${path.sep}@autoworks-ai${path.sep}autovault`)
+  ) {
+    return "npm";
+  }
+  if (
+    resolved.includes(`${path.sep}Cellar${path.sep}autovault${path.sep}`) ||
+    resolved.includes(`${path.sep}Homebrew${path.sep}Library${path.sep}Taps${path.sep}`)
+  ) {
+    return "homebrew";
+  }
+  if (fs.existsSync(path.join(resolved, "src", "cli.ts"))) return "source-tree";
+  return "unknown";
+}
+
+function defaultStoragePath(): string {
+  return process.env.AUTOVAULT_STORAGE_PATH ?? path.join(os.homedir(), ".autovault");
+}
+
+function versionInfo(): VersionInfo {
+  const metadata = readPackageMetadata();
+  return {
+    version: metadata.version,
+    node: process.version,
+    installPath: metadata.root,
+    storagePath: defaultStoragePath(),
+    installMethod: detectInstallMethod(metadata.root)
+  };
+}
+
+function printVersion(args: string[]): void {
+  const info = versionInfo();
+  if (hasFlag(args, "--json")) {
+    process.stdout.write(`${JSON.stringify(info, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write(`autovault ${info.version}\n`);
+}
+
+function latestStableVersion(currentVersion: string): string {
+  if (process.env.AUTOVAULT_LATEST_VERSION) return process.env.AUTOVAULT_LATEST_VERSION;
+  const result = spawnSync("npm", ["view", PACKAGE_NAME, "version", "--silent"], {
+    encoding: "utf8",
+    timeout: 15_000
+  });
+  const version = result.status === 0 ? result.stdout.trim() : "";
+  return version || currentVersion;
+}
+
+function normalizeUpdateTarget(target: string | undefined, currentVersion: string): string {
+  const requested = target ?? "latest";
+  if (requested === "latest" || requested === "stable") {
+    return `v${latestStableVersion(currentVersion).replace(/^v/, "")}`;
+  }
+  if (requested === "main") return "main";
+  if (/^\d+\.\d+\.\d+/.test(requested)) return `v${requested}`;
+  if (/^v\d+\.\d+\.\d+/.test(requested)) return requested;
+  fail(`Unsupported update target: ${requested}`);
+}
+
+function updateNotesUrl(ref: string): string {
+  return ref === "main" ? `${RELEASES_URL}/latest` : `${RELEASES_URL}/tag/${ref}`;
+}
+
+function npmUpdateCommand(ref: string): string {
+  if (ref === "main") return `npm install -g github:${REPO}#main`;
+  const version = ref.replace(/^v/, "");
+  return `npm install -g ${PACKAGE_NAME}@${version}`;
+}
+
+function packageManagerUpdateCommand(method: string, ref: string): string | null {
+  if (method === "npm") return npmUpdateCommand(ref);
+  if (method === "homebrew" && ref === "main") {
+    return "brew reinstall --HEAD autoworks-ai/tap/autovault";
+  }
+  if (method === "homebrew") return "brew upgrade autoworks-ai/tap/autovault";
+  return null;
+}
+
+function changelogSection(version: string): string | null {
+  const root = readPackageMetadata().root;
+  const changelogPath = path.join(root, "CHANGELOG.md");
+  if (!fs.existsSync(changelogPath)) return null;
+  const changelog = fs.readFileSync(changelogPath, "utf8");
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^## \\[?v?${escaped}\\]?[^\\n]*\\n`, "m");
+  const match = pattern.exec(changelog);
+  if (!match) return null;
+  const start = match.index;
+  const next = changelog.slice(start + match[0].length).search(/^## /m);
+  const end = next === -1 ? changelog.length : start + match[0].length + next;
+  return changelog.slice(start, end).trim();
+}
+
+function printUpdateNotes(ref: string): void {
+  const version = ref.replace(/^v/, "");
+  const section = ref === "main" ? changelogSection("Unreleased") : changelogSection(version);
+  if (section) {
+    process.stdout.write(`\n${section}\n`);
+  } else {
+    process.stdout.write(`\nRelease notes: ${updateNotesUrl(ref)}\n`);
+  }
+}
+
+function runUpdateCommand(args: string[]): void {
+  let dryRun = false;
+  let notes = false;
+  let yes = false;
+  let target: string | undefined;
+
+  for (const arg of args) {
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--notes") {
+      notes = true;
+      continue;
+    }
+    if (arg === "--yes" || arg === "-y") {
+      yes = true;
+      continue;
+    }
+    if (arg.startsWith("-")) fail(`Unknown autovault update flag: ${arg}`);
+    if (target) fail("autovault update accepts at most one target.");
+    target = arg;
+  }
+
+  const info = versionInfo();
+  const ref = normalizeUpdateTarget(target, info.version);
+  const packageCommand = packageManagerUpdateCommand(info.installMethod, ref);
+  if (packageCommand) {
+    process.stdout.write("AutoVault update plan\n");
+    process.stdout.write(`  method  ${info.installMethod}\n`);
+    process.stdout.write(`  current ${info.version}\n`);
+    process.stdout.write(`  target  ${ref}\n`);
+    process.stdout.write(`  command ${packageCommand}\n`);
+    process.stdout.write(`  notes   ${updateNotesUrl(ref)}\n`);
+    if (!dryRun) {
+      process.stdout.write("\nThis install is managed by your package manager; run the command above.\n");
+    }
+    if (notes) printUpdateNotes(ref);
+    return;
+  }
+
+  const scriptPath = path.join(info.installPath, "scripts", "install.sh");
+  if (!fs.existsSync(scriptPath)) {
+    fail(
+      `Cannot update this AutoVault install automatically; installer not found at ${scriptPath}.\n` +
+        `Install manually with: ${npmUpdateCommand(ref)}`
+    );
+  }
+
+  process.stdout.write("AutoVault update plan\n");
+  process.stdout.write(`  method  ${info.installMethod}\n`);
+  process.stdout.write(`  current ${info.version}\n`);
+  process.stdout.write(`  target  ${ref}\n`);
+  process.stdout.write(`  command AUTOVAULT_REF=${ref} sh ${scriptPath}\n`);
+  process.stdout.write(`  notes   ${updateNotesUrl(ref)}\n`);
+  if (notes) printUpdateNotes(ref);
+  if (dryRun) return;
+
+  const result = spawnSync("sh", [scriptPath], {
+    env: {
+      ...process.env,
+      AUTOVAULT_REF: ref,
+      ...(yes ? { AUTOVAULT_YES: "1" } : {})
+    },
+    stdio: "inherit"
+  });
+  process.exit(result.status ?? 1);
+}
+
+const TOP_LEVEL_COMMANDS = [
+  "add-local",
+  "audit-repo",
+  "doctor",
+  "import-autohub",
+  "profiles",
+  "remove",
+  "resolve",
+  "serve",
+  "setup",
+  "skill",
+  "sync-profiles",
+  "update",
+  "version"
+];
+
+function editDistance(a: string, b: string): number {
+  const rows = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j += 1) rows[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      rows[i][j] =
+        a[i - 1] === b[j - 1]
+          ? rows[i - 1][j - 1]
+          : Math.min(rows[i - 1][j - 1], rows[i - 1][j], rows[i][j - 1]) + 1;
+    }
+  }
+  return rows[a.length][b.length];
+}
+
+function unknownCommand(command: string): never {
+  process.stderr.write(`Unknown command: ${command}\n`);
+  const suggestion = TOP_LEVEL_COMMANDS.map((candidate) => ({
+    candidate,
+    distance: editDistance(command, candidate)
+  })).sort((a, b) => a.distance - b.distance)[0];
+  if (suggestion && suggestion.distance <= 2) {
+    process.stderr.write(`Did you mean autovault ${suggestion.candidate}?\n`);
+  }
+  process.stderr.write("\n");
+  usage();
 }
 
 function hostRestartGuidance(): string[] {
@@ -322,7 +604,20 @@ function formatRemoveResult(result: Record<string, unknown>): string {
 
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
-  if (!command || command === "--help" || command === "-h") usage();
+  if (!command) usage();
+  if (command === "--help" || command === "-h") printUsage(0, process.stdout);
+  if (command === "--version" || command === "-v" || command === "--v") {
+    printVersion([]);
+    return;
+  }
+  if (command === "version") {
+    printVersion(args);
+    return;
+  }
+  if (command === "update") {
+    runUpdateCommand(args);
+    return;
+  }
 
   if (command === "sync-profiles") {
     const profileRoots: Record<string, string> = {};
@@ -512,7 +807,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  usage();
+  unknownCommand(command);
 }
 
 main().catch((error) => {
