@@ -2,12 +2,53 @@
 set -eu
 
 REPO="autoworks-ai/autovault"
-REF="${AUTOVAULT_REF:-main}"
+INSTALLER_URL="https://autovault.sh"
+RELEASES_URL="https://github.com/$REPO/releases"
+REF="${AUTOVAULT_REF:-}"
 HOME_DIR="${AUTOVAULT_HOME:-$HOME/.autovault}"
 APP_DIR="$HOME_DIR/app"
 BIN_DIR="${AUTOVAULT_BIN_DIR:-$HOME_DIR/bin}"
 STORAGE_PATH="${AUTOVAULT_STORAGE_PATH:-$HOME_DIR}"
 ENV_FILE="$HOME_DIR/env"
+DRY_RUN="${AUTOVAULT_DRY_RUN:-0}"
+NOTES="${AUTOVAULT_NOTES:-0}"
+QUIET="${AUTOVAULT_QUIET:-0}"
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --yes|-y)
+      AUTOVAULT_YES=1
+      export AUTOVAULT_YES
+      ;;
+    --quiet|-q)
+      QUIET=1
+      AUTOVAULT_QUIET=1
+      export AUTOVAULT_QUIET
+      ;;
+    --verbose)
+      AUTOVAULT_VERBOSE=1
+      export AUTOVAULT_VERBOSE
+      ;;
+    --notes)
+      NOTES=1
+      AUTOVAULT_NOTES=1
+      export AUTOVAULT_NOTES
+      ;;
+    --help|-h)
+      printf '%s\n' "Usage: install.sh [--dry-run] [--yes] [--quiet] [--verbose] [--notes]"
+      printf '%s\n' "Environment: AUTOVAULT_REF=v0.3.0|main AUTOVAULT_HOME=... AUTOVAULT_BIN_DIR=..."
+      exit 0
+      ;;
+    *)
+      printf '%s\n' "Unknown installer flag: $1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then
   BOLD="$(tput bold 2>/dev/null || printf '')"
@@ -42,6 +83,7 @@ NEEDS_ENV_COMMAND=0
 RUN_LOG_COUNT=0
 
 detail_line() {
+  [ "$QUIET" = "1" ] && return 0
   printf '%*s%s\n' "$DETAIL_INDENT" "" "$*"
 }
 
@@ -49,9 +91,10 @@ info()      { detail_line "${BOLD}${GREY}>${RESET} $*"; }
 warn()      { detail_line "${YELLOW}!${RESET} $*"; }
 error()     { printf '%s\n' "${RED}x $*${RESET}" >&2; }
 completed() { detail_line "${GREEN}✓${RESET} $*"; }
-plain()     { printf '%s\n' "$*"; }
+plain()     { [ "$QUIET" = "1" ] && return 0; printf '%s\n' "$*"; }
 
 step() {
+  [ "$QUIET" = "1" ] && return 0
   STEP_CURRENT=$((STEP_CURRENT + 1))
   counter="stage $STEP_CURRENT/$STEP_TOTAL"
   printf '   %s%*s%s  %s%-*s%s  %s%s%s\n' \
@@ -61,6 +104,7 @@ step() {
 }
 
 warning_card() {
+  [ "$QUIET" = "1" ] && return 0
   title="$1"
   shift
   bar="${GREY}│${RESET}"
@@ -125,10 +169,23 @@ run_quiet() {
       tail -40 "$log_file" >&2 || true
     fi
     return "$status"
-  elif [ "${AUTOVAULT_VERBOSE:-0}" = "1" ] && [ -s "$log_file" ]; then
+  elif [ "${AUTOVAULT_VERBOSE:-0}" = "1" ] && [ "${AUTOVAULT_SUPPRESS_SUCCESS_LOG:-0}" != "1" ] && [ -s "$log_file" ]; then
     info "$label log tail"
     tail -20 "$log_file" | sed 's/^/  /' || true
   fi
+}
+
+run_quiet_no_success_log() {
+  old_suppress="${AUTOVAULT_SUPPRESS_SUCCESS_LOG:-}"
+  AUTOVAULT_SUPPRESS_SUCCESS_LOG=1
+  run_quiet "$@"
+  status=$?
+  if [ -n "$old_suppress" ]; then
+    AUTOVAULT_SUPPRESS_SUCCESS_LOG="$old_suppress"
+  else
+    unset AUTOVAULT_SUPPRESS_SUCCESS_LOG
+  fi
+  return "$status"
 }
 
 need() {
@@ -160,7 +217,7 @@ confirm() {
   else
     printf '\n' >&2
     printf '%s\n' "  No TTY detected. Re-run with:" >&2
-    printf '%s\n' "    AUTOVAULT_YES=1 curl -fsSL https://autovault.dev/install | sh" >&2
+    printf '%s\n' "    curl -fsSL $INSTALLER_URL | AUTOVAULT_YES=1 sh" >&2
     printf '\n' >&2
     exit 1
   fi
@@ -188,6 +245,158 @@ detect_arch() {
     arm64|aarch64) printf 'arm64' ;;
     *) printf '%s' "$uname_m" ;;
   esac
+}
+
+read_package_version() {
+  package_json="$1"
+  [ -f "$package_json" ] || {
+    printf '%s\n' "none"
+    return 0
+  }
+  node -e 'try { const fs = require("fs"); const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.stdout.write(String(p.version || "unknown")); } catch { process.stdout.write("unknown"); }' "$package_json" 2>/dev/null || printf '%s' "unknown"
+  printf '\n'
+}
+
+resolve_latest_ref() {
+  if [ -n "${AUTOVAULT_LATEST_VERSION:-}" ]; then
+    case "$AUTOVAULT_LATEST_VERSION" in
+      v*) printf '%s\n' "$AUTOVAULT_LATEST_VERSION" ;;
+      *) printf 'v%s\n' "$AUTOVAULT_LATEST_VERSION" ;;
+    esac
+    return 0
+  fi
+  latest="$(npm view @autoworks-ai/autovault version --silent 2>/dev/null || true)"
+  if [ -n "$latest" ]; then
+    printf 'v%s\n' "$latest"
+  else
+    printf '%s\n' "main"
+  fi
+}
+
+version_from_ref() {
+  case "$1" in
+    v[0-9]*)
+      printf '%s\n' "${1#v}"
+      ;;
+    [0-9]*)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      printf '%s\n' "unknown"
+      ;;
+  esac
+}
+
+compare_versions() {
+  current="$1"
+  target="$2"
+  node -e '
+const a = process.argv[1];
+const b = process.argv[2];
+if (!/^\d+\.\d+\.\d+/.test(a) || !/^\d+\.\d+\.\d+/.test(b)) {
+  process.stdout.write("unknown");
+  process.exit(0);
+}
+const pa = a.split(".").map((v) => Number.parseInt(v, 10));
+const pb = b.split(".").map((v) => Number.parseInt(v, 10));
+for (let i = 0; i < 3; i += 1) {
+  if (pa[i] < pb[i]) { process.stdout.write("-1"); process.exit(0); }
+  if (pa[i] > pb[i]) { process.stdout.write("1"); process.exit(0); }
+}
+process.stdout.write("0");
+' "$current" "$target" 2>/dev/null || printf '%s' "unknown"
+  printf '\n'
+}
+
+detect_install_state() {
+  current="$1"
+  target="$2"
+  ref="$3"
+  if [ "$current" = "none" ]; then
+    if [ -d "$STORAGE_PATH/skills" ]; then
+      printf '%s\n' "repair/adopt existing storage"
+    else
+      printf '%s\n' "fresh install"
+    fi
+    return 0
+  fi
+  if [ "$current" = "unknown" ]; then
+    printf '%s\n' "repair/adopt existing app"
+    return 0
+  fi
+  case "$ref" in
+    v[0-9]*|[0-9]*)
+      cmp="$(compare_versions "$current" "$target")"
+      case "$cmp" in
+        -1) printf '%s\n' "upgrade" ;;
+        0) printf '%s\n' "reinstall" ;;
+        1) printf '%s\n' "downgrade" ;;
+        *) printf '%s\n' "reinstall" ;;
+      esac
+      ;;
+    *)
+      printf '%s\n' "replace from branch"
+      ;;
+  esac
+}
+
+format_target_label() {
+  ref="$1"
+  target_version="$2"
+  case "$ref" in
+    v[0-9]*|[0-9]*)
+      case "$ref" in
+        v*) printf '%s\n' "$ref" ;;
+        *) printf 'v%s\n' "$ref" ;;
+      esac
+      ;;
+    *)
+      if [ "$target_version" = "unknown" ]; then
+        printf '%s\n' "$ref (unreleased branch)"
+      else
+        printf '%s\n' "$ref (unreleased, package $target_version)"
+      fi
+      ;;
+  esac
+}
+
+print_install_plan() {
+  plain ""
+  plain "${BOLD}Install plan${RESET}"
+  detail_line "${GREY}platform${RESET} $PLATFORM $ARCH"
+  detail_line "${GREY}node    ${RESET} $NODE_VERSION"
+  detail_line "${GREY}app     ${RESET} $APP_DIR"
+  detail_line "${GREY}storage ${RESET} $STORAGE_PATH"
+  detail_line "${GREY}state   ${RESET} $INSTALL_STATE"
+  detail_line "${GREY}current ${RESET} $INSTALLED_VERSION"
+  detail_line "${GREY}target  ${RESET} $TARGET_LABEL"
+  detail_line "${GREY}notes   ${RESET} $RELEASE_NOTES_URL"
+  if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
+    detail_line "${GREY}repo    ${RESET} $REPO@$REF"
+    detail_line "${GREY}shim    ${RESET} $BIN_DIR/autovault"
+  fi
+  plain ""
+}
+
+print_changelog_notes() {
+  version="$1"
+  [ "$NOTES" = "1" ] || return 0
+  [ -f "CHANGELOG.md" ] || {
+    detail_line "${GREY}release notes:${RESET} $RELEASE_NOTES_URL"
+    return 0
+  }
+  plain ""
+  awk -v ver="$version" '
+    BEGIN { found = 0 }
+    $0 ~ "^## \\[?v?" ver "\\]?" {
+      found = 1
+    }
+    found && /^## / && $0 !~ "^## \\[?v?" ver "\\]?" {
+      exit
+    }
+    found { print }
+  ' CHANGELOG.md
+  plain ""
 }
 
 node_meets_minimum() {
@@ -265,6 +474,7 @@ ensure_profile_sources_env() {
 }
 
 print_banner() {
+  [ "$QUIET" = "1" ] && return 0
   if [ "${AUTOVAULT_ASCII:-0}" = "1" ]; then
     printf '%s\n' "${MINT}   .----. ${RESET}  ${BOLD}AutoVault${RESET}"
     printf '%s\n' "${MINT}   |  | | ${RESET}  ${GREY}validate -> sign -> vault${RESET}"
@@ -282,6 +492,7 @@ print_banner() {
 }
 
 print_celebration() {
+  [ "$QUIET" = "1" ] && return 0
   skill_count=0
   if [ -d "$STORAGE_PATH/skills" ]; then
     for skill_dir in "$STORAGE_PATH"/skills/*; do
@@ -318,6 +529,7 @@ print_celebration() {
   if [ "$NEEDS_ENV_COMMAND" = "1" ]; then
     printf '%s\n' "  ${GREY}next   ${RESET} . \"$ENV_FILE\""
   fi
+  printf '%s\n' "  ${GREY}next${RESET} autovault --version"
   printf '%s\n' "  ${GREY}next${RESET} autovault doctor"
   printf '%s\n' "${MINT}────────────────────────────────────────${RESET}"
   printf '\n'
@@ -352,18 +564,38 @@ if ! node_meets_minimum; then
   printf '%s\n' "    brew:  brew install node@22" >&2
   printf '\n' >&2
   printf '%s\n' "  Then re-run:" >&2
-  printf '%s\n' "    curl -fsSL https://autovault.dev/install | sh" >&2
+  printf '%s\n' "    curl -fsSL $INSTALLER_URL | sh" >&2
   printf '\n' >&2
   exit 1
 fi
 
-if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
-  plain "${BOLD}Install plan${RESET}"
-  plain "  ${GREY}repo     ${RESET} $REPO@$REF"
-  plain "  ${GREY}app      ${RESET} $APP_DIR"
-  plain "  ${GREY}storage  ${RESET} $STORAGE_PATH"
-  plain "  ${GREY}shim     ${RESET} $BIN_DIR/autovault"
-  plain ""
+if [ -z "$REF" ]; then
+  REF="$(resolve_latest_ref)"
+fi
+
+INSTALLED_VERSION="$(read_package_version "$APP_DIR/package.json")"
+TARGET_VERSION="$(version_from_ref "$REF")"
+TARGET_LABEL="$(format_target_label "$REF" "$TARGET_VERSION")"
+case "$REF" in
+  v[0-9]*|[0-9]*)
+    release_ref="$REF"
+    case "$release_ref" in
+      v*) ;;
+      *) release_ref="v$release_ref" ;;
+    esac
+    RELEASE_NOTES_URL="$RELEASES_URL/tag/$release_ref"
+    ;;
+  *)
+    RELEASE_NOTES_URL="$RELEASES_URL/latest"
+    ;;
+esac
+INSTALL_STATE="$(detect_install_state "$INSTALLED_VERSION" "$TARGET_VERSION" "$REF")"
+
+print_install_plan
+
+if [ "$DRY_RUN" = "1" ]; then
+  plain "Dry run only; no changes made."
+  exit 0
 fi
 
 confirm "Install AutoVault to $HOME_DIR and seed bundled skills?"
@@ -395,9 +627,19 @@ curl -fsSL "$TARBALL_URL" -o "$TMP_DIR/autovault.tgz"
 mkdir -p "$TMP_DIR/src"
 tar -xzf "$TMP_DIR/autovault.tgz" -C "$TMP_DIR/src" --strip-components=1
 [ -f "$TMP_DIR/src/package.json" ] || fail "downloaded archive does not look like AutoVault"
-completed "Fetched $REF"
+FETCHED_PACKAGE_VERSION="$(read_package_version "$TMP_DIR/src/package.json")"
+FETCHED_TARGET_LABEL="$(format_target_label "$REF" "$FETCHED_PACKAGE_VERSION")"
+completed "Fetched $FETCHED_TARGET_LABEL"
 
 cd "$TMP_DIR/src"
+case "$REF" in
+  v[0-9]*|[0-9]*)
+    print_changelog_notes "$FETCHED_PACKAGE_VERSION"
+    ;;
+  *)
+    print_changelog_notes "Unreleased"
+    ;;
+esac
 
 step "build" "installing dependencies and compiling"
 run_quiet "Installing dependencies..." npm ci --silent
@@ -412,7 +654,7 @@ completed "Built dist/"
 
 if [ "${AUTOVAULT_NO_BOOTSTRAP:-0}" != "1" ]; then
   step "seed" "validating and installing bundled skills"
-  run_quiet "Seeding bundled skills..." env AUTOVAULT_LOG_LEVEL=error AUTOVAULT_STORAGE_PATH="$STORAGE_PATH" node scripts/bootstrap-skills.mjs
+  run_quiet_no_success_log "Seeding bundled skills..." env AUTOVAULT_LOG_LEVEL=error AUTOVAULT_STORAGE_PATH="$STORAGE_PATH" node scripts/bootstrap-skills.mjs
   completed "Bundled skills bootstrapped"
 else
   step "seed" "skipped by AUTOVAULT_NO_BOOTSTRAP=1"

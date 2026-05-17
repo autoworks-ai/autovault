@@ -40,15 +40,22 @@ after a release PR is merged.
 
 The installer downloads the AutoVault source release, builds the Node app under
 `~/.autovault/app`, preserves the rest of `~/.autovault/` as vault storage, and
-creates a shim at `~/.autovault/bin/autovault`.
+creates a shim at `~/.autovault/bin/autovault`. It prints the detected state
+(`fresh install`, `upgrade`, `reinstall`, `downgrade`, or storage adoption),
+the installed version, the target version, and the release-notes URL before it
+changes files.
 
 Useful installer overrides:
 
 ```bash
-AUTOVAULT_HOME=~/.local/share/autovault curl -fsSL https://autovault.sh | sh
-AUTOVAULT_BIN_DIR=~/bin curl -fsSL https://autovault.sh | sh
-AUTOVAULT_NO_BOOTSTRAP=1 curl -fsSL https://autovault.sh | sh
-AUTOVAULT_REF=v0.3.0 curl -fsSL https://autovault.sh | sh
+curl -fsSL https://autovault.sh | sh -s -- --dry-run
+curl -fsSL https://autovault.sh | sh -s -- --yes --quiet
+curl -fsSL https://autovault.sh | sh -s -- --notes
+curl -fsSL https://autovault.sh | AUTOVAULT_HOME="$HOME/.local/share/autovault" sh
+curl -fsSL https://autovault.sh | AUTOVAULT_BIN_DIR="$HOME/bin" sh
+curl -fsSL https://autovault.sh | AUTOVAULT_NO_BOOTSTRAP=1 sh
+curl -fsSL https://autovault.sh | AUTOVAULT_REF=v0.3.0 sh
+curl -fsSL https://autovault.sh | AUTOVAULT_REF=main sh  # unreleased branch
 ```
 
 If `~/.autovault/bin` is not already on your `PATH`, add it:
@@ -60,6 +67,7 @@ export PATH="$HOME/.autovault/bin:$PATH"
 Check vault health at any time:
 
 ```bash
+autovault --version
 autovault doctor
 autovault doctor --clean   # remove ignored OS/editor metadata only
 ```
@@ -555,11 +563,16 @@ through Streamable HTTP MCP.
 
 ## Updating AutoVault
 
-If you installed with `autovault.sh`, rerun the installer:
+If you installed with `autovault.sh`, use the built-in updater:
 
 ```bash
-curl -fsSL https://autovault.sh | sh
+autovault update --dry-run
+autovault update
+autovault update v0.3.0 --notes
 ```
+
+For npm and Homebrew installs, `autovault update` prints the correct package
+manager command instead of overwriting the package-managed install.
 
 For a manual clone:
 

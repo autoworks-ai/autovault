@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { applyDecisions } from "../src/cli/setup/apply.js";
+import { renderFinalSummary } from "../src/cli/setup/render.js";
+import { buildReviewPlan } from "../src/cli/setup/review.js";
 import { scanDrift } from "../src/cli/setup/scan.js";
 import { ensureStorage, readSkill, skillDir, writeSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
@@ -31,6 +33,23 @@ async function exists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function captureStdout(fn: () => void | Promise<void>): Promise<string> {
+  const originalWrite = process.stdout.write;
+  let stdout = "";
+  process.stdout.write = ((chunk: unknown, ...args: unknown[]) => {
+    stdout += Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+    const callback = args.find((arg): arg is () => void => typeof arg === "function");
+    callback?.();
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = originalWrite;
+  }
+  return stdout;
 }
 
 describe("setup apply", () => {
@@ -239,5 +258,55 @@ describe("setup apply", () => {
 
     const backupPath = path.join(`${nativeRoot}.bak`, "collide", "SKILL.md");
     expect(await exists(backupPath)).toBe(true);
+  });
+
+  it("repair adoption installs synthesized resources without editing the native original", async () => {
+    await ensureStorage();
+
+    const nativeRoot = path.join(currentStorageRoot(), "fake-repair-adopt");
+    const nativeDir = path.join(nativeRoot, "repairable");
+    await writeNative(
+      nativeRoot,
+      "repairable",
+      skillMd("repairable", "repair body", { agents: ["codex"] })
+    );
+    await fs.mkdir(path.join(nativeDir, "references"), { recursive: true });
+    await fs.writeFile(path.join(nativeDir, "references", "guide.md"), "# Guide\n", "utf-8");
+
+    const originalSkillMd = await fs.readFile(path.join(nativeDir, "SKILL.md"), "utf-8");
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { codex: nativeRoot }
+    });
+    const skill = report.skills.find((entry) => entry.name === "repairable");
+    expect(skill).toBeDefined();
+    const plan = await buildReviewPlan(skill!);
+    expect(plan.repair).toBeDefined();
+
+    const outcomes = await applyDecisions({
+      mode: "backup",
+      candidates: [skill!],
+      collisions: [],
+      repairs: [{ name: "repairable", repair: plan.repair! }],
+      profileRoots: { codex: nativeRoot }
+    });
+
+    expect(outcomes.find((outcome) => outcome.name === "repairable" && outcome.action === "repair-adopt")?.ok).toBe(true);
+    const backupPath = path.join(`${nativeRoot}.bak`, "repairable", "SKILL.md");
+    expect(await fs.readFile(backupPath, "utf-8")).toBe(originalSkillMd);
+
+    const installed = await readSkill("repairable");
+    expect(installed?.resources.map((resource) => resource.path)).toEqual(["references/guide.md"]);
+    expect(installed?.skillMd).toContain("references/guide.md");
+    expect(installed?.skillMd).not.toBe(originalSkillMd);
+
+    const visible = await fs.lstat(path.join(nativeRoot, "repairable"));
+    expect(visible.isSymbolicLink()).toBe(true);
+    const backup = outcomes.find((outcome) => outcome.action === "backup");
+    expect(backup?.restoreCommand).toContain("autovault sync-profiles");
+
+    const stdout = await captureStdout(() => renderFinalSummary(report, outcomes));
+    expect(stdout).toContain("restore");
+    expect(stdout).toContain("autovault sync-profiles");
   });
 });

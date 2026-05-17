@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { addLocalSkill } from "../../installer/local.js";
 import { syncProfiles } from "../../profiles/sync.js";
+import type { ReviewRepair } from "./review.js";
 import type { SkillView } from "./scan.js";
 
 export type AdoptionMode = "augment" | "backup" | "in-place";
@@ -13,10 +15,16 @@ export type CollisionDecision = {
   action: CollisionAction;
 };
 
+export type RepairDecision = {
+  name: string;
+  repair: ReviewRepair;
+};
+
 export type ApplyInput = {
   mode: AdoptionMode;
   candidates: SkillView[];
   collisions: CollisionDecision[];
+  repairs?: RepairDecision[];
   profileRoots: Record<string, string>;
   discover?: boolean;
 };
@@ -26,6 +34,8 @@ export type ApplyOutcome = {
   action: string;
   ok: boolean;
   detail?: string;
+  backupPath?: string;
+  restoreCommand?: string;
 };
 
 function backupRootFor(nativeRoot: string): string {
@@ -56,6 +66,29 @@ async function backupNative(nativeRoot: string, name: string): Promise<string> {
   return target;
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function restoreCommand(nativeRoot: string, name: string, backupPath: string, agent?: string): string {
+  const nativePath = path.join(nativeRoot, name);
+  const sync = agent
+    ? `autovault sync-profiles --link ${agent}=${shellQuote(nativeRoot)}`
+    : "autovault sync-profiles";
+  return `rm -rf ${shellQuote(nativePath)} && mv ${shellQuote(backupPath)} ${shellQuote(nativePath)} && ${sync}`;
+}
+
+async function writeRepairBundle(repair: ReviewRepair): Promise<string> {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-repair-"));
+  await fs.writeFile(path.join(root, "SKILL.md"), repair.skillMd, "utf-8");
+  for (const resource of repair.resources) {
+    const target = path.join(root, resource.path);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, resource.content, "utf-8");
+  }
+  return root;
+}
+
 async function removeNative(nativeRoot: string, name: string): Promise<void> {
   const source = path.join(nativeRoot, name);
   if (!(await pathExists(source))) return;
@@ -67,9 +100,16 @@ async function adoptOne(
   mode: "backup" | "in-place"
 ): Promise<ApplyOutcome[]> {
   const outcomes: ApplyOutcome[] = [];
-  // Choose the first native source for the bundle bytes. cross-host-drift is
-  // surfaced in the report; we adopt the first source and the user can
-  // re-run setup pointing at the others.
+  if (skill.native.length > 1) {
+    return [
+      {
+        name: skill.name,
+        action: "adopt",
+        ok: false,
+        detail: "multiple native sources found; choose one source manually before adopting"
+      }
+    ];
+  }
   const native = skill.native[0];
   if (!native) {
     return [
@@ -84,7 +124,9 @@ async function adoptOne(
         name: skill.name,
         action: "backup",
         ok: true,
-        detail: bundleSource
+        detail: bundleSource,
+        backupPath: bundleSource,
+        restoreCommand: restoreCommand(native.rootDir, skill.name, bundleSource, native.agent)
       });
     } catch (error) {
       outcomes.push({
@@ -134,6 +176,96 @@ async function adoptOne(
   return outcomes;
 }
 
+async function repairAdoptOne(
+  skill: SkillView,
+  repair: ReviewRepair
+): Promise<ApplyOutcome[]> {
+  const outcomes: ApplyOutcome[] = [];
+  if (skill.native.length > 1) {
+    return [
+      {
+        name: skill.name,
+        action: "repair-adopt",
+        ok: false,
+        detail: "multiple native sources found; choose one source manually before adopting"
+      }
+    ];
+  }
+  const native = skill.native[0];
+  if (!native) {
+    return [
+      { name: skill.name, action: "repair-adopt", ok: false, detail: "no native source available" }
+    ];
+  }
+
+  let backupPath = "";
+  try {
+    backupPath = await backupNative(native.rootDir, skill.name);
+    outcomes.push({
+      name: skill.name,
+      action: "backup",
+      ok: true,
+      detail: backupPath,
+      backupPath,
+      restoreCommand: restoreCommand(native.rootDir, skill.name, backupPath, native.agent)
+    });
+  } catch (error) {
+    outcomes.push({
+      name: skill.name,
+      action: "backup",
+      ok: false,
+      detail: String(error)
+    });
+    return outcomes;
+  }
+
+  let stagedRoot = "";
+  try {
+    stagedRoot = await writeRepairBundle(repair);
+    const result = await addLocalSkill({
+      skillDir: stagedRoot,
+      source: `native:${native.agent ?? "unknown"}:repaired`,
+      inferredAgents: native.inferredAgents
+    });
+    if (!result.success) {
+      const reason =
+        result.validation.errors[0] ??
+        result.validation.securityFlags[0] ??
+        "unknown validation error";
+      outcomes.push({
+        name: skill.name,
+        action: "repair-adopt",
+        ok: false,
+        detail: reason,
+        backupPath,
+        restoreCommand: restoreCommand(native.rootDir, skill.name, backupPath, native.agent)
+      });
+      return outcomes;
+    }
+    outcomes.push({
+      name: skill.name,
+      action: "repair-adopt",
+      ok: true,
+      detail: `declared ${repair.declaredResources.join(", ")}`
+    });
+    return outcomes;
+  } catch (error) {
+    outcomes.push({
+      name: skill.name,
+      action: "repair-adopt",
+      ok: false,
+      detail: String(error),
+      backupPath,
+      restoreCommand: restoreCommand(native.rootDir, skill.name, backupPath, native.agent)
+    });
+    return outcomes;
+  } finally {
+    if (stagedRoot) {
+      await fs.rm(stagedRoot, { recursive: true, force: true });
+    }
+  }
+}
+
 async function applyCollision(
   skill: SkillView,
   decision: CollisionAction
@@ -160,7 +292,9 @@ async function applyCollision(
         name: skill.name,
         action: "backup-native",
         ok: true,
-        detail: target
+        detail: target,
+        backupPath: target,
+        restoreCommand: restoreCommand(native.rootDir, skill.name, target, native.agent)
       });
     } catch (error) {
       outcomes.push({
@@ -192,6 +326,10 @@ export async function applyDecisions(input: ApplyInput): Promise<ApplyOutcome[]>
   for (const decision of input.collisions) {
     collisionsByName.set(decision.name, decision.action);
   }
+  const repairsByName = new Map<string, ReviewRepair>();
+  for (const decision of input.repairs ?? []) {
+    repairsByName.set(decision.name, decision.repair);
+  }
 
   if (input.mode === "augment") {
     // No adoption; only collision decisions apply.
@@ -202,6 +340,10 @@ export async function applyDecisions(input: ApplyInput): Promise<ApplyOutcome[]>
     }
   } else {
     for (const skill of input.candidates) {
+      if (repairsByName.has(skill.name)) {
+        outcomes.push(...(await repairAdoptOne(skill, repairsByName.get(skill.name)!)));
+        continue;
+      }
       if (collisionsByName.has(skill.name)) {
         outcomes.push(...(await applyCollision(skill, collisionsByName.get(skill.name)!)));
         continue;

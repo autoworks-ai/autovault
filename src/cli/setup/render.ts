@@ -287,7 +287,7 @@ export function renderReviewSkill(
 
 export function renderFinalSummary(
   _report: DriftReport,
-  applied: { name: string; action: string; ok: boolean; detail?: string }[],
+  applied: { name: string; action: string; ok: boolean; detail?: string; restoreCommand?: string }[],
   stream: NodeJS.WriteStream = process.stdout
 ): void {
   const theme = makeTheme(stream);
@@ -301,6 +301,9 @@ export function renderFinalSummary(
     const action = padEndVisible(entry.action, 18);
     const detail = entry.detail ? ` ${theme.style.dim(entry.detail)}` : "";
     stream.write(`  ${mark} ${action} ${entry.name}${detail}\n`);
+    if (entry.restoreCommand) {
+      stream.write(`      ${theme.style.dim("restore")} ${entry.restoreCommand}\n`);
+    }
   }
 }
 
