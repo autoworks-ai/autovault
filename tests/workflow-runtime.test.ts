@@ -13,6 +13,18 @@ function readJson<T>(relativePath: string): T {
   return JSON.parse(readText(relativePath)) as T;
 }
 
+function minimumNodeMajor(engineRange: string): number {
+  const match = engineRange.match(/^>=\s*(\d+)\./);
+  expect(match).not.toBeNull();
+  return Number(match?.[1]);
+}
+
+function dependencyMajor(versionRange: string): number {
+  const match = versionRange.match(/^\^?(\d+)\./);
+  expect(match).not.toBeNull();
+  return Number(match?.[1]);
+}
+
 describe("workflow runtime policy", () => {
   it("uses Release Please on Node 24-compatible action runtime with v-prefixed tags", () => {
     const workflow = readText(".github/workflows/release-please.yml");
@@ -68,14 +80,16 @@ describe("workflow runtime policy", () => {
     expect(workflowText).not.toContain("ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION");
   });
 
-  it("aligns package metadata to the Node 22+ runtime", () => {
+  it("aligns package metadata to the minimum Node runtime", () => {
     const packageJson = readJson<{
       engines: Record<string, string>;
       devDependencies: Record<string, string>;
     }>("package.json");
 
     expect(packageJson.engines.node).toBe(">=22.0.0");
-    expect(packageJson.devDependencies["@types/node"]).toBe("^24.12.4");
+    expect(dependencyMajor(packageJson.devDependencies["@types/node"])).toBe(
+      minimumNodeMajor(packageJson.engines.node)
+    );
   });
 
   it("runs CI and onboarding smoke on the supported Node matrix", () => {
