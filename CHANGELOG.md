@@ -6,6 +6,21 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 while it remains in pre-1.0 development.
 
+## [0.4.0](https://github.com/autoworks-ai/autovault/compare/v0.3.0...v0.4.0) (2026-05-17)
+
+
+### Features
+
+* **cli:** improve install and setup review UX ([#65](https://github.com/autoworks-ai/autovault/issues/65)) ([9227df4](https://github.com/autoworks-ai/autovault/commit/9227df40332034631ff430791e363996615dff81))
+* **skills:** add agentgonewild-publisher community skill ([#66](https://github.com/autoworks-ai/autovault/issues/66)) ([adb4b95](https://github.com/autoworks-ai/autovault/commit/adb4b95bfe68d8a309618ebbe67a43fc784fd1d1))
+
+
+### Bug Fixes
+
+* **ci:** retry dependabot automerge after CI ([#64](https://github.com/autoworks-ai/autovault/issues/64)) ([ad80579](https://github.com/autoworks-ai/autovault/commit/ad805798e5ebecc3d5baab5eb3c17d2e7d9af0b8))
+* **cli:** smooth add-local local imports ([#60](https://github.com/autoworks-ai/autovault/issues/60)) ([443eac7](https://github.com/autoworks-ai/autovault/commit/443eac765f72377ba1380d608d722a0fdc6a0848))
+* **deps:** align node typings with runtime policy ([#67](https://github.com/autoworks-ai/autovault/issues/67)) ([ca06e74](https://github.com/autoworks-ai/autovault/commit/ca06e74ef67fba2685c4fbfa74c01d13f397ea95))
+
 ## [0.3.0](https://github.com/autoworks-ai/autovault/compare/v0.2.1...v0.3.0) (2026-05-14)
 
 
