@@ -48,7 +48,10 @@ async function packageVersion(): Promise<string> {
   const packageJson = JSON.parse(
     await fs.readFile(path.join(REPO_ROOT, "package.json"), "utf8")
   ) as { version?: string };
-  return packageJson.version ?? "0.0.0";
+  if (!packageJson.version) {
+    throw new Error("package.json must declare a version for CLI version tests");
+  }
+  return packageJson.version;
 }
 
 describe("autovault top-level CLI UX", () => {
