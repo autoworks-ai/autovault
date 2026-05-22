@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { formatJson } from "../src/cli/ui/output.js";
 import { ensureStorage, writeSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
@@ -74,6 +75,13 @@ bin:
 }
 
 describe("standardized CLI output", () => {
+  it("serializes non-representable top-level JSON values as null", () => {
+    for (const value of [undefined, Symbol("json"), () => undefined]) {
+      expect(formatJson(value)).toBe("null");
+      expect(JSON.parse(formatJson(value))).toBeNull();
+    }
+  });
+
   it("renders skill list as a human catalog by default", async () => {
     await ensureStorage();
     await writeSkill("catalog-alpha", catalogSkill("catalog-alpha", ["alpha", "cli"]), [
