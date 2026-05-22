@@ -476,7 +476,7 @@ function printConfigSnippets(
       }
     }
   };
-  process.stdout.write(`${formatJson(snippet)}\n`);
+  writeJson(snippet);
 }
 
 function printHostRestartGuidance(): void {
