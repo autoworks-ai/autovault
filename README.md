@@ -360,6 +360,7 @@ Runtime environment:
 | `AUTOVAULT_SECURITY_STRICT` | `true` | Block denylist hits when true; warn when false. |
 | `AUTOVAULT_SEARCH_MODE` | `text` | Search backend. Metadata text search is the current implementation. |
 | `AUTOVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, or `error`. |
+| `AUTOVAULT_LOG_DIAGNOSTICS` | unset | Set to `1` to let structured diagnostic logs pass through public CLI output suppression. |
 | `AUTOVAULT_PUBLIC_URL` | required in remote mode | Public origin for OAuth metadata and callbacks. |
 | `AUTOVAULT_HTTP_PORT` | `3000` | HTTP port when `PORT` is not injected by the platform. |
 | `AUTOVAULT_ALLOWED_ORIGINS` | unset | Optional CORS allowlist for remote mode. |

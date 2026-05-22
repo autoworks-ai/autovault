@@ -22,8 +22,14 @@ function currentThreshold(): number {
   }
 }
 
+function shouldSuppress(level: LogLevel): boolean {
+  if (logSuppression.getStore() !== true) return false;
+  if (process.env.AUTOVAULT_LOG_DIAGNOSTICS === "1") return false;
+  return level !== "error";
+}
+
 function emit(level: LogLevel, message: string, fields?: LogFields): void {
-  if (logSuppression.getStore() === true && level !== "error") return;
+  if (shouldSuppress(level)) return;
   if (SEVERITY[level] < currentThreshold()) return;
   const record = {
     ts: new Date().toISOString(),

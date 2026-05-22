@@ -71,6 +71,7 @@ describe("log level filtering", () => {
 
   it("suppresses non-error records in public CLI scopes but keeps errors visible", async () => {
     process.env.AUTOVAULT_LOG_LEVEL = "debug";
+    delete process.env.AUTOVAULT_LOG_DIAGNOSTICS;
     resetConfigCache();
     const lines = await captureStderrAsync(() =>
       withSuppressedLogs(async () => {
@@ -85,5 +86,27 @@ describe("log level filtering", () => {
     expect(joined).not.toMatch(/"msg":"i"/);
     expect(joined).not.toMatch(/"msg":"w"/);
     expect(joined).toMatch(/"msg":"e"/);
+  });
+
+  it("allows explicit diagnostics to bypass public CLI log suppression", async () => {
+    process.env.AUTOVAULT_LOG_LEVEL = "debug";
+    process.env.AUTOVAULT_LOG_DIAGNOSTICS = "1";
+    resetConfigCache();
+    try {
+      const lines = await captureStderrAsync(() =>
+        withSuppressedLogs(async () => {
+          log.debug("d");
+          log.warn("w");
+          log.error("e");
+        })
+      );
+      const joined = lines.join("");
+      expect(joined).toMatch(/"msg":"d"/);
+      expect(joined).toMatch(/"msg":"w"/);
+      expect(joined).toMatch(/"msg":"e"/);
+    } finally {
+      delete process.env.AUTOVAULT_LOG_DIAGNOSTICS;
+      resetConfigCache();
+    }
   });
 });
