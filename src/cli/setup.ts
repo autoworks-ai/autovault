@@ -40,6 +40,7 @@ import {
   type DriftReport,
   type SkillView
 } from "./setup/scan.js";
+import { formatJson, writeJson } from "./ui/output.js";
 
 export type RunSetupOptions = {
   bundledRoot?: string;
@@ -66,7 +67,7 @@ export async function runSetup(options: RunSetupOptions = {}): Promise<void> {
   let report: DriftReport;
   if (options.json) {
     report = await scanDrift(scanInput);
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    writeJson(report);
     return;
   }
 
@@ -475,7 +476,7 @@ function printConfigSnippets(
       }
     }
   };
-  process.stdout.write(`${JSON.stringify(snippet, null, 2)}\n`);
+  process.stdout.write(`${formatJson(snippet)}\n`);
 }
 
 function printHostRestartGuidance(): void {

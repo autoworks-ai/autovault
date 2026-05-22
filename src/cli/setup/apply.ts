@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { addLocalSkill } from "../../installer/local.js";
 import { syncProfiles } from "../../profiles/sync.js";
+import { withSuppressedLogs } from "../../util/log.js";
+import { joinCliList } from "../ui/output.js";
 import type { ReviewRepair } from "./review.js";
 import type { SkillView } from "./scan.js";
 
@@ -246,7 +248,10 @@ async function repairAdoptOne(
       name: skill.name,
       action: "repair-adopt",
       ok: true,
-      detail: `declared ${repair.declaredResources.join(", ")}`
+      detail: `declared ${repair.declaredResources.length} resource${repair.declaredResources.length === 1 ? "" : "s"}: ${joinCliList(
+        repair.declaredResources,
+        { maxItemLength: 36, maxItems: 5 }
+      )}`
     });
     return outcomes;
   } catch (error) {
@@ -357,10 +362,12 @@ export async function applyDecisions(input: ApplyInput): Promise<ApplyOutcome[]>
   // explicitly requested; we bundle one sync at the end to avoid N redundant
   // walks.
   try {
-    const sync = await syncProfiles({
-      profileRoots: input.profileRoots,
-      discover: input.discover ?? false
-    });
+    const sync = await withSuppressedLogs(() =>
+      syncProfiles({
+        profileRoots: input.profileRoots,
+        discover: input.discover ?? false
+      })
+    );
     for (const warning of sync.warnings) {
       outcomes.push({ name: "—", action: "sync-warning", ok: false, detail: warning });
     }

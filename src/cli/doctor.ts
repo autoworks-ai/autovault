@@ -23,6 +23,7 @@ import { withStorageLock } from "../storage/lock.js";
 import { badge, sectionTitle } from "./ui/messages.js";
 import { bulletList, keyValueRows } from "./ui/table.js";
 import { makeTheme } from "./ui/theme.js";
+import { writeJson } from "./ui/output.js";
 
 type DoctorOptions = {
   skill?: string;
@@ -371,7 +372,7 @@ export async function runDoctorCommand(args: string[]): Promise<void> {
   const options = parseOptions(args);
   const report = await runDoctorReport(options);
   if (options.json) {
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    writeJson(report);
   } else {
     process.stdout.write(formatReport(report));
   }

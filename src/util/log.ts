@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { loadConfig } from "../config.js";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
@@ -11,6 +12,8 @@ const SEVERITY: Record<LogLevel, number> = {
   error: 40
 };
 
+const logSuppression = new AsyncLocalStorage<boolean>();
+
 function currentThreshold(): number {
   try {
     return SEVERITY[loadConfig().logLevel];
@@ -20,6 +23,7 @@ function currentThreshold(): number {
 }
 
 function emit(level: LogLevel, message: string, fields?: LogFields): void {
+  if (logSuppression.getStore() === true) return;
   if (SEVERITY[level] < currentThreshold()) return;
   const record = {
     ts: new Date().toISOString(),
@@ -44,3 +48,7 @@ export const log = {
     emit("error", message, fields);
   }
 };
+
+export async function withSuppressedLogs<T>(fn: () => Promise<T>): Promise<T> {
+  return await logSuppression.run(true, fn);
+}

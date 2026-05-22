@@ -153,7 +153,8 @@ node dist/cli.js sync-profiles \
 ```
 
 This creates or updates managed links inside those roots and leaves unrelated
-system or manually installed skills intact.
+system or manually installed skills intact. Add `--json` when a script needs
+the structured sync payload.
 Set `AUTOVAULT_PROFILE_LINKS` to make `add_skill`, `update_skill`,
 `propose_skill`, `delete_skill`, and plain `sync-profiles` refresh those roots
 automatically.
@@ -532,7 +533,8 @@ node dist/cli.js import-autohub \
 ```
 
 The importer stores required environment variable names only. Literal secret
-values from MCP config are not written to SQLite.
+values from MCP config are not written to SQLite. Add `--json` for automation
+that needs the raw import counts.
 
 ## 7. First-test sanity checks (optional)
 

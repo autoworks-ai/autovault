@@ -142,19 +142,22 @@ The CLI is the local operator surface:
 ```text
 autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
 autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
-autovault sync-profiles [--discover] [--link agent=/path/to/skills]
+autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]
 autovault profiles list [--json]
 autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
 autovault audit-repo --repo /path/to/repo [--format json|markdown]
-autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
-autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
+autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
+autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
 autovault serve [--help]
-autovault skill list
-autovault skill search <query> [--top-k N]
+autovault skill list [--json]
+autovault skill search <query> [--top-k N] [--json]
 autovault skill which <name> [<action>]
 autovault skill <action> <name>
 ```
+
+Human-readable output is the default. Use `--json` or `--format json` only
+for scripts and other machine consumers.
 
 Common flows:
 
@@ -174,7 +177,7 @@ autovault add-local ./path/to/your-skill \
 autovault skill search code-review --top-k 5
 
 # Remove a vaulted skill and refresh managed profile links.
-autovault remove skill-author --json
+autovault remove skill-author
 ```
 
 `add-local` accepts a bundle directory or a direct `SKILL.md` path. If
