@@ -9,7 +9,7 @@ import { currentStorageRoot } from "./setup.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_PATH = path.join(REPO_ROOT, "src/cli.ts");
-const TSX_BIN = path.join(REPO_ROOT, "node_modules/.bin/tsx");
+const TSX_CLI = path.join(REPO_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
 
 type CliResult = {
   exitCode: number;
@@ -19,7 +19,7 @@ type CliResult = {
 
 function runCli(args: string[], env: Record<string, string> = {}): Promise<CliResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(TSX_BIN, [CLI_PATH, ...args], {
+    const child = spawn(process.execPath, [TSX_CLI, CLI_PATH, ...args], {
       env: {
         ...process.env,
         AUTOVAULT_STORAGE_PATH: currentStorageRoot(),
@@ -44,6 +44,23 @@ function runCli(args: string[], env: Record<string, string> = {}): Promise<CliRe
     });
     child.stdin.end();
   });
+}
+
+async function listTypeScriptFiles(rootDir: string): Promise<string[]> {
+  const files: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+        files.push(fullPath);
+      }
+    }
+  }
+  await walk(rootDir);
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 async function writeJson(fileName: string, value: unknown): Promise<string> {
@@ -282,9 +299,7 @@ All skills --------------------------------------------
   it("keeps direct stdout JSON writes inside the approved output helper", async () => {
     const files = [
       path.join(REPO_ROOT, "src", "cli.ts"),
-      ...(await fs.readdir(path.join(REPO_ROOT, "src", "cli"), { recursive: true }))
-        .filter((entry) => String(entry).endsWith(".ts"))
-        .map((entry) => path.join(REPO_ROOT, "src", "cli", String(entry)))
+      ...(await listTypeScriptFiles(path.join(REPO_ROOT, "src", "cli")))
     ];
     const offenders: string[] = [];
     for (const file of files) {

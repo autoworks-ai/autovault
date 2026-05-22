@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { resetConfigCache } from "../src/config.js";
-import { log } from "../src/util/log.js";
+import { log, withSuppressedLogs } from "../src/util/log.js";
 
 function captureStderr(fn: () => void): string[] {
   const lines: string[] = [];
@@ -10,6 +10,20 @@ function captureStderr(fn: () => void): string[] {
   });
   try {
     fn();
+  } finally {
+    spy.mockRestore();
+  }
+  return lines;
+}
+
+async function captureStderrAsync(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: any) => {
+    lines.push(typeof chunk === "string" ? chunk : chunk.toString());
+    return true;
+  });
+  try {
+    await fn();
   } finally {
     spy.mockRestore();
   }
@@ -53,5 +67,23 @@ describe("log level filtering", () => {
       log.debug("d");
     });
     expect(lines.join("")).toMatch(/"msg":"d"/);
+  });
+
+  it("suppresses non-error records in public CLI scopes but keeps errors visible", async () => {
+    process.env.AUTOVAULT_LOG_LEVEL = "debug";
+    resetConfigCache();
+    const lines = await captureStderrAsync(() =>
+      withSuppressedLogs(async () => {
+        log.debug("d");
+        log.info("i");
+        log.warn("w");
+        log.error("e");
+      })
+    );
+    const joined = lines.join("");
+    expect(joined).not.toMatch(/"msg":"d"/);
+    expect(joined).not.toMatch(/"msg":"i"/);
+    expect(joined).not.toMatch(/"msg":"w"/);
+    expect(joined).toMatch(/"msg":"e"/);
   });
 });

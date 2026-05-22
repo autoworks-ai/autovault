@@ -23,7 +23,7 @@ function currentThreshold(): number {
 }
 
 function emit(level: LogLevel, message: string, fields?: LogFields): void {
-  if (logSuppression.getStore() === true) return;
+  if (logSuppression.getStore() === true && level !== "error") return;
   if (SEVERITY[level] < currentThreshold()) return;
   const record = {
     ts: new Date().toISOString(),

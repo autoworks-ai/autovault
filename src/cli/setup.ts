@@ -40,7 +40,7 @@ import {
   type DriftReport,
   type SkillView
 } from "./setup/scan.js";
-import { formatJson, writeJson } from "./ui/output.js";
+import { writeJson } from "./ui/output.js";
 
 export type RunSetupOptions = {
   bundledRoot?: string;
