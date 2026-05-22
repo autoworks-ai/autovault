@@ -64,6 +64,16 @@ jobs:
           echo "Changed files: $FILES"
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
 
+      - name: Verify docs drift app credentials
+        env:
+          DOCS_DRIFT_APP_ID: ${{ secrets.DOCS_DRIFT_APP_ID }}
+          DOCS_DRIFT_APP_PRIVATE_KEY: ${{ secrets.DOCS_DRIFT_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$DOCS_DRIFT_APP_ID" ] || [ -z "$DOCS_DRIFT_APP_PRIVATE_KEY" ]; then
+            echo "::error::DOCS_DRIFT_APP_ID and DOCS_DRIFT_APP_PRIVATE_KEY are required to dispatch autovault-website docs drift."
+            exit 1
+          fi
+
       - name: Create docs drift app token
         id: docs_token
         uses: actions/create-github-app-token@v2
