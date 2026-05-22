@@ -10,7 +10,7 @@ import { renderSuccessOutro } from "./cli/ui/brand.js";
 import { badge, sectionTitle } from "./cli/ui/messages.js";
 import { bulletList, keyValueRows } from "./cli/ui/table.js";
 import { makeTheme } from "./cli/ui/theme.js";
-import { formatJson, joinCliList, truncateCliText, writeJson } from "./cli/ui/output.js";
+import { joinCliList, truncateCliText, writeJson } from "./cli/ui/output.js";
 import { withSuppressedLogs } from "./util/log.js";
 import {
   addLocalSkill,
