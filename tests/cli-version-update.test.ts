@@ -44,6 +44,16 @@ function runCli(args: string[], env: Record<string, string> = {}): Promise<CliRe
   });
 }
 
+async function packageVersion(): Promise<string> {
+  const packageJson = JSON.parse(
+    await fs.readFile(path.join(REPO_ROOT, "package.json"), "utf8")
+  ) as { version?: string };
+  if (!packageJson.version) {
+    throw new Error("package.json must declare a version for CLI version tests");
+  }
+  return packageJson.version;
+}
+
 describe("autovault top-level CLI UX", () => {
   it.each([["--version"], ["-v"], ["--v"], ["version"]])(
     "prints the CLI version for %s",
@@ -95,12 +105,13 @@ describe("autovault top-level CLI UX", () => {
 
   it("shows a dry-run source update plan without mutating files", async () => {
     const marker = path.join(currentStorageRoot(), "update-marker");
+    const currentVersion = await packageVersion();
     const result = await runCli(["update", "--dry-run"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("AutoVault update plan");
-    expect(result.stdout).toContain("current 0.3.0");
+    expect(result.stdout).toContain(`current ${currentVersion}`);
     expect(result.stdout).toContain("target  v9.9.9");
     expect(result.stdout).toContain("sh ");
     await expect(fs.access(marker)).rejects.toMatchObject({ code: "ENOENT" });
