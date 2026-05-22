@@ -265,7 +265,10 @@ bin:
     ]);
     const result = await runCli(["skill", "list"]);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/alpha:/);
+    expect(result.stdout).toContain("[vault] AutoVault skill catalog");
+    expect(result.stdout).toContain("Runnable actions");
+    expect(result.stdout).toContain("All skills");
+    expect(result.stdout).toMatch(/alpha/);
     expect(result.stdout).toMatch(/setup/);
   });
 

@@ -10,6 +10,8 @@ import { renderSuccessOutro } from "./cli/ui/brand.js";
 import { badge, sectionTitle } from "./cli/ui/messages.js";
 import { bulletList, keyValueRows } from "./cli/ui/table.js";
 import { makeTheme } from "./cli/ui/theme.js";
+import { joinCliList, truncateCliText, writeJson } from "./cli/ui/output.js";
+import { withSuppressedLogs } from "./util/log.js";
 import {
   addLocalSkill,
   auditRepo,
@@ -19,9 +21,13 @@ import {
   listConfiguredProfiles,
   resolveCapabilities,
   syncProfiles,
-  type AddLocalSkillResult
+  type AddLocalSkillResult,
+  type AuditRepoResult,
+  type ImportAutohubResult,
+  type ResolveCapabilitiesResult,
+  type SyncProfilesResult
 } from "./library.js";
-import { formatResultSync } from "./util/sync-format.js";
+import { compactSyncResult, formatResultSync } from "./util/sync-format.js";
 
 const PACKAGE_NAME = "@autoworks-ai/autovault";
 const REPO = "autoworks-ai/autovault";
@@ -32,19 +38,19 @@ function usageText(): string {
   autovault --version
   autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
-  autovault sync-profiles [--discover] [--link agent=/path/to/skills]
+  autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]
   autovault profiles list [--json]
   autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--repair] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
-  autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset]
-  autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text>
+  autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
+  autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
   autovault serve [--help]
   autovault update [version|latest|stable|main] [--dry-run] [--notes]
   autovault version [--json]
   autovault skill <action> <name>
-  autovault skill list
-  autovault skill search <query> [--top-k N]
+  autovault skill list [--json]
+  autovault skill search <query> [--top-k N] [--json]
   autovault skill which <name> [<action>]
 `;
 }
@@ -265,7 +271,7 @@ function versionInfo(): VersionInfo {
 function printVersion(args: string[]): void {
   const info = versionInfo();
   if (hasFlag(args, "--json")) {
-    process.stdout.write(`${JSON.stringify(info, null, 2)}\n`);
+    writeJson(info);
     return;
   }
   process.stdout.write(`autovault ${info.version}\n`);
@@ -602,6 +608,137 @@ function formatRemoveResult(result: Record<string, unknown>): string {
   return `${lines.join("\n")}\n`;
 }
 
+function formatSyncProfilesResult(result: SyncProfilesResult): string {
+  const theme = makeTheme(process.stdout);
+  const compact = compactSyncResult(result);
+  const profileEntries = Object.entries(compact.profiles).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+  const linkedEntries = Object.entries(compact.linkedRoots).sort(([a], [b]) =>
+    a.localeCompare(b)
+  );
+  const lines: string[] = [];
+  const totalSkills = Object.values(compact.profiles).reduce((sum, count) => sum + count, 0);
+  lines.push("");
+  lines.push(`${badge("sync", theme)} ${theme.style.bold("Profile sync")}`);
+  lines.push(sectionTitle("Summary", theme));
+  lines.push(
+    keyValueRows(
+      [
+        { label: "profiles", value: String(profileEntries.length), status: "ok" },
+        { label: "skills", value: String(totalSkills), status: totalSkills > 0 ? "ok" : "muted" },
+        {
+          label: "warnings",
+          value: String(compact.warningCount),
+          status: compact.warningCount > 0 ? "warn" : "muted"
+        }
+      ],
+      theme
+    )
+  );
+  if (linkedEntries.length > 0) {
+    lines.push("");
+    lines.push(`${badge("links", theme, "dim")} linked roots`);
+    for (const [profile, root] of linkedEntries) {
+      const count = compact.profiles[profile] ?? 0;
+      const statusCounts = compact.statusCounts[profile] ?? {};
+      const statuses = Object.entries(statusCounts)
+        .filter(([, countValue]) => countValue && countValue > 0)
+        .map(([status, countValue]) => `${status}:${countValue}`)
+        .join(", ");
+      lines.push(
+        `  ${theme.style.green(theme.symbol.check)} ${truncateCliText(profile, 48)} ${theme.style.dim(root)} (${count} skill${count === 1 ? "" : "s"}${statuses ? `; ${statuses}` : ""})`
+      );
+    }
+  }
+  if (result.warnings.length > 0) {
+    lines.push("");
+    lines.push(`${badge("warn", theme, "warn")} warnings`);
+    lines.push(bulletList(result.warnings.map((warning) => truncateCliText(warning, 160)), theme));
+  }
+  lines.push("");
+  lines.push(`${theme.style.dim("next")} ${hostRestartGuidance()[0]}`);
+  lines.push(`${theme.style.dim("next")} ${hostRestartGuidance()[1]}`);
+  return `${lines.join("\n")}\n`;
+}
+
+function formatImportAutohubResult(result: ImportAutohubResult): string {
+  const theme = makeTheme(process.stdout);
+  const lines: string[] = [];
+  lines.push("");
+  lines.push(`${badge("capabilities", theme)} ${theme.style.bold("AutoHub capability import")}`);
+  lines.push(sectionTitle("Import receipt", theme));
+  lines.push(
+    keyValueRows(
+      [
+        { label: "profiles", value: String(result.profiles), status: "ok" },
+        { label: "tool groups", value: String(result.toolGroups), status: "ok" },
+        { label: "context rules", value: String(result.contextRules), status: "ok" },
+        { label: "mcp servers", value: String(result.mcpServers), status: "muted" },
+        {
+          label: "warnings",
+          value: String(result.warnings.length),
+          status: result.warnings.length > 0 ? "warn" : "muted"
+        }
+      ],
+      theme
+    )
+  );
+  if (result.warnings.length > 0) {
+    lines.push("");
+    lines.push(`${badge("warn", theme, "warn")} warnings`);
+    lines.push(bulletList(result.warnings.map((warning) => truncateCliText(warning, 160)), theme));
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatResolveResult(result: ResolveCapabilitiesResult): string {
+  const theme = makeTheme(process.stdout);
+  const lines: string[] = [];
+  const toolNames = result.tools.map((tool) => tool.pattern);
+  const skillNames = result.skills.map((skill) => skill.name);
+  const serverNames = result.mcp_servers.map((server) => {
+    const env = server.env_required.length > 0 ? ` env:${server.env_required.join(",")}` : "";
+    return `${server.name}${env}`;
+  });
+  lines.push("");
+  lines.push(`${badge("resolve", theme)} ${theme.style.bold("Capability resolution")}`);
+  lines.push(sectionTitle("Matches", theme));
+  lines.push(
+    keyValueRows(
+      [
+        {
+          label: "groups",
+          value: joinCliList(result.matched_groups, { maxItemLength: 48, maxItems: 10 }),
+          status: result.matched_groups.length > 0 ? "ok" : "muted"
+        },
+        {
+          label: "tools",
+          value: joinCliList(toolNames, { maxItemLength: 64, maxItems: 8 }),
+          status: toolNames.length > 0 ? "ok" : "muted"
+        },
+        {
+          label: "skills",
+          value: joinCliList(skillNames, { maxItemLength: 48, maxItems: 8 }),
+          status: skillNames.length > 0 ? "ok" : "muted"
+        },
+        {
+          label: "servers",
+          value: joinCliList(serverNames, { maxItemLength: 80, maxItems: 6 }),
+          status: serverNames.length > 0 ? "ok" : "muted"
+        },
+        { label: "cache", value: result.cache_key.slice(0, 12), status: "muted" }
+      ],
+      theme
+    )
+  );
+  return `${lines.join("\n")}\n`;
+}
+
+function formatAuditRepoResult(result: AuditRepoResult): string {
+  return formatAuditRepoMarkdown(result);
+}
+
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
   if (!command) usage();
@@ -628,23 +765,23 @@ async function main(): Promise<void> {
       profileRoots[agent] = root;
       i += 1;
     }
-    process.stdout.write(
-      `${JSON.stringify(
-        await syncProfiles({ profileRoots, discover: hasFlag(args, "--discover") }),
-        null,
-        2
-      )}\n`
+    const result = await withSuppressedLogs(() =>
+      syncProfiles({ profileRoots, discover: hasFlag(args, "--discover") })
     );
-    for (const line of hostRestartGuidance()) process.stderr.write(`${line}\n`);
+    if (hasFlag(args, "--json")) {
+      writeJson(result);
+    } else {
+      process.stdout.write(formatSyncProfilesResult(result));
+    }
     return;
   }
 
   if (command === "profiles") {
     const [subcommand, ...profileArgs] = args;
     if (subcommand !== "list") usage();
-    const result = await listConfiguredProfiles();
+    const result = await withSuppressedLogs(() => listConfiguredProfiles());
     if (hasFlag(profileArgs, "--json")) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      writeJson(result);
     } else {
       process.stdout.write(formatProfilesList(result));
     }
@@ -676,15 +813,17 @@ async function main(): Promise<void> {
       skillDir = arg;
     }
     if (!skillDir) fail("autovault add-local requires a local skill directory or SKILL.md path.");
-    const result = await addLocalSkill({
-      skillDir,
-      source,
-      syncProfiles: hasFlag(args, "--sync-profiles"),
-      profileRoots,
-      discoverProfileRoots: hasFlag(args, "--sync-profiles")
-    });
+    const result = await withSuppressedLogs(() =>
+      addLocalSkill({
+        skillDir,
+        source,
+        syncProfiles: hasFlag(args, "--sync-profiles"),
+        profileRoots,
+        discoverProfileRoots: hasFlag(args, "--sync-profiles")
+      })
+    );
     if (hasFlag(args, "--json")) {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      writeJson(result);
     } else {
       process.stdout.write(formatAddLocalResult(result, skillDir));
     }
@@ -719,14 +858,16 @@ async function main(): Promise<void> {
       name = arg;
     }
     if (!name) usage();
-    const result = await deleteSkill({
-      name,
-      profile_roots: profileRoots,
-      discover_profile_roots: discoverProfileRoots
-    });
+    const result = await withSuppressedLogs(() =>
+      deleteSkill({
+        name,
+        profile_roots: profileRoots,
+        discover_profile_roots: discoverProfileRoots
+      })
+    );
     const output = formatResultSync(result, false);
     if (hasFlag(args, "--json")) {
-      process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
+      writeJson(output);
     } else {
       process.stdout.write(formatRemoveResult(output));
     }
@@ -735,14 +876,11 @@ async function main(): Promise<void> {
 
   if (command === "audit-repo") {
     const repo = readFlag(args, "--repo");
-    const format = readFlag(args, "--format") ?? "json";
+    const format = readFlag(args, "--format") ?? "markdown";
     if (!repo || !["json", "markdown"].includes(format)) usage();
     const result = await auditRepo({ repo });
-    if (format === "markdown") {
-      process.stdout.write(formatAuditRepoMarkdown(result));
-    } else {
-      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    }
+    if (format === "json") writeJson(result);
+    else process.stdout.write(formatAuditRepoResult(result));
     return;
   }
 
@@ -754,17 +892,18 @@ async function main(): Promise<void> {
       mcpServersPath: readFlag(args, "--mcp-servers"),
       reset: hasFlag(args, "--reset")
     });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    if (hasFlag(args, "--json")) writeJson(result);
+    else process.stdout.write(formatImportAutohubResult(result));
     return;
   }
 
   if (command === "skill") {
-    await runSkillCommand(args);
+    await withSuppressedLogs(() => runSkillCommand(args));
     return;
   }
 
   if (command === "doctor") {
-    await runDoctorCommand(args);
+    await withSuppressedLogs(() => runDoctorCommand(args));
     return;
   }
 
@@ -773,24 +912,29 @@ async function main(): Promise<void> {
     const platform = readFlag(args, "--platform");
     const query = readFlag(args, "--query");
     if (!caller_id || !platform || !query) usage();
-    const result = await resolveCapabilities({
-      caller_id,
-      platform,
-      query,
-      channel: readFlag(args, "--channel")
-    });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    const result = await withSuppressedLogs(() =>
+      resolveCapabilities({
+        caller_id,
+        platform,
+        query,
+        channel: readFlag(args, "--channel")
+      })
+    );
+    if (hasFlag(args, "--json")) writeJson(result);
+    else process.stdout.write(formatResolveResult(result));
     return;
   }
 
   if (command === "setup") {
     const { runSetup } = await import("./cli/setup.js");
     try {
-      await runSetup({
-        json: hasFlag(args, "--json"),
-        review: hasFlag(args, "--review"),
-        advanced: hasFlag(args, "--advanced")
-      });
+      await withSuppressedLogs(() =>
+        runSetup({
+          json: hasFlag(args, "--json"),
+          review: hasFlag(args, "--review"),
+          advanced: hasFlag(args, "--advanced")
+        })
+      );
     } catch (error) {
       const name = (error as { name?: string })?.name;
       if (name === "NoTtyError") {

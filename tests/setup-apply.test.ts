@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { resetConfigCache } from "../src/config.js";
 import { applyDecisions } from "../src/cli/setup/apply.js";
 import { renderFinalSummary } from "../src/cli/setup/render.js";
 import { buildReviewPlan } from "../src/cli/setup/review.js";
@@ -50,6 +51,23 @@ async function captureStdout(fn: () => void | Promise<void>): Promise<string> {
     process.stdout.write = originalWrite;
   }
   return stdout;
+}
+
+async function captureStderr(fn: () => void | Promise<void>): Promise<string> {
+  const originalWrite = process.stderr.write;
+  let stderr = "";
+  process.stderr.write = ((chunk: unknown, ...args: unknown[]) => {
+    stderr += Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk);
+    const callback = args.find((arg): arg is () => void => typeof arg === "function");
+    callback?.();
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await fn();
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+  return stderr;
 }
 
 describe("setup apply", () => {
@@ -308,5 +326,90 @@ describe("setup apply", () => {
     const stdout = await captureStdout(() => renderFinalSummary(report, outcomes));
     expect(stdout).toContain("restore");
     expect(stdout).toContain("autovault sync-profiles");
+  });
+
+  it("suppresses structured integrity logs during setup profile refresh", async () => {
+    const previousLogLevel = process.env.AUTOVAULT_LOG_LEVEL;
+    await ensureStorage();
+    await writeSkill(
+      "legacy-installed",
+      skillMd("legacy-installed", "legacy vault body", { agents: ["codex"] })
+    );
+    await fs.rm(path.join(skillDir("legacy-installed"), ".autovault-manifest"), {
+      force: true
+    });
+
+    process.env.AUTOVAULT_LOG_LEVEL = "warn";
+    resetConfigCache();
+
+    const nativeRoot = path.join(currentStorageRoot(), "fake-codex-log-noise");
+    try {
+      const stderr = await captureStderr(async () => {
+        const outcomes = await applyDecisions({
+          mode: "augment",
+          candidates: [],
+          collisions: [],
+          profileRoots: { codex: nativeRoot },
+          discover: false
+        });
+        expect(outcomes.find((outcome) => outcome.action === "sync-profiles")?.ok).toBe(true);
+      });
+
+      expect(stderr).toBe("");
+    } finally {
+      if (previousLogLevel === undefined) {
+        delete process.env.AUTOVAULT_LOG_LEVEL;
+      } else {
+        process.env.AUTOVAULT_LOG_LEVEL = previousLogLevel;
+      }
+      resetConfigCache();
+    }
+  });
+
+  it("summarizes setup profile sync warnings without dumping internal text", async () => {
+    const stdout = await captureStdout(() =>
+      renderFinalSummary(
+        {
+          storagePath: "",
+          bundledRoot: "",
+          discovered: {},
+          skills: [],
+          totals: {
+            identical: 0,
+            "vault-drift": 0,
+            "bundled-drift": 0,
+            "cross-host-drift": 0,
+            "vault-only": 0,
+            "native-only": 0,
+            "bundled-only": 0,
+            invalid: 0
+          },
+          hasFailingValidation: false
+        },
+        [
+          {
+            name: "—",
+            action: "sync-warning",
+            ok: false,
+            detail:
+              'Skipping external profile link for "claude-code/copilot-review" — a user-managed path already exists at "/Users/example/.claude/skills/copilot-review" (/Users/example/.claude/skills/copilot-review). Remove it manually if you want AutoVault to manage this name.'
+          },
+          {
+            name: "—",
+            action: "sync-warning",
+            ok: false,
+            detail:
+              'Skipping external profile link for "claude-code/launch-strategist" — a user-managed path already exists at "/Users/example/.claude/skills/launch-strategist" (/Users/example/.claude/skills/launch-strategist). Remove it manually if you want AutoVault to manage this name.'
+          },
+          { name: "—", action: "sync-profiles", ok: true, detail: "claude-code, codex" }
+        ]
+      )
+    );
+
+    expect(stdout).toContain("2 profile link warnings");
+    expect(stdout).toContain("claude-code/copilot-review");
+    expect(stdout).toContain("claude-code/launch-strategist");
+    expect(stdout).toContain("remove those paths, then run autovault sync-profiles");
+    expect(stdout).not.toContain("Skipping external profile link");
   });
 });

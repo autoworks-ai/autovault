@@ -4,6 +4,7 @@ import { badge, makeLogger, sectionTitle } from "../ui/messages.js";
 import { keyValueRows } from "../ui/table.js";
 import { startSpinner } from "../ui/tasks.js";
 import { makeTheme, padEndVisible, type Theme } from "../ui/theme.js";
+import { truncateCliText } from "../ui/output.js";
 import { KNOWN_PROFILE_ROOTS } from "../../profiles/discovery.js";
 import type { DriftCategory, DriftReport, SkillView } from "./scan.js";
 
@@ -291,20 +292,56 @@ export function renderFinalSummary(
   stream: NodeJS.WriteStream = process.stdout
 ): void {
   const theme = makeTheme(stream);
+  const syncWarnings = applied.filter((entry) => entry.action === "sync-warning");
+  const visibleEntries = applied.filter((entry) => entry.action !== "sync-warning");
   stream.write(`\n${sectionTitle("Applied changes", theme)}\n`);
   if (applied.length === 0) {
     stream.write(`  ${theme.style.dim("No changes applied.")}\n`);
     return;
   }
-  for (const entry of applied) {
-    const mark = entry.ok ? theme.style.green(theme.symbol.check) : theme.style.red(theme.symbol.cross);
+  for (const entry of visibleEntries) {
+    const mark = entry.ok
+      ? theme.style.green(theme.symbol.check)
+      : theme.style.red(theme.symbol.cross);
     const action = padEndVisible(entry.action, 18);
-    const detail = entry.detail ? ` ${theme.style.dim(entry.detail)}` : "";
+    const detail = entry.detail
+      ? ` ${theme.style.dim(truncateCliText(entry.detail, Math.max(48, theme.width - 32)))}`
+      : "";
     stream.write(`  ${mark} ${action} ${entry.name}${detail}\n`);
     if (entry.restoreCommand) {
       stream.write(`      ${theme.style.dim("restore")} ${entry.restoreCommand}\n`);
     }
   }
+  if (syncWarnings.length > 0) {
+    const shown = syncWarnings.slice(0, 5);
+    const hidden = syncWarnings.length - shown.length;
+    stream.write(
+      `  ${theme.style.yellow(theme.symbol.warn)} ${padEndVisible("link-warning", 18)} ${syncWarnings.length} profile link warning${syncWarnings.length === 1 ? "" : "s"}\n`
+    );
+    for (const entry of shown) {
+      stream.write(
+        `      ${theme.style.dim(theme.symbol.bullet)} ${truncateCliText(syncWarningSummary(entry.detail), Math.max(48, theme.width - 8))}\n`
+      );
+    }
+    if (hidden > 0) {
+      stream.write(
+        `      ${theme.style.dim(`+${hidden} more profile warning${hidden === 1 ? "" : "s"}`)}\n`
+      );
+    }
+    stream.write(
+      `      ${theme.style.dim("remove those paths, then run autovault sync-profiles if you want AutoVault to manage them")}\n`
+    );
+  }
+}
+
+function syncWarningSummary(detail: string | undefined): string {
+  const value = detail ?? "profile sync warning";
+  const match =
+    /Skipping external profile link for "([^"]+)" .*user-managed path already exists at "([^"]+)"/.exec(
+      value
+    );
+  if (match) return `${match[1]} kept user-managed path at ${match[2]}`;
+  return value;
 }
 
 export function renderArt(

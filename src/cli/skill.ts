@@ -17,7 +17,12 @@ import { parseFrontmatter } from "../validation/frontmatter.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { verifyFile } from "../util/sign.js";
 import { canonicalRelPath } from "../util/path.js";
+import { withSuppressedLogs } from "../util/log.js";
 import type { SkillBinAction } from "../types.js";
+import { badge, sectionTitle } from "./ui/messages.js";
+import { keyValueRows } from "./ui/table.js";
+import { makeTheme, padEndVisible, visibleLength } from "./ui/theme.js";
+import { joinCliList, truncateCliText, writeJson } from "./ui/output.js";
 
 const RESERVED_ACTIONS = new Set(["list", "search", "which"]);
 const ACTION_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
@@ -61,8 +66,8 @@ function usage(): never {
   process.stderr.write(`Usage:
   autovault skill <action> <name> [args...]
                                       # run bin.<action> declared by skill <name>
-  autovault skill list                # list installed skills and their declared bin actions
-  autovault skill search <query> [--top-k N]
+  autovault skill list [--json]       # list installed skills and their declared bin actions
+  autovault skill search <query> [--top-k N] [--json]
                                       # metadata text search across installed skills
   autovault skill which <name> [<action>]
                                        # print resolved script path(s) without running
@@ -90,7 +95,7 @@ export async function runSkillCommand(argv: string[]): Promise<void> {
   await recoverOrphanBackups();
 
   if (sub === "list") {
-    await listAction();
+    await listAction(rest);
     return;
   }
 
@@ -117,9 +122,14 @@ export async function runSkillCommand(argv: string[]): Promise<void> {
 
 async function searchAction(args: string[]): Promise<void> {
   let topK = 5;
+  let json = false;
   const queryParts: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
     if (arg === "--top-k") {
       const raw = args[i + 1];
       const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
@@ -137,7 +147,11 @@ async function searchAction(args: string[]): Promise<void> {
   const query = queryParts.join(" ").trim();
   if (query.length === 0) usage();
 
-  const result = await searchSkills(query, topK);
+  const result = await withSuppressedLogs(() => searchSkills(query, topK));
+  if (json) {
+    writeJson(result);
+    return;
+  }
   if (result.matches.length === 0) {
     process.stdout.write("No matching skills.\n");
     return;
@@ -156,38 +170,149 @@ async function searchAction(args: string[]): Promise<void> {
 }
 
 function formatSearchField(value: string, maxLength: number): string {
-  const escaped = value.replace(/[\x00-\x1F\x7F]/g, (char) => {
-    switch (char) {
-      case "\n":
-        return "\\n";
-      case "\r":
-        return "\\r";
-      case "\t":
-        return "\\t";
-      default:
-        return `\\x${char.charCodeAt(0).toString(16).padStart(2, "0")}`;
-    }
-  });
-  if (escaped.length <= maxLength) return escaped;
-  return `${escaped.slice(0, Math.max(0, maxLength - 3))}...`;
+  return truncateCliText(value, maxLength);
 }
 
-async function listAction(): Promise<void> {
+type SkillListEntry = {
+  name: string;
+  title?: string;
+  description: string;
+  version: string;
+  tags: string[];
+  category?: string;
+  agents: string[];
+  actions: string[];
+};
+
+type SkillListResult = {
+  skills: SkillListEntry[];
+};
+
+async function skillListResult(): Promise<SkillListResult> {
   await ensureStorage();
   const names = await listInstalledSkillNames();
-  if (names.length === 0) {
-    process.stdout.write("No skills installed.\n");
-    return;
-  }
+  const skills: SkillListEntry[] = [];
   for (const name of names.sort()) {
     const skill = await readSkill(name);
-    const actions = skill ? Object.keys(skill.bin) : [];
-    if (actions.length === 0) {
-      process.stdout.write(`${name}\n`);
+    if (!skill) continue;
+    skills.push({
+      name: skill.name,
+      title: skill.title,
+      description: skill.description,
+      version: skill.version,
+      tags: skill.tags,
+      category: skill.category,
+      agents: skill.agents,
+      actions: Object.keys(skill.bin).sort()
+    });
+  }
+  return { skills };
+}
+
+function formatSkillList(result: SkillListResult): string {
+  const theme = makeTheme(process.stdout);
+  const lines: string[] = [];
+  if (result.skills.length === 0) {
+    return "No skills installed.\n";
+  }
+  const actionCount = result.skills.reduce((sum, skill) => sum + skill.actions.length, 0);
+  const runnable = result.skills.filter((skill) => skill.actions.length > 0);
+  const agents = [
+    ...new Set(result.skills.flatMap((skill) => skill.agents))
+  ].sort((a, b) => a.localeCompare(b));
+  lines.push("");
+  lines.push(`${badge("vault", theme)} ${theme.style.bold("AutoVault skill catalog")}`);
+  lines.push(sectionTitle("Inventory", theme));
+  lines.push(
+    keyValueRows(
+      [
+        {
+          label: "installed",
+          value: `${result.skills.length} skill${result.skills.length === 1 ? "" : "s"}`,
+          status: "ok"
+        },
+        {
+          label: "runnable",
+          value: `${runnable.length} skill${runnable.length === 1 ? "" : "s"}`,
+          status: runnable.length > 0 ? "ok" : "muted"
+        },
+        {
+          label: "actions",
+          value: String(actionCount),
+          status: actionCount > 0 ? "ok" : "muted"
+        },
+        {
+          label: "agents",
+          value: joinCliList(agents, { maxItemLength: 32, maxItems: 8 }),
+          status: "muted"
+        }
+      ],
+      theme
+    )
+  );
+
+  if (runnable.length > 0) {
+    const runnableNameWidth = columnWidth(runnable.map((skill) => skill.name), 28);
+    lines.push("");
+    lines.push(sectionTitle("Runnable actions", theme));
+    for (const skill of runnable) {
+      lines.push(
+        `  ${theme.style.green(theme.symbol.check)} ${padEndVisible(truncateCliText(skill.name, runnableNameWidth), runnableNameWidth)}  ${joinCliList(skill.actions, { maxItemLength: 48 })}`
+      );
+    }
+  }
+
+  lines.push("");
+  lines.push(sectionTitle("All skills", theme));
+  const nameWidth = columnWidth(result.skills.map((skill) => skill.name), 28);
+  const actionWidth = columnWidth(
+    result.skills.map((skill) => actionLabel(skill)),
+    24
+  );
+  const tagWidth = columnWidth(
+    result.skills.map((skill) => joinCliList(skill.tags, { maxItemLength: 24, maxItems: 4 })),
+    28
+  );
+  for (const skill of result.skills) {
+    const hasActions = skill.actions.length > 0;
+    const name = padEndVisible(truncateCliText(skill.name, nameWidth), nameWidth);
+    const actions = padEndVisible(truncateCliText(actionLabel(skill), actionWidth), actionWidth);
+    const tags = padEndVisible(
+      truncateCliText(joinCliList(skill.tags, { maxItemLength: 24, maxItems: 4 }), tagWidth),
+      tagWidth
+    );
+    lines.push(
+      `  ${hasActions ? theme.style.green(theme.symbol.check) : theme.style.dim(theme.symbol.bullet)} ${name}  ${actions}  ${tags}  ${truncateCliText(skill.description, Math.max(48, theme.width - nameWidth - actionWidth - tagWidth - 12))}`
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function actionLabel(skill: SkillListEntry): string {
+  return joinCliList(skill.actions, { maxItemLength: 24, maxItems: 3 });
+}
+
+function columnWidth(values: string[], maxWidth: number): number {
+  const visible = values.map((value) => visibleLength(truncateCliText(value, maxWidth)));
+  return Math.min(maxWidth, Math.max(...visible, 4));
+}
+
+async function listAction(args: string[]): Promise<void> {
+  let json = false;
+  for (const arg of args) {
+    if (arg === "--json") {
+      json = true;
       continue;
     }
-    process.stdout.write(`${name}: ${actions.sort().join(", ")}\n`);
+    usage();
   }
+  const result = await withSuppressedLogs(() => skillListResult());
+  if (json) {
+    writeJson(result);
+    return;
+  }
+  const output = formatSkillList(result);
+  process.stdout.write(output);
 }
 
 async function whichAction(name: string, action?: string): Promise<void> {
