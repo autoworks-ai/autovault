@@ -329,6 +329,7 @@ describe("setup apply", () => {
   });
 
   it("suppresses structured integrity logs during setup profile refresh", async () => {
+    const previousLogLevel = process.env.AUTOVAULT_LOG_LEVEL;
     await ensureStorage();
     await writeSkill(
       "legacy-installed",
@@ -342,18 +343,27 @@ describe("setup apply", () => {
     resetConfigCache();
 
     const nativeRoot = path.join(currentStorageRoot(), "fake-codex-log-noise");
-    const stderr = await captureStderr(async () => {
-      const outcomes = await applyDecisions({
-        mode: "augment",
-        candidates: [],
-        collisions: [],
-        profileRoots: { codex: nativeRoot },
-        discover: false
+    try {
+      const stderr = await captureStderr(async () => {
+        const outcomes = await applyDecisions({
+          mode: "augment",
+          candidates: [],
+          collisions: [],
+          profileRoots: { codex: nativeRoot },
+          discover: false
+        });
+        expect(outcomes.find((outcome) => outcome.action === "sync-profiles")?.ok).toBe(true);
       });
-      expect(outcomes.find((outcome) => outcome.action === "sync-profiles")?.ok).toBe(true);
-    });
 
-    expect(stderr).toBe("");
+      expect(stderr).toBe("");
+    } finally {
+      if (previousLogLevel === undefined) {
+        delete process.env.AUTOVAULT_LOG_LEVEL;
+      } else {
+        process.env.AUTOVAULT_LOG_LEVEL = previousLogLevel;
+      }
+      resetConfigCache();
+    }
   });
 
   it("summarizes setup profile sync warnings without dumping internal text", async () => {

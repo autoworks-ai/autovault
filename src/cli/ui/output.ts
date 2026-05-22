@@ -1,5 +1,9 @@
 export function formatJson(value: unknown): string {
-  return JSON.stringify(value, null, 2) ?? "null";
+  try {
+    return JSON.stringify(value, null, 2) ?? "null";
+  } catch {
+    return "null";
+  }
 }
 
 export function writeJson(

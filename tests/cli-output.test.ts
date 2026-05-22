@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { formatJson } from "../src/cli/ui/output.js";
 import { ensureStorage, writeSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_PATH = path.join(REPO_ROOT, "src/cli.ts");
 const TSX_BIN = path.join(REPO_ROOT, "node_modules/.bin/tsx");
 
@@ -76,7 +77,10 @@ bin:
 
 describe("standardized CLI output", () => {
   it("serializes non-representable top-level JSON values as null", () => {
-    for (const value of [undefined, Symbol("json"), () => undefined]) {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    for (const value of [undefined, Symbol("json"), () => undefined, BigInt(1), circular]) {
       expect(formatJson(value)).toBe("null");
       expect(JSON.parse(formatJson(value))).toBeNull();
     }
