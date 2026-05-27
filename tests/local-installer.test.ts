@@ -321,6 +321,101 @@ describe("local installer", () => {
     await expect(readSkillManifest("cli-undisclosed-resources")).resolves.toBeNull();
   });
 
+  it("returns repair suggestions for invalid agents values", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "invalid-agents-local");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sourceDir, "SKILL.md"),
+      `---
+name: invalid-agents-local
+description: A description that is intentionally long enough to satisfy schema checks.
+agents: codex
+metadata:
+  version: "1.0.0"
+---
+
+# invalid-agents-local
+`,
+      "utf-8"
+    );
+
+    const result = await runCli(["add-local", sourceDir, "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout) as AddLocalSkillResult & {
+      repair?: { fields: Array<{ path: string; reason: string }> };
+    };
+    expect(parsed.success).toBe(false);
+    expect(parsed.repair?.fields).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: "agents", reason: "invalid" })])
+    );
+    await expect(readSkillManifest("invalid-agents-local")).resolves.toBeNull();
+  });
+
+  it("suggests a schema-safe repair name from dot-prefixed bundle directories", async () => {
+    const sourceDir = path.join(currentStorageRoot(), ".cursor");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sourceDir, "SKILL.md"),
+      `---
+description: A description that is intentionally long enough to satisfy schema checks.
+agents: [cursor]
+metadata:
+  version: "1.0.0"
+---
+
+# missing name
+`,
+      "utf-8"
+    );
+
+    const result = await runCli(["add-local", sourceDir, "--json"]);
+
+    expect(result.exitCode).toBe(1);
+    const parsed = JSON.parse(result.stdout) as AddLocalSkillResult & {
+      repair?: { fields: Array<{ path: string; reason: string; suggested?: string }> };
+    };
+    expect(parsed.success).toBe(false);
+    expect(parsed.repair?.fields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "name", reason: "missing", suggested: "cursor" })
+      ])
+    );
+    await expect(readSkillManifest("cursor")).resolves.toBeNull();
+  });
+
+  it("does not offer source writeback for bundles under a symlinked vault skills path", async () => {
+    const realStorage = path.join(currentStorageRoot(), "real-storage");
+    const linkedStorage = path.join(currentStorageRoot(), "linked-storage");
+    await fs.mkdir(path.join(realStorage, "skills"), { recursive: true });
+    await fs.symlink(realStorage, linkedStorage, "dir");
+    const sourceDir = path.join(realStorage, "skills", "vaulted-local");
+    await writeLocalSkill(sourceDir, {
+      name: "vaulted-local",
+      agents: null
+    });
+
+    const previousStoragePath = process.env.AUTOVAULT_STORAGE_PATH;
+    process.env.AUTOVAULT_STORAGE_PATH = linkedStorage;
+    resetConfigCache();
+    try {
+      const result = await addLocalSkill({ skillDir: sourceDir });
+
+      expect(result.success).toBe(false);
+      expect(result.repair).toMatchObject({
+        available: true,
+        canWriteBack: false
+      });
+    } finally {
+      if (previousStoragePath === undefined) {
+        delete process.env.AUTOVAULT_STORAGE_PATH;
+      } else {
+        process.env.AUTOVAULT_STORAGE_PATH = previousStoragePath;
+      }
+      resetConfigCache();
+    }
+  });
+
   it("infers missing agents from a legacy Claude-style skill root only during sync", async () => {
     const fakeHome = path.join(currentStorageRoot(), "legacy-home");
     const claudeRoot = path.join(fakeHome, ".agents", "skills");

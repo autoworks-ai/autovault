@@ -466,7 +466,7 @@ metadata:
 
   it("doctor gives source-bundle reinstall guidance for local signature tampering", async () => {
     const name = "local-source-guidance";
-    const sourceDir = path.join(currentStorageRoot(), "source-bundles", name);
+    const sourceDir = path.join(currentStorageRoot(), "source bundles", name);
     await fs.mkdir(sourceDir, { recursive: true });
     await fs.writeFile(path.join(sourceDir, "SKILL.md"), simpleSkill(name), "utf-8");
     await writeSkill(name, simpleSkill(name), [], {
@@ -487,7 +487,7 @@ metadata:
     const actions = parsed.skills[0]?.actions.join("\n") ?? "";
     expect(actions).toContain("The vaulted copy was edited after signing");
     expect(actions).toContain("Do not edit");
-    expect(actions).toContain(`autovault add-local ${sourceDir} --sync-profiles`);
+    expect(actions).toContain(`autovault add-local '${sourceDir}' --sync-profiles`);
     expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 

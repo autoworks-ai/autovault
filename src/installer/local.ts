@@ -396,16 +396,21 @@ function undisclosedResourcePathsFrom(errors: string[]): string[] {
 }
 
 function safeDefaultName(bundleRoot: string): string {
-  return path.basename(bundleRoot).replace(/[^a-zA-Z0-9-_]/g, "-") || "local-skill";
+  const candidate = path
+    .basename(bundleRoot)
+    .replace(/[^a-zA-Z0-9-_]/g, "-")
+    .replace(/^[^a-zA-Z0-9]+/, "");
+  return /^[a-zA-Z0-9][a-zA-Z0-9-_]*$/.test(candidate) ? candidate : "local-skill";
 }
 
 function missingOrEmptyString(value: unknown): boolean {
   return typeof value !== "string" || value.trim().length === 0;
 }
 
-function canWriteBack(bundleRoot: string): boolean {
-  const vaultSkillsPath = path.resolve(loadConfig().storagePath, "skills");
-  return !isSameOrInside(path.resolve(bundleRoot), vaultSkillsPath);
+async function canWriteBack(bundleRoot: string): Promise<boolean> {
+  const vaultSkillsPath = await normalizePathForComparison(path.join(loadConfig().storagePath, "skills"));
+  const normalizedBundleRoot = await normalizePathForComparison(bundleRoot);
+  return !isSameOrInside(normalizedBundleRoot, vaultSkillsPath);
 }
 
 function frontmatterPreview(skillMd: string): string {
@@ -438,7 +443,7 @@ export async function buildLocalRepairProposal(
     profileContext,
     resourcePaths: [] as string[],
     sourcePath: path.join(bundle.root, "SKILL.md"),
-    canWriteBack: canWriteBack(bundle.root)
+    canWriteBack: await canWriteBack(bundle.root)
   };
 
   if (validation.securityFlags.length > 0) {
@@ -454,8 +459,14 @@ export async function buildLocalRepairProposal(
 
   if (!Object.prototype.hasOwnProperty.call(data, "agents")) {
     base.fields.push({ path: "agents", reason: "missing", suggested: suggestedAgents });
-  } else if (Array.isArray(data.agents) && data.agents.length === 0) {
-    base.fields.push({ path: "agents", reason: "empty", suggested: suggestedAgents });
+  } else if (Array.isArray(data.agents)) {
+    if (data.agents.length === 0) {
+      base.fields.push({ path: "agents", reason: "empty", suggested: suggestedAgents });
+    } else if (data.agents.some((agent) => typeof agent !== "string" || agent.trim().length === 0)) {
+      base.fields.push({ path: "agents", reason: "invalid", suggested: suggestedAgents });
+    }
+  } else {
+    base.fields.push({ path: "agents", reason: "invalid", suggested: suggestedAgents });
   }
 
   if (missingOrEmptyString(data.name)) {

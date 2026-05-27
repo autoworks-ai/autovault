@@ -232,6 +232,66 @@ describe("add-local interactive repair", () => {
     });
   });
 
+  it("prompts for invalid agents and writes the corrected agents back", async () => {
+    const sourceDir = path.join(currentStorageRoot(), "interactive-invalid-agents");
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(
+      path.join(sourceDir, "SKILL.md"),
+      `---
+name: interactive-invalid-agents
+description: A description that is intentionally long enough to satisfy schema checks.
+agents: codex
+metadata:
+  version: "1.0.0"
+---
+
+# interactive-invalid-agents
+`,
+      "utf-8"
+    );
+    const stdout = memoryStream();
+    const stderr = memoryStream();
+    const multiselect = vi.fn(async () => ["codex"]);
+    const confirm = vi.fn(async () => true);
+
+    vi.doMock("@clack/prompts", () => ({
+      cancel: vi.fn(),
+      confirm,
+      isCancel: () => false,
+      multiselect,
+      note: vi.fn(),
+      select: vi.fn(),
+      selectKey: vi.fn(),
+      text: vi.fn()
+    }));
+    vi.doMock("../src/cli/ui/tty.js", () => ({
+      NoTtyError: class NoTtyError extends Error {},
+      isTtyAvailable: () => true,
+      openTtyStreams: () => ({
+        input: new Readable({ read() {} }),
+        output: stdout.stream,
+        close: vi.fn()
+      })
+    }));
+
+    const { runAddLocalCommand } = await import("../src/cli/add-local.js");
+    await runAddLocalCommand([sourceDir], {
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      exit: (code) => {
+        throw new Error(`unexpected exit ${code}`);
+      }
+    });
+
+    expect(multiselect).toHaveBeenCalled();
+    expect(confirm).toHaveBeenCalled();
+    const repaired = parseFrontmatter(await fs.readFile(path.join(sourceDir, "SKILL.md"), "utf-8"));
+    expect(repaired.data.agents).toEqual(["codex"]);
+    await expect(verifyInstalledIntegrity("interactive-invalid-agents")).resolves.toMatchObject({
+      kind: "ok"
+    });
+  });
+
   it("prompts to repair undisclosed resources, writes the manifest back, and installs signed bytes", async () => {
     const sourceDir = path.join(currentStorageRoot(), "interactive-undisclosed-resources");
     await writeLocalSkillWithUndisclosedResources(sourceDir, {

@@ -76,8 +76,9 @@ export function synthesizeSkillFrontmatter(
     (input.agents?.length ?? 0) > 0 &&
     (!Object.prototype.hasOwnProperty.call(frontmatter, "agents") ||
       (input.replaceEmptyAgents === true &&
-        Array.isArray(frontmatter.agents) &&
-        frontmatter.agents.length === 0))
+        (!Array.isArray(frontmatter.agents) ||
+          frontmatter.agents.length === 0 ||
+          frontmatter.agents.some((agent) => typeof agent !== "string" || agent.trim().length === 0))))
   ) {
     inferredAgents.push(...input.agents!);
     frontmatter.agents = inferredAgents;

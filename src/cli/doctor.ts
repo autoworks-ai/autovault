@@ -116,10 +116,14 @@ function hasSignatureInvalidMismatch(status: SkillIntegrityStatus): boolean {
   );
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function signatureInvalidGuidance(name: string, source: SkillSourceStatus): string {
   const sourcePath = localSourceIdentifier(source);
   const sourceGuidance = sourcePath
-    ? `Fix by editing the original source bundle and running:\n  autovault add-local ${sourcePath} --sync-profiles`
+    ? `Fix by editing the original source bundle and running:\n  autovault add-local ${shellQuote(sourcePath)} --sync-profiles`
     : "Fix by editing the original source bundle and reinstalling through autovault add-local.";
   return [
     "The vaulted copy was edited after signing. Do not edit ~/.autovault/skills directly.",
