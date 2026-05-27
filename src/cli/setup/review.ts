@@ -1,9 +1,6 @@
-import matter from "gray-matter";
 import { collectLocalSkillBundle, type LocalSkillResource } from "../../installer/local.js";
-import { canonicalRelPath } from "../../util/path.js";
 import { badge } from "../ui/messages.js";
 import { makeTheme, padEndVisible } from "../ui/theme.js";
-import { parseFrontmatter } from "../../validation/frontmatter.js";
 import { synthesizeSkillFrontmatter } from "../../validation/frontmatter-synthesis.js";
 import { validateSkillInput } from "../../validation/index.js";
 import type { SkillSourceView, SkillView } from "./scan.js";
@@ -89,65 +86,19 @@ function resourcePathsFrom(errors: string[]): string[] {
     .filter((path): path is string => Boolean(path));
 }
 
-function declaredResourcePaths(data: Record<string, unknown>): Set<string> {
-  const declared = new Set<string>();
-  if (Array.isArray(data.resources)) {
-    for (const raw of data.resources as unknown[]) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const resourcePath = (raw as Record<string, unknown>).path;
-      if (typeof resourcePath === "string" && resourcePath.length > 0) {
-        declared.add(canonicalRelPath(resourcePath) || resourcePath);
-      }
-    }
-  }
-  if (typeof data.bin === "object" && data.bin !== null) {
-    for (const raw of Object.values(data.bin as Record<string, unknown>)) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const command = (raw as Record<string, unknown>).command;
-      if (typeof command === "string" && command.length > 0) {
-        declared.add(canonicalRelPath(command) || command);
-      }
-    }
-  }
-  return declared;
-}
-
 function synthesizeResourceRepair(
   skillMd: string,
   resources: LocalSkillResource[],
   inferredAgents: string[] | undefined
 ): { skillMd: string; declaredResources: string[] } {
-  const firstPass = synthesizeSkillFrontmatter(skillMd, {
+  const synthesized = synthesizeSkillFrontmatter(skillMd, {
     resources,
-    agents: inferredAgents
+    agents: inferredAgents,
+    appendMissingResources: true
   });
-  const parsed = parseFrontmatter(firstPass.skillMd);
-  const frontmatter = { ...parsed.data };
-  const declared = declaredResourcePaths(frontmatter);
-  const existingResources = Array.isArray(frontmatter.resources)
-    ? [...(frontmatter.resources as unknown[])]
-    : [];
-  const declaredResources: string[] = [];
-
-  for (const resource of resources) {
-    const resourcePath = canonicalRelPath(resource.path) || resource.path;
-    if (declared.has(resourcePath)) continue;
-    existingResources.push({ path: resourcePath, type: "file" });
-    declared.add(resourcePath);
-    declaredResources.push(resourcePath);
-  }
-
-  if (firstPass.inferredResources.length > 0) {
-    declaredResources.push(...firstPass.inferredResources.map((resource) => resource.path));
-  }
-  if (declaredResources.length === 0) {
-    return { skillMd: firstPass.skillMd, declaredResources };
-  }
-
-  frontmatter.resources = existingResources;
   return {
-    skillMd: matter.stringify(`${parsed.content.trimEnd()}\n`, frontmatter).replace(/\n+$/, "\n"),
-    declaredResources
+    skillMd: synthesized.skillMd,
+    declaredResources: synthesized.inferredResources.map((resource) => resource.path)
   };
 }
 

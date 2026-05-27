@@ -789,45 +789,8 @@ async function main(): Promise<void> {
   }
 
   if (command === "add-local") {
-    let skillDir: string | undefined;
-    let source: string | undefined;
-    const profileRoots: Record<string, string> = {};
-    for (let i = 0; i < args.length; i += 1) {
-      const arg = args[i];
-      if (arg === "--source") {
-        source = args[i + 1];
-        if (!source) fail("autovault add-local --source requires a provenance value.");
-        i += 1;
-        continue;
-      }
-      if (arg === "--link") {
-        const value = args[i + 1];
-        const [agent, root] = parseProfileLink(value);
-        profileRoots[agent] = root;
-        i += 1;
-        continue;
-      }
-      if (arg === "--sync-profiles" || arg === "--json") continue;
-      if (arg.startsWith("-")) usage();
-      if (skillDir) usage();
-      skillDir = arg;
-    }
-    if (!skillDir) fail("autovault add-local requires a local skill directory or SKILL.md path.");
-    const result = await withSuppressedLogs(() =>
-      addLocalSkill({
-        skillDir,
-        source,
-        syncProfiles: hasFlag(args, "--sync-profiles"),
-        profileRoots,
-        discoverProfileRoots: hasFlag(args, "--sync-profiles")
-      })
-    );
-    if (hasFlag(args, "--json")) {
-      writeJson(result);
-    } else {
-      process.stdout.write(formatAddLocalResult(result, skillDir));
-    }
-    if (!result.success) process.exit(1);
+    const { runAddLocalCommand } = await import("./cli/add-local.js");
+    await runAddLocalCommand(args);
     return;
   }
 

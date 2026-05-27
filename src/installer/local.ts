@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import matter from "gray-matter";
 import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config.js";
@@ -43,13 +44,53 @@ export type AddLocalSkillInput = {
   profileRoots?: Record<string, string>;
   discoverProfileRoots?: boolean;
   inferredAgents?: string[];
+  skillMdOverride?: string;
 };
+
+export type LocalRepairField = {
+  path: "agents" | "name" | "description" | "metadata.version" | "resources";
+  reason: "missing" | "empty" | "invalid" | "defaulted";
+  suggested?: string | string[];
+};
+
+export type LocalRepairProfileContext = {
+  agent: string;
+  root: string;
+  label: string;
+  matched: boolean;
+  source: "configured" | "discovered" | "explicit" | "fallback" | "path";
+};
+
+export type LocalRepairProposal =
+  | {
+      available: true;
+      reason: "frontmatter";
+      fields: LocalRepairField[];
+      suggestedAgents: string[];
+      agentChoices: string[];
+      profileContext: LocalRepairProfileContext[];
+      resourcePaths: string[];
+      sourcePath: string;
+      canWriteBack: boolean;
+    }
+  | {
+      available: false;
+      reason: "security" | "resources" | "unsupported" | "parse";
+      fields: LocalRepairField[];
+      suggestedAgents: string[];
+      agentChoices: string[];
+      profileContext: LocalRepairProfileContext[];
+      resourcePaths: string[];
+      sourcePath: string;
+      canWriteBack: boolean;
+    };
 
 export type AddLocalSkillResult = {
   success: boolean;
   name: string;
   validation: ReturnType<typeof validateSkillInput>;
   warnings: string[];
+  repair?: LocalRepairProposal;
   source?: SkillSource;
   bundleRoot?: string;
   sourceInferred?: boolean;
@@ -244,6 +285,7 @@ type AgentRootCandidate = {
   agent: string;
   root: string;
   label: string;
+  source: LocalRepairProfileContext["source"];
 };
 
 async function existingClaudeFallbackRoots(): Promise<AgentRootCandidate[]> {
@@ -252,12 +294,14 @@ async function existingClaudeFallbackRoots(): Promise<AgentRootCandidate[]> {
     {
       agent: "claude-code",
       root: path.join(home, ".claude", "skills"),
-      label: "~/.claude/skills"
+      label: "~/.claude/skills",
+      source: "fallback"
     },
     {
       agent: "claude-code",
       root: path.join(home, ".agents", "skills"),
-      label: "~/.agents/skills"
+      label: "~/.agents/skills",
+      source: "fallback"
     }
   ];
   const existing: AgentRootCandidate[] = [];
@@ -275,20 +319,190 @@ async function existingClaudeFallbackRoots(): Promise<AgentRootCandidate[]> {
 async function agentInferenceCandidates(input: AddLocalSkillInput): Promise<AgentRootCandidate[]> {
   const config = loadConfig();
   const candidates: AgentRootCandidate[] = [];
-  const addRoots = (roots: Record<string, string>, label: string): void => {
+  const addRoots = (
+    roots: Record<string, string>,
+    label: string,
+    source: LocalRepairProfileContext["source"]
+  ): void => {
     for (const [agent, root] of Object.entries(roots)) {
-      candidates.push({ agent, root, label });
+      candidates.push({ agent, root, label, source });
     }
   };
 
   if (input.discoverProfileRoots) {
-    addRoots(await discoverProfileRoots(), "discovered profile root");
+    addRoots(await discoverProfileRoots(), "discovered profile root", "discovered");
   }
-  addRoots(config.profileRoots, "configured profile root");
-  addRoots(input.profileRoots ?? {}, "explicit profile root");
+  addRoots(config.profileRoots, "configured profile root", "configured");
+  addRoots(input.profileRoots ?? {}, "explicit profile root", "explicit");
   candidates.push(...(await existingClaudeFallbackRoots()));
 
   return candidates;
+}
+
+const COMMON_AGENT_CHOICES = ["claude-code", "codex", "cursor", "autojack"];
+const UNDISCLOSED_RESOURCE_ERROR = /Bundle includes undisclosed file '([^']+)'/;
+
+async function pathHeuristicCandidates(bundleRoot: string): Promise<AgentRootCandidate[]> {
+  const home = await normalizePathForComparison(os.homedir());
+  const normalizedBundleRoot = await normalizePathForComparison(bundleRoot);
+  const dotRoots: AgentRootCandidate[] = [
+    { agent: "cursor", root: path.join(home, ".cursor"), label: "~/.cursor", source: "path" },
+    { agent: "codex", root: path.join(home, ".codex"), label: "~/.codex", source: "path" },
+    { agent: "claude-code", root: path.join(home, ".claude"), label: "~/.claude", source: "path" },
+    { agent: "claude-code", root: path.join(home, ".agents"), label: "~/.agents", source: "path" },
+    { agent: "autojack", root: path.join(home, ".autojack"), label: "~/.autojack", source: "path" }
+  ];
+  return dotRoots.filter((candidate) => isSameOrInside(normalizedBundleRoot, candidate.root));
+}
+
+async function repairProfileContext(
+  bundleRoot: string,
+  input: AddLocalSkillInput
+): Promise<LocalRepairProfileContext[]> {
+  const normalizedBundleRoot = await normalizePathForComparison(bundleRoot);
+  const allCandidates = [...(await pathHeuristicCandidates(bundleRoot)), ...(await agentInferenceCandidates(input))];
+  const context: LocalRepairProfileContext[] = [];
+  const seen = new Set<string>();
+  for (const candidate of allCandidates) {
+    const normalizedRoot = await normalizePathForComparison(candidate.root);
+    const key = `${candidate.agent}\0${normalizedRoot}\0${candidate.source}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    context.push({
+      agent: candidate.agent,
+      root: path.resolve(candidate.root),
+      label: candidate.label,
+      matched: isSameOrInside(normalizedBundleRoot, normalizedRoot),
+      source: candidate.source
+    });
+  }
+  return context;
+}
+
+function fieldPath(error: string): string {
+  return error.split(":", 1)[0] ?? "";
+}
+
+function undisclosedResourcePathsFrom(errors: string[]): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const error of errors) {
+    const resourcePath = UNDISCLOSED_RESOURCE_ERROR.exec(error)?.[1];
+    if (!resourcePath || seen.has(resourcePath)) continue;
+    seen.add(resourcePath);
+    paths.push(resourcePath);
+  }
+  return paths;
+}
+
+function safeDefaultName(bundleRoot: string): string {
+  return path.basename(bundleRoot).replace(/[^a-zA-Z0-9-_]/g, "-") || "local-skill";
+}
+
+function missingOrEmptyString(value: unknown): boolean {
+  return typeof value !== "string" || value.trim().length === 0;
+}
+
+function canWriteBack(bundleRoot: string): boolean {
+  const vaultSkillsPath = path.resolve(loadConfig().storagePath, "skills");
+  return !isSameOrInside(path.resolve(bundleRoot), vaultSkillsPath);
+}
+
+function frontmatterPreview(skillMd: string): string {
+  const parsed = matter(skillMd);
+  return matter.stringify("", parsed.data).trimEnd();
+}
+
+export function previewSkillFrontmatter(skillMd: string): string {
+  return frontmatterPreview(skillMd);
+}
+
+export async function buildLocalRepairProposal(
+  bundle: LocalSkillBundle,
+  skillMd: string,
+  validation: ReturnType<typeof validateSkillInput>,
+  input: AddLocalSkillInput
+): Promise<LocalRepairProposal | undefined> {
+  if (validation.valid) return undefined;
+
+  const profileContext = await repairProfileContext(bundle.root, input);
+  const matchedAgents = [
+    ...new Set(profileContext.filter((item) => item.matched).map((item) => item.agent))
+  ];
+  const suggestedAgents = matchedAgents.length > 0 ? matchedAgents : ["codex"];
+  const agentChoices = [...new Set([...suggestedAgents, ...COMMON_AGENT_CHOICES])];
+  const base = {
+    fields: [] as LocalRepairField[],
+    suggestedAgents,
+    agentChoices,
+    profileContext,
+    resourcePaths: [] as string[],
+    sourcePath: path.join(bundle.root, "SKILL.md"),
+    canWriteBack: canWriteBack(bundle.root)
+  };
+
+  if (validation.securityFlags.length > 0) {
+    return { available: false, reason: "security", ...base };
+  }
+
+  let data: Record<string, unknown>;
+  try {
+    data = parseFrontmatter(skillMd).data;
+  } catch {
+    return { available: false, reason: "parse", ...base };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(data, "agents")) {
+    base.fields.push({ path: "agents", reason: "missing", suggested: suggestedAgents });
+  } else if (Array.isArray(data.agents) && data.agents.length === 0) {
+    base.fields.push({ path: "agents", reason: "empty", suggested: suggestedAgents });
+  }
+
+  if (missingOrEmptyString(data.name)) {
+    base.fields.push({ path: "name", reason: "missing", suggested: safeDefaultName(bundle.root) });
+  }
+
+  if (missingOrEmptyString(data.description)) {
+    base.fields.push({ path: "description", reason: "missing" });
+  } else if (typeof data.description === "string" && data.description.trim().length < 20) {
+    base.fields.push({ path: "description", reason: "invalid" });
+  }
+
+  const metadata = data.metadata;
+  if (
+    typeof metadata !== "object" ||
+    metadata === null ||
+    Array.isArray(metadata) ||
+    missingOrEmptyString((metadata as Record<string, unknown>).version)
+  ) {
+    base.fields.push({ path: "metadata.version", reason: "defaulted", suggested: "1.0.0" });
+  }
+
+  const resourcePaths = undisclosedResourcePathsFrom(validation.errors);
+  if (resourcePaths.length > 0) {
+    base.resourcePaths = resourcePaths;
+    base.fields.push({ path: "resources", reason: "missing", suggested: resourcePaths });
+  }
+
+  const repairablePaths = new Set(base.fields.map((field) => field.path));
+  const unsupportedErrors = validation.errors.filter((error) => {
+    if (UNDISCLOSED_RESOURCE_ERROR.test(error) && repairablePaths.has("resources")) return false;
+    const path = fieldPath(error);
+    if (path === "agents" && repairablePaths.has("agents")) return false;
+    if (path === "name" && repairablePaths.has("name")) return false;
+    if (path === "description" && repairablePaths.has("description")) return false;
+    if (path === "metadata.version" && repairablePaths.has("metadata.version")) return false;
+    return true;
+  });
+
+  if (unsupportedErrors.length > 0) {
+    return { available: false, reason: "resources", ...base };
+  }
+  const requiredFields = base.fields.filter((field) => field.path !== "metadata.version");
+  if (requiredFields.length === 0) {
+    return { available: false, reason: "unsupported", ...base };
+  }
+  return { available: true, reason: "frontmatter", ...base };
 }
 
 async function inferAgentsForLocalBundle(
@@ -329,6 +543,9 @@ export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocal
   let bundle: LocalSkillBundle;
   try {
     bundle = await collectLocalSkillBundle(input.skillDir);
+    if (input.skillMdOverride !== undefined) {
+      bundle = { ...bundle, skillMd: input.skillMdOverride };
+    }
   } catch (error) {
     if (error instanceof LocalBundleLimitError) {
       return {
@@ -388,11 +605,13 @@ export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocal
   }
   const validation = validateSkillInput(normalizedSkillMd, bundle.resources);
   if (!validation.valid) {
+    const repair = await buildLocalRepairProposal(bundle, normalizedSkillMd, validation, input);
     return {
       success: false,
       name: "",
       validation,
       warnings: [],
+      ...(repair ? { repair } : {}),
       bundleRoot: bundle.root,
       sourceInferred,
       ...(agentInference

@@ -464,6 +464,33 @@ metadata:
     }
   });
 
+  it("doctor gives source-bundle reinstall guidance for local signature tampering", async () => {
+    const name = "local-source-guidance";
+    const sourceDir = path.join(currentStorageRoot(), "source-bundles", name);
+    await fs.mkdir(sourceDir, { recursive: true });
+    await fs.writeFile(path.join(sourceDir, "SKILL.md"), simpleSkill(name), "utf-8");
+    await writeSkill(name, simpleSkill(name), [], {
+      source: "local",
+      identifier: sourceDir,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(simpleSkill(name), [])
+    });
+    await fs.writeFile(path.join(skillDir(name), "SKILL.md"), `${simpleSkill(name)}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      skills: Array<{ actions: string[]; integrity: { kind: string } }>;
+    };
+    expect(parsed.skills[0]?.integrity.kind).toBe("tampered");
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("The vaulted copy was edited after signing");
+    expect(actions).toContain("Do not edit");
+    expect(actions).toContain(`autovault add-local ${sourceDir} --sync-profiles`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
+  });
+
   it("doctor --repair refuses to bless remote-source tampering", async () => {
     const name = "remote-repair";
     await writeSkill(name, simpleSkill(name), [], {

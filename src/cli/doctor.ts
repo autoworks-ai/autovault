@@ -102,7 +102,38 @@ function sourceActions(status: SkillSourceStatus): string[] {
   }
 }
 
-function integrityActions(status: SkillIntegrityStatus): string[] {
+function localSourceIdentifier(status: SkillSourceStatus): string | undefined {
+  if (status.kind !== "present" && status.kind !== "legacy") return undefined;
+  if (status.source.source !== "local") return undefined;
+  if (status.source.identifier.startsWith("local:")) return undefined;
+  return status.source.identifier;
+}
+
+function hasSignatureInvalidMismatch(status: SkillIntegrityStatus): boolean {
+  return (
+    status.kind === "tampered" &&
+    status.mismatches.some((mismatch) => mismatch.reason === "signature_invalid")
+  );
+}
+
+function signatureInvalidGuidance(name: string, source: SkillSourceStatus): string {
+  const sourcePath = localSourceIdentifier(source);
+  const sourceGuidance = sourcePath
+    ? `Fix by editing the original source bundle and running:\n  autovault add-local ${sourcePath} --sync-profiles`
+    : "Fix by editing the original source bundle and reinstalling through autovault add-local.";
+  return [
+    "The vaulted copy was edited after signing. Do not edit ~/.autovault/skills directly.",
+    sourceGuidance,
+    "For intentional local vault edits only, run:",
+    `  autovault doctor ${name} --repair`
+  ].join("\n");
+}
+
+function integrityActions(
+  status: SkillIntegrityStatus,
+  source: SkillSourceStatus,
+  name: string
+): string[] {
   switch (status.kind) {
     case "ok":
       return [];
@@ -111,6 +142,9 @@ function integrityActions(status: SkillIntegrityStatus): string[] {
     case "manifest_corrupt":
       return ["Reinstall the skill; the signed manifest is corrupt."];
     case "tampered":
+      if (hasSignatureInvalidMismatch(status)) {
+        return [signatureInvalidGuidance(name, source)];
+      }
       return [
         "Reinstall the skill or inspect the listed files; these are not ignored OS/editor metadata artifacts."
       ];
@@ -240,7 +274,7 @@ async function inspectSkill(name: string, clean: boolean, repair: boolean): Prom
   }
   const ignoredArtifacts = clean ? await listIgnoredSkillArtifacts(name) : before;
   const actions = [
-    ...integrityActions(integrity),
+    ...integrityActions(integrity, source, name),
     ...sourceActions(source),
     ...(repairReport.repair_status === "refused" || repairReport.repair_status === "failed"
       ? [repairReport.repair_reason]

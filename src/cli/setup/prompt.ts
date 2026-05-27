@@ -2,6 +2,7 @@ import {
   cancel,
   confirm as clackConfirm,
   isCancel,
+  multiselect,
   select,
   selectKey,
   text
@@ -117,6 +118,28 @@ export async function askSelect<T>(
       options: selectOptions,
       initialValue: options.initialValue,
       maxItems: options.maxItems,
+      input: stream.input,
+      output: stream.output,
+      withGuide: true
+    });
+    handleCancel(selected, stream);
+    return selected;
+  });
+}
+
+export async function askMultiSelect<T>(
+  prompt: string,
+  choices: Array<{ label: string; value: T; hint?: string; disabled?: boolean }>,
+  options: { initialValues?: T[]; maxItems?: number; required?: boolean } = {}
+): Promise<T[]> {
+  if (choices.length === 0) throw new Error("askMultiSelect requires at least one choice");
+  return withPromptStreams(async (stream) => {
+    const selected = await multiselect<T>({
+      message: prompt,
+      options: choices as never,
+      initialValues: options.initialValues,
+      maxItems: options.maxItems,
+      required: options.required,
       input: stream.input,
       output: stream.output,
       withGuide: true

@@ -12,6 +12,7 @@ describe("setup prompt helpers", () => {
       cancel: vi.fn(),
       confirm: vi.fn(),
       isCancel: () => false,
+      multiselect: vi.fn(),
       select: vi.fn(),
       selectKey: vi.fn(async () => undefined),
       text: vi.fn()
