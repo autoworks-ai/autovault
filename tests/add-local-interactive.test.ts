@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -107,7 +107,23 @@ function memoryStream() {
 }
 
 describe("add-local interactive repair", () => {
+  let restoreCi: (() => void) | undefined;
+
+  beforeEach(() => {
+    const previousCi = process.env.CI;
+    process.env.CI = "0";
+    restoreCi = () => {
+      if (previousCi === undefined) {
+        delete process.env.CI;
+      } else {
+        process.env.CI = previousCi;
+      }
+    };
+  });
+
   afterEach(() => {
+    restoreCi?.();
+    restoreCi = undefined;
     vi.resetModules();
     vi.restoreAllMocks();
   });
