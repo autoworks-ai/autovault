@@ -12,6 +12,7 @@ import { bulletList, keyValueRows } from "./cli/ui/table.js";
 import { makeTheme } from "./cli/ui/theme.js";
 import { joinCliList, truncateCliText, writeJson } from "./cli/ui/output.js";
 import { withSuppressedLogs } from "./util/log.js";
+import { compareVersions } from "./util/version-compare.js";
 import {
   addLocalSkill,
   auditRepo,
@@ -58,7 +59,7 @@ function usageText(): string {
 function printUsage(exitCode: number, stream: NodeJS.WritableStream): never {
   if (exitCode === 0) {
     const notice = renderOptionalUpdateNotice();
-    if (notice) stream.write(`${notice}\n`);
+    if (notice) stream.write(notice);
   }
   stream.write(usageText());
   process.exit(exitCode);
@@ -276,23 +277,6 @@ function versionInfo(): VersionInfo {
     storagePath: defaultStoragePath(),
     installMethod: detectInstallMethod(metadata.root)
   };
-}
-
-function parseVersion(version: string): [number, number, number] | null {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function compareVersions(a: string, b: string): number | null {
-  const left = parseVersion(a);
-  const right = parseVersion(b);
-  if (!left || !right) return null;
-  for (let index = 0; index < 3; index += 1) {
-    if (left[index] < right[index]) return -1;
-    if (left[index] > right[index]) return 1;
-  }
-  return 0;
 }
 
 function updateAvailability(

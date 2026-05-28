@@ -115,6 +115,7 @@ describe("autovault top-level CLI UX", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Update available");
+    expect(result.stdout).not.toContain("\n\nUsage:");
     expect(result.stdout).toContain("autovault --version");
     expect(result.stdout).toContain("autovault update [version|latest|stable|main]");
   });
