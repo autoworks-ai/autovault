@@ -57,7 +57,7 @@ function usageText(): string {
 
 function printUsage(exitCode: number, stream: NodeJS.WritableStream): never {
   if (exitCode === 0) {
-    const notice = renderUpdateNotice(versionInfo());
+    const notice = renderOptionalUpdateNotice();
     if (notice) stream.write(`${notice}\n`);
   }
   stream.write(usageText());
@@ -317,6 +317,14 @@ function renderUpdateNotice(info: VersionInfo): string {
     `  ${theme.style.dim("run")} autovault update`,
     `  ${theme.style.dim("notes")} ${RELEASES_URL}/latest`
   ].join("\n") + "\n";
+}
+
+function renderOptionalUpdateNotice(): string {
+  try {
+    return renderUpdateNotice(versionInfo());
+  } catch {
+    return "";
+  }
 }
 
 function printVersion(args: string[]): void {
