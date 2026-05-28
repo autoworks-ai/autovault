@@ -83,6 +83,30 @@ describe("autovault top-level CLI UX", () => {
     expect(parsed.installPath).toBe(REPO_ROOT);
     expect(parsed.storagePath).toBe(currentStorageRoot());
     expect(parsed.installMethod).toBe("source-tree");
+    expect(result.stdout).not.toContain("Update available");
+  });
+
+  it("shows a human update notice when a newer stable version exists", async () => {
+    const currentVersion = await packageVersion();
+    const result = await runCli(["--version"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Update available");
+    expect(result.stdout).toContain(`${currentVersion} -> 9.9.9`);
+    expect(result.stdout).toContain("autovault update");
+    expect(result.stdout).toContain("https://github.com/autoworks-ai/autovault/releases/latest");
+  });
+
+  it("hides the update notice when the installed version is current", async () => {
+    const currentVersion = await packageVersion();
+    const result = await runCli(["--version"], {
+      AUTOVAULT_LATEST_VERSION: currentVersion
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).not.toContain("Update available");
   });
 
   it("prints help to stdout and exits 0", async () => {
@@ -90,6 +114,8 @@ describe("autovault top-level CLI UX", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Update available");
+    expect(result.stdout).not.toContain("\n\nUsage:");
     expect(result.stdout).toContain("autovault --version");
     expect(result.stdout).toContain("autovault update [version|latest|stable|main]");
   });

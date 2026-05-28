@@ -12,6 +12,7 @@ import { bulletList, keyValueRows } from "./cli/ui/table.js";
 import { makeTheme } from "./cli/ui/theme.js";
 import { joinCliList, truncateCliText, writeJson } from "./cli/ui/output.js";
 import { withSuppressedLogs } from "./util/log.js";
+import { compareVersions } from "./util/version-compare.js";
 import {
   addLocalSkill,
   auditRepo,
@@ -56,6 +57,10 @@ function usageText(): string {
 }
 
 function printUsage(exitCode: number, stream: NodeJS.WritableStream): never {
+  if (exitCode === 0) {
+    const notice = renderOptionalUpdateNotice();
+    if (notice) stream.write(notice);
+  }
   stream.write(usageText());
   process.exit(exitCode);
 }
@@ -205,6 +210,12 @@ type VersionInfo = {
   installMethod: string;
 };
 
+type UpdateAvailability = {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+};
+
 function findPackageRoot(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (;;) {
@@ -268,6 +279,38 @@ function versionInfo(): VersionInfo {
   };
 }
 
+function updateAvailability(
+  currentVersion: string,
+  options: { timeoutMs?: number } = {}
+): UpdateAvailability {
+  const latestVersion = latestStableVersion(currentVersion, options);
+  return {
+    currentVersion,
+    latestVersion,
+    updateAvailable: compareVersions(currentVersion, latestVersion) === -1
+  };
+}
+
+function renderUpdateNotice(info: VersionInfo): string {
+  if (process.env.AUTOVAULT_NO_UPDATE_CHECK === "1") return "";
+  const update = updateAvailability(info.version, { timeoutMs: 1_000 });
+  if (!update.updateAvailable) return "";
+  const theme = makeTheme(process.stdout);
+  return [
+    `${theme.style.yellow(theme.symbol.warn)} ${theme.style.bold("Update available")}: ${update.currentVersion} -> ${update.latestVersion}`,
+    `  ${theme.style.dim("run")} autovault update`,
+    `  ${theme.style.dim("notes")} ${RELEASES_URL}/latest`
+  ].join("\n") + "\n";
+}
+
+function renderOptionalUpdateNotice(): string {
+  try {
+    return renderUpdateNotice(versionInfo());
+  } catch {
+    return "";
+  }
+}
+
 function printVersion(args: string[]): void {
   const info = versionInfo();
   if (hasFlag(args, "--json")) {
@@ -275,13 +318,17 @@ function printVersion(args: string[]): void {
     return;
   }
   process.stdout.write(`autovault ${info.version}\n`);
+  process.stdout.write(renderUpdateNotice(info));
 }
 
-function latestStableVersion(currentVersion: string): string {
+function latestStableVersion(
+  currentVersion: string,
+  options: { timeoutMs?: number } = {}
+): string {
   if (process.env.AUTOVAULT_LATEST_VERSION) return process.env.AUTOVAULT_LATEST_VERSION;
   const result = spawnSync("npm", ["view", PACKAGE_NAME, "version", "--silent"], {
     encoding: "utf8",
-    timeout: 15_000
+    timeout: options.timeoutMs ?? 15_000
   });
   const version = result.status === 0 ? result.stdout.trim() : "";
   return version || currentVersion;
