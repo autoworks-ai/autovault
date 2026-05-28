@@ -61,14 +61,37 @@ jobs:
           fi
 
           FILES=$(git diff --name-only "$BEFORE" "$AFTER" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+          echo "Changed files: $FILES"
           echo "files=$FILES" >> "$GITHUB_OUTPUT"
+
+      - name: Verify docs drift app credentials
+        env:
+          DOCS_DRIFT_APP_ID: ${{ secrets.DOCS_DRIFT_APP_ID }}
+          DOCS_DRIFT_APP_PRIVATE_KEY: ${{ secrets.DOCS_DRIFT_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$DOCS_DRIFT_APP_ID" ] || [ -z "$DOCS_DRIFT_APP_PRIVATE_KEY" ]; then
+            echo "::error::DOCS_DRIFT_APP_ID and DOCS_DRIFT_APP_PRIVATE_KEY are required to dispatch autovault-website docs drift."
+            exit 1
+          fi
+
+      - name: Create docs drift app token
+        id: docs_token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DOCS_DRIFT_APP_ID }}
+          private-key: ${{ secrets.DOCS_DRIFT_APP_PRIVATE_KEY }}
+          owner: autoworks-ai
+          repositories: autovault-website
+          permission-contents: write
 
       - name: Check website file-doc mapping
         id: check
         env:
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
-          GH_TOKEN: ${{ secrets.DOCS_DRIFT_TOKEN }}
+          GH_TOKEN: ${{ steps.docs_token.outputs.token }}
         run: |
+          echo "Changed files payload: $CHANGED_FILES"
+
           AUTH_HEADER=()
           if [ -n "${GH_TOKEN:-}" ]; then
             AUTH_HEADER=(-H "Authorization: Bearer $GH_TOKEN")
@@ -107,13 +130,9 @@ jobs:
       - name: Dispatch docs drift workflow
         if: steps.check.outputs.affected != 'none'
         env:
-          GH_TOKEN: ${{ secrets.DOCS_DRIFT_TOKEN }}
+          GH_TOKEN: ${{ steps.docs_token.outputs.token }}
         run: |
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::DOCS_DRIFT_TOKEN is required to dispatch autovault-website docs drift"
-            exit 1
-          fi
-
+          PAYLOAD="$RUNNER_TEMP/docs-drift-payload.json"
           jq -n \
             --arg event_type "docs-drift" \
             --arg source_repo "${{ github.event.repository.full_name }}" \
@@ -134,4 +153,10 @@ jobs:
                 compare_url: $compare_url,
                 reason: $reason
               }
-            }' | gh api repos/autoworks-ai/autovault-website/dispatches --input -
+            }' > "$PAYLOAD"
+
+          echo "Dispatch payload:"
+          jq . "$PAYLOAD"
+
+          gh api repos/autoworks-ai/autovault-website/dispatches --input "$PAYLOAD"
+          echo "Docs drift dispatch accepted for ${{ github.sha }}"
