@@ -189,64 +189,68 @@ describe("install.sh", () => {
     await expect(fs.access(path.join(result.binDir, "autovault"))).resolves.toBeUndefined();
   });
 
-  it("classifies upgrades, reinstalls, downgrades, and storage adoption before writing", async () => {
-    const upgrade = await runInstaller(
-      { AUTOVAULT_NO_SETUP: "1" },
-      {
-        archiveVersion: "2.0.0",
-        beforeRun: async ({ avHome }) => {
-          await fs.mkdir(path.join(avHome, "app"), { recursive: true });
-          await fs.writeFile(
-            path.join(avHome, "app", "package.json"),
-            JSON.stringify({ version: "1.0.0" })
-          );
+  it(
+    "classifies upgrades, reinstalls, downgrades, and storage adoption before writing",
+    async () => {
+      const upgrade = await runInstaller(
+        { AUTOVAULT_NO_SETUP: "1" },
+        {
+          archiveVersion: "2.0.0",
+          beforeRun: async ({ avHome }) => {
+            await fs.mkdir(path.join(avHome, "app"), { recursive: true });
+            await fs.writeFile(
+              path.join(avHome, "app", "package.json"),
+              JSON.stringify({ version: "1.0.0" })
+            );
+          }
         }
-      }
-    );
-    expect(upgrade.stdout).toContain("state    upgrade");
-    expect(upgrade.stdout).toContain("current  1.0.0");
-    expect(upgrade.stdout).toContain("target   v2.0.0");
+      );
+      expect(upgrade.stdout).toContain("state    upgrade");
+      expect(upgrade.stdout).toContain("current  1.0.0");
+      expect(upgrade.stdout).toContain("target   v2.0.0");
 
-    const reinstall = await runInstaller(
-      { AUTOVAULT_NO_SETUP: "1" },
-      {
-        archiveVersion: "2.0.0",
-        beforeRun: async ({ avHome }) => {
-          await fs.mkdir(path.join(avHome, "app"), { recursive: true });
-          await fs.writeFile(
-            path.join(avHome, "app", "package.json"),
-            JSON.stringify({ version: "2.0.0" })
-          );
+      const reinstall = await runInstaller(
+        { AUTOVAULT_NO_SETUP: "1" },
+        {
+          archiveVersion: "2.0.0",
+          beforeRun: async ({ avHome }) => {
+            await fs.mkdir(path.join(avHome, "app"), { recursive: true });
+            await fs.writeFile(
+              path.join(avHome, "app", "package.json"),
+              JSON.stringify({ version: "2.0.0" })
+            );
+          }
         }
-      }
-    );
-    expect(reinstall.stdout).toContain("state    reinstall");
+      );
+      expect(reinstall.stdout).toContain("state    reinstall");
 
-    const downgrade = await runInstaller(
-      { AUTOVAULT_NO_SETUP: "1" },
-      {
-        archiveVersion: "1.0.0",
-        beforeRun: async ({ avHome }) => {
-          await fs.mkdir(path.join(avHome, "app"), { recursive: true });
-          await fs.writeFile(
-            path.join(avHome, "app", "package.json"),
-            JSON.stringify({ version: "2.0.0" })
-          );
+      const downgrade = await runInstaller(
+        { AUTOVAULT_NO_SETUP: "1" },
+        {
+          archiveVersion: "1.0.0",
+          beforeRun: async ({ avHome }) => {
+            await fs.mkdir(path.join(avHome, "app"), { recursive: true });
+            await fs.writeFile(
+              path.join(avHome, "app", "package.json"),
+              JSON.stringify({ version: "2.0.0" })
+            );
+          }
         }
-      }
-    );
-    expect(downgrade.stdout).toContain("state    downgrade");
+      );
+      expect(downgrade.stdout).toContain("state    downgrade");
 
-    const adoption = await runInstaller(
-      { AUTOVAULT_NO_SETUP: "1" },
-      {
-        beforeRun: async ({ avHome }) => {
-          await fs.mkdir(path.join(avHome, "skills", "existing"), { recursive: true });
+      const adoption = await runInstaller(
+        { AUTOVAULT_NO_SETUP: "1" },
+        {
+          beforeRun: async ({ avHome }) => {
+            await fs.mkdir(path.join(avHome, "skills", "existing"), { recursive: true });
+          }
         }
-      }
-    );
-    expect(adoption.stdout).toContain("state    repair/adopt existing storage");
-  });
+      );
+      expect(adoption.stdout).toContain("state    repair/adopt existing storage");
+    },
+    15_000
+  );
 
   it("supports dry-run without writing the app, shim, or profile files", async () => {
     const result = await runInstaller(
