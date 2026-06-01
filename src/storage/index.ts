@@ -22,6 +22,7 @@ const SIGNATURE_FILE = ".autovault-signature";
 const MANIFEST_FILE = ".autovault-manifest";
 const emittedSignatureWarnings = new Set<string>();
 const MAX_EMITTED_SIGNATURE_WARNINGS = 1024;
+const STORAGE_SKILL_DIR_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
 
 // Reserved on-disk filenames a resource MUST NOT canonicalize to. Without this
 // guard a caller-supplied resource named `SKILL.md` would overwrite the
@@ -81,8 +82,26 @@ function skillsDir(): string {
   return path.join(loadConfig().storagePath, "skills");
 }
 
+function safeStorageSkillDirName(name: string): string {
+  if (typeof name !== "string" || name.length === 0) {
+    throw new Error("Invalid skill name");
+  }
+  if (name.includes("/") || name.includes("\\") || name.includes("..")) {
+    throw new Error("Invalid skill name");
+  }
+  const match = STORAGE_SKILL_DIR_PATTERN.exec(name);
+  if (!match || match[0] !== name) {
+    throw new Error("Invalid skill name");
+  }
+  return match[0];
+}
+
 export function skillDir(name: string): string {
-  return path.join(skillsDir(), name);
+  const safeName = safeStorageSkillDirName(name);
+  const root = path.resolve(skillsDir());
+  const target = path.resolve(root, safeName);
+  if (target !== root && target.startsWith(root + path.sep)) return target;
+  throw new Error("Invalid skill name");
 }
 
 export async function ensureStorage(): Promise<void> {

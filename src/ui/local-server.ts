@@ -150,7 +150,7 @@ function installStaticRoutes(
         sameSite: "lax",
         path: "/"
       });
-      res.redirect(req.path || "/");
+      res.redirect(303, "/");
       return;
     }
     next();
@@ -159,13 +159,14 @@ function installStaticRoutes(
   const staticRoot = uiAssets.root;
   const entrypoint = path.join(staticRoot, uiAssets.entrypoint);
   if (fs.existsSync(entrypoint)) {
+    const indexHtml = fs.readFileSync(entrypoint, "utf8");
     app.use(express.static(staticRoot, { index: false }));
     app.use((req, res, next) => {
       if (req.method !== "GET" || !acceptsHtml(req)) {
         next();
         return;
       }
-      res.sendFile(entrypoint);
+      res.type("html").send(indexHtml);
     });
     return;
   }
