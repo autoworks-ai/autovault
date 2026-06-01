@@ -377,7 +377,16 @@ async function readBundle(upstream: StoredEnrolledUpstream, release: SyncRelease
   if (bundlePath !== catalogDir && !bundlePath.startsWith(catalogDir + path.sep)) {
     throw new Error(`Bundle path escapes upstream catalog: ${release.bundle_path}`);
   }
-  const raw = await fs.readFile(bundlePath, "utf-8");
+  const realCatalogDir = await fs.realpath(catalogDir);
+  const realBundlePath = await fs.realpath(bundlePath);
+  if (!isPathWithin(realCatalogDir, realBundlePath)) {
+    throw new Error(`Bundle path escapes upstream catalog: ${release.bundle_path}`);
+  }
+  const stat = await fs.stat(realBundlePath);
+  if (!stat.isFile()) {
+    throw new Error(`Bundle path is not a regular file: ${release.bundle_path}`);
+  }
+  const raw = await fs.readFile(realBundlePath, "utf-8");
   const parsed = syncSkillBundleSchema.safeParse(JSON.parse(raw) as unknown);
   if (!parsed.success) {
     throw new Error(`Invalid sync bundle: ${parsed.error.issues
@@ -385,6 +394,11 @@ async function readBundle(upstream: StoredEnrolledUpstream, release: SyncRelease
       .join("; ")}`);
   }
   return parsed.data;
+}
+
+function isPathWithin(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child);
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
 async function resolveCatalogPath(target: string): Promise<string> {

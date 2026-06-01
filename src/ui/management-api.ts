@@ -20,6 +20,7 @@ import {
 } from "../storage/index.js";
 import type { SkillRecord, SkillSummary } from "../types.js";
 import { resourcePathsForSkill } from "../util/skill-resource-paths.js";
+import { canonicalRelPath } from "../util/path.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { checkUpdates } from "../tools/check-updates.js";
 import { deleteSkill } from "../tools/delete-skill.js";
@@ -463,12 +464,20 @@ function managementContext(options: ManagementApiOptions): Record<string, unknow
     },
     abilities: managementAbilities(options.mode),
     account: managementAccount(options.mode),
-    vault: {
-      mode: config.mode,
-      storage_path: config.storagePath,
-      db_path: config.dbPath
-    },
+    vault: managementVaultContext(options.mode, config),
     compatibility
+  };
+}
+
+function managementVaultContext(
+  mode: ManagementApiOptions["mode"],
+  config: ReturnType<typeof loadConfig>
+): Record<string, unknown> {
+  if (mode === "remote") return { mode: "remote" };
+  return {
+    mode: config.mode,
+    storage_path: config.storagePath,
+    db_path: config.dbPath
   };
 }
 
@@ -609,7 +618,11 @@ async function skillBundle(skill: SkillRecord): Promise<SkillDetailResponse["bun
       for (const resource of result.resources) previewMap.set(resource.path, resource.content);
     }
   }
-  const actionPaths = new Set(Object.values(skill.bin).map((action) => action.command));
+  const actionPaths = new Set(
+    Object.values(skill.bin)
+      .map((action) => canonicalRelPath(action.command))
+      .filter((command) => command.length > 0)
+  );
   return {
     root: "SKILL.md",
     files: [

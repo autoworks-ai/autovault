@@ -18,9 +18,11 @@ import {
   type ResolvedUiBundleAssets
 } from "./bundle.js";
 import { ensureStorage, recoverOrphanBackups } from "../storage/index.js";
+import { MAX_TOTAL_BYTES } from "../util/limits.js";
 
 const SESSION_COOKIE = "autovault_ui_session";
 const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,}$/;
+const MANAGEMENT_JSON_LIMIT_BYTES = MAX_TOTAL_BYTES + 512 * 1024;
 
 export type StartLocalUiServerOptions = {
   port?: number;
@@ -75,7 +77,7 @@ export async function startLocalUiServer(
 
   const app = express();
   app.disable("x-powered-by");
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: MANAGEMENT_JSON_LIMIT_BYTES }));
   app.get("/healthz", (_req, res) => {
     res.json({ ok: true, name: "autovault", mode: "ui" });
   });
