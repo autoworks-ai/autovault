@@ -45,8 +45,10 @@ function usageText(): string {
   autovault doctor [skill-name] [--clean] [--repair] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
+  autovault init <upstream-catalog-or-directory> [--json]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
   autovault serve [--help]
+  autovault ui [--port <n>] [--no-open]
   autovault update [version|latest|stable|main] [--dry-run] [--notes]
   autovault version [--json]
   autovault skill <action> <name>
@@ -96,6 +98,22 @@ Local remote test:
 
 Production example:
   AUTOVAULT_PUBLIC_URL=https://<service>.up.railway.app autovault serve
+`;
+}
+
+function uiHelp(): string {
+  return `Usage:
+  autovault ui [--port <n>] [--no-open] [--offline]
+
+Starts the local AutoVault management dashboard on 127.0.0.1 and protects the
+session with a generated browser token.
+
+Options:
+  --port <n>             Bind to a specific local port. Use 0 to ask the OS for one.
+  --no-open              Print the dashboard URL without opening a browser.
+  --offline              Skip signed remote UI bundle checks.
+  --ui-bundle-url <url>  Fetch a signed UI bundle manifest from this URL.
+  --ui-channel <name>    Select the UI bundle channel. Defaults to stable.
 `;
 }
 
@@ -463,6 +481,7 @@ const TOP_LEVEL_COMMANDS = [
   "audit-repo",
   "doctor",
   "import-autohub",
+  "init",
   "profiles",
   "remove",
   "resolve",
@@ -470,6 +489,7 @@ const TOP_LEVEL_COMMANDS = [
   "setup",
   "skill",
   "sync-profiles",
+  "ui",
   "update",
   "version"
 ];
@@ -907,6 +927,22 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "init") {
+    const target = args.find((arg) => !arg.startsWith("-"));
+    if (!target) usage();
+    const { completeEnrollmentFromTarget } = await import("./sync/local.js");
+    const enrollment = await withSuppressedLogs(() => completeEnrollmentFromTarget(target));
+    if (hasFlag(args, "--json")) {
+      writeJson({ enrollment });
+    } else {
+      process.stdout.write(`AutoVault upstream enrolled: ${enrollment.name}\n`);
+      process.stdout.write(`  id      ${enrollment.id}\n`);
+      process.stdout.write(`  device  ${enrollment.enrollment.device_id}\n`);
+      process.stdout.write(`  status  ${enrollment.enrollment.status}\n`);
+    }
+    return;
+  }
+
   if (command === "skill") {
     await withSuppressedLogs(() => runSkillCommand(args));
     return;
@@ -961,7 +997,76 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "ui") {
+    await runUiCommand(args);
+    return;
+  }
+
   unknownCommand(command);
+}
+
+async function runUiCommand(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(uiHelp());
+    return;
+  }
+  let port = 0;
+  let open = true;
+  let offline = false;
+  let uiBundleManifestUrl: string | undefined;
+  let uiChannel: string | undefined;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--no-open") {
+      open = false;
+      continue;
+    }
+    if (arg === "--offline") {
+      offline = true;
+      continue;
+    }
+    if (arg === "--port") {
+      const raw = args[i + 1];
+      if (!raw || raw.startsWith("-")) usage();
+      const parsed = Number(raw);
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65535) usage();
+      port = parsed;
+      i += 1;
+      continue;
+    }
+    if (arg === "--ui-bundle-url") {
+      const raw = args[i + 1];
+      if (!raw || raw.startsWith("-")) usage();
+      try {
+        new URL(raw);
+      } catch {
+        usage();
+      }
+      uiBundleManifestUrl = raw;
+      i += 1;
+      continue;
+    }
+    if (arg === "--ui-channel") {
+      const raw = args[i + 1];
+      if (!raw || raw.startsWith("-") || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(raw)) usage();
+      uiChannel = raw;
+      i += 1;
+      continue;
+    }
+    usage();
+  }
+
+  const { startLocalUiServer } = await import("./ui/local-server.js");
+  const handle = await startLocalUiServer({ port, open, offline, uiBundleManifestUrl, uiChannel });
+  process.stdout.write(`AutoVault UI ready: ${handle.browserUrl}\n`);
+
+  const shutdown = (signal: NodeJS.Signals): void => {
+    void handle.close().finally(() => {
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
 }
 
 main().catch((error) => {
