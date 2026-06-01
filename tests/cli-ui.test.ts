@@ -10,11 +10,30 @@ describe("CLI UI helpers", () => {
     const theme = makeTheme(process.stdout, { color: "never", symbols: "ascii", width: 60 });
 
     expect(renderVaultMark(theme)).toEqual([
-      " .----. ",
-      " |  | | ",
-      " | O  | ",
-      " '+--+' ",
-      "  |  |  "
+      "  +----------+",
+      "  |    ()    |",
+      "  |    ||    |",
+      "  +----------+",
+      "     |    |"
+    ]);
+  });
+
+  it("renders fixed-width scan/read/admit state frames", () => {
+    const theme = makeTheme(process.stdout, { color: "never", symbols: "ascii", width: 60 });
+
+    expect(renderVaultMark(theme, { state: "scan" })).toEqual([
+      "  +----------+",
+      "  |----------|",
+      "  |    ()    |",
+      "  +----------+",
+      "     |    |"
+    ]);
+    expect(renderVaultMark(theme, { state: "read" })).toEqual([
+      "  +----------+",
+      "  |    ()    |",
+      "  |----------|",
+      "  +----------+",
+      "     |    |"
     ]);
   });
 
@@ -41,6 +60,8 @@ describe("CLI UI helpers", () => {
     const theme = makeTheme(process.stdout, { color: "always", symbols: "ascii" });
 
     expect(theme.style.mint("vault")).toContain("\u001B[38;2;90;214;192m");
+    expect(theme.style.yellow("held")).toContain("\u001B[38;2;232;168;102m");
+    expect(theme.style.red("blocked")).toContain("\u001B[38;2;217;113;113m");
   });
 
   it("prints a stable non-TTY vault message", async () => {
@@ -57,9 +78,9 @@ describe("CLI UI helpers", () => {
     await sayVault("Welcome to AutoVault.", stream);
 
     const output = chunks.join("");
-    expect(output).toContain("[vault] Vault:");
+    expect(output).toContain("[ADMIT] AutoVault:");
     expect(output).toContain("Welcome to AutoVault.");
-    expect(output).not.toContain(" .----. ");
+    expect(output).not.toContain("+----------+");
     expect(output).not.toContain(" | () | ");
     expect(output).not.toContain("'-||-'");
     expect(output).not.toContain("\u001B[");
@@ -79,8 +100,9 @@ describe("CLI UI helpers", () => {
     await renderSetupIntro(stream);
 
     const output = chunks.join("");
-    expect(output).toContain("[vault] Vault:");
-    expect(output).not.toContain(" .----. ");
+    expect(output).toContain("[ADMIT] AutoVault:");
+    expect(output).toContain("review, sign, and admit");
+    expect(output).not.toContain("+----------+");
     expect(output).not.toContain("AutoVault validated");
   });
 });
