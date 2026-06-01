@@ -350,6 +350,33 @@ describe("management API", () => {
     expect(stat.isSymbolicLink()).toBe(true);
   });
 
+  it("returns 400 for invalid named profile config writes", async () => {
+    const handle = await start();
+    const response = await api(handle, "/api/v1/profiles", {
+      method: "PUT",
+      headers: { origin: handle.url },
+      body: JSON.stringify({
+        profiles: [
+          {
+            name: "duplicate",
+            agent: "codex",
+            target: path.join(currentStorageRoot(), "profile-a")
+          },
+          {
+            name: "duplicate",
+            agent: "codex",
+            target: path.join(currentStorageRoot(), "profile-b")
+          }
+        ]
+      })
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Duplicate named profile")
+    });
+  });
+
   it("returns update and permission management data", async () => {
     await writeSkill("updates-skill", skillMd("updates-skill"));
     const db = openCapabilityDb();
@@ -437,6 +464,35 @@ describe("management API", () => {
       await remote.close();
     }
   });
+
+  it("rejects request-controlled file enrollments in remote mode", async () => {
+    const remote = await startRemoteManagementApi();
+    const body = JSON.stringify({
+      upstream: {
+        id: "remote-file",
+        name: "Remote File",
+        type: "file",
+        catalog_path: "/tmp/catalog.json",
+        public_key: "test-public-key"
+      }
+    });
+
+    try {
+      for (const pathName of ["/api/v1/enrollments/init", "/api/v1/enrollments/complete"]) {
+        const response = await fetch(`${remote.url}${pathName}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body
+        });
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+          error: expect.stringContaining("local mode")
+        });
+      }
+    } finally {
+      await remote.close();
+    }
+  });
 });
 
 async function startRemoteManagementApi(): Promise<{ url: string; close: () => Promise<void> }> {
@@ -445,6 +501,7 @@ async function startRemoteManagementApi(): Promise<{ url: string; close: () => P
     write: () => ({ ok: true, context: { mode: "remote", role: "owner" } })
   };
   const app = express();
+  app.use(express.json());
   app.use("/api/v1", createManagementApiRouter({ auth, mode: "remote" }));
   const server = await new Promise<Server>((resolve) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));

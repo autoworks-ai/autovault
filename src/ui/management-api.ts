@@ -337,7 +337,11 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
     requireManagementAuth(options.auth, "write"),
     asyncHandler(async (req, res) => {
       const input = parseBody(profilesPutSchema, req.body);
-      await saveNamedProfileConfig(input);
+      try {
+        await saveNamedProfileConfig(input);
+      } catch (error) {
+        throw profileConfigApiError(error);
+      }
       res.json({ profiles: await profilesPayload() });
     })
   );
@@ -378,6 +382,7 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
     requireManagementAuth(options.auth, "write"),
     asyncHandler(async (req, res) => {
       const input = parseBody(enrollmentSchema, req.body);
+      requireLocalFileEnrollment(options, input);
       const enrollment = await initEnrollment(input);
       res.json({ enrollment });
     })
@@ -388,6 +393,7 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
     requireManagementAuth(options.auth, "write"),
     asyncHandler(async (req, res) => {
       const input = parseBody(enrollmentSchema, req.body);
+      requireLocalFileEnrollment(options, input);
       const enrollment = await completeEnrollment(input);
       res.json({ enrollment });
     })
@@ -546,6 +552,23 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
     throw new ApiError(400, issues);
   }
   return parsed.data;
+}
+
+function profileConfigApiError(error: unknown): ApiError {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("Invalid AutoVault profile config:")) {
+    return new ApiError(400, message);
+  }
+  throw error;
+}
+
+function requireLocalFileEnrollment(
+  options: ManagementApiOptions,
+  input: z.infer<typeof enrollmentSchema>
+): void {
+  if (options.mode === "remote" && input.upstream.type === "file") {
+    throw new ApiError(400, "File upstream enrollments are only available in local mode");
+  }
 }
 
 function safeSkillName(value: unknown): string {

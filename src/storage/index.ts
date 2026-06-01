@@ -15,6 +15,7 @@ import { log } from "../util/log.js";
 import { canonicalRelPath } from "../util/path.js";
 import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES } from "../util/limits.js";
+import { safeSkillNamePathSegment } from "../util/skill-name.js";
 import { tryWithStorageLock, withStorageLock } from "./lock.js";
 
 const SOURCE_FILE = ".autovault-source.json";
@@ -22,7 +23,6 @@ const SIGNATURE_FILE = ".autovault-signature";
 const MANIFEST_FILE = ".autovault-manifest";
 const emittedSignatureWarnings = new Set<string>();
 const MAX_EMITTED_SIGNATURE_WARNINGS = 1024;
-const STORAGE_SKILL_DIR_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
 
 // Reserved on-disk filenames a resource MUST NOT canonicalize to. Without this
 // guard a caller-supplied resource named `SKILL.md` would overwrite the
@@ -82,22 +82,8 @@ function skillsDir(): string {
   return path.join(loadConfig().storagePath, "skills");
 }
 
-function safeStorageSkillDirName(name: string): string {
-  if (typeof name !== "string" || name.length === 0) {
-    throw new Error("Invalid skill name");
-  }
-  if (name.includes("/") || name.includes("\\") || name.includes("..")) {
-    throw new Error("Invalid skill name");
-  }
-  const match = STORAGE_SKILL_DIR_PATTERN.exec(name);
-  if (!match || match[0] !== name) {
-    throw new Error("Invalid skill name");
-  }
-  return match[0];
-}
-
 export function skillDir(name: string): string {
-  const safeName = safeStorageSkillDirName(name);
+  const safeName = safeSkillNamePathSegment(name);
   const root = path.resolve(skillsDir());
   const target = path.resolve(root, safeName);
   if (target !== root && target.startsWith(root + path.sep)) return target;
@@ -213,14 +199,20 @@ export async function listInstalledSkillNamesUnlocked(): Promise<string[]> {
     // util/skill-name.ts), so any dir containing a dot is a transient
     // artifact and must not be reported as installed.
     if (entry.name.includes(".")) continue;
+    let safeName: string;
+    try {
+      safeName = safeSkillNamePathSegment(entry.name);
+    } catch {
+      continue;
+    }
     if (entry.isDirectory()) {
-      names.push(entry.name);
+      names.push(safeName);
       continue;
     }
     if (!entry.isSymbolicLink()) continue;
     try {
-      const stat = await fs.stat(path.join(skillsDir(), entry.name));
-      if (stat.isDirectory()) names.push(entry.name);
+      const stat = await fs.stat(path.join(skillsDir(), safeName));
+      if (stat.isDirectory()) names.push(safeName);
     } catch {
       // Ignore broken symlinks; profile sync can clean those up.
     }
