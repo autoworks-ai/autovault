@@ -22,6 +22,7 @@ const SIGNATURE_FILE = ".autovault-signature";
 const MANIFEST_FILE = ".autovault-manifest";
 const emittedSignatureWarnings = new Set<string>();
 const MAX_EMITTED_SIGNATURE_WARNINGS = 1024;
+const STORAGE_DIR_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9:_-]*$/;
 
 // Reserved on-disk filenames a resource MUST NOT canonicalize to. Without this
 // guard a caller-supplied resource named `SKILL.md` would overwrite the
@@ -82,7 +83,24 @@ function skillsDir(): string {
 }
 
 export function skillDir(name: string): string {
-  return path.join(skillsDir(), name);
+  return path.join(skillsDir(), safeStorageDirName(name));
+}
+
+function safeStorageDirName(name: string): string {
+  if (
+    typeof name !== "string" ||
+    name.length === 0 ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("..")
+  ) {
+    throw new Error("Invalid skill storage directory name");
+  }
+  const match = STORAGE_DIR_NAME_PATTERN.exec(name);
+  if (!match || match[0] !== name) {
+    throw new Error("Invalid skill storage directory name");
+  }
+  return match[0];
 }
 
 export async function ensureStorage(): Promise<void> {
@@ -524,7 +542,11 @@ async function verifyIntegrityLocked(
       filePath: string,
       maxBytes: number
     ): Promise<{ kind: "ok"; content: string } | { kind: "mismatch"; reason: IntegrityMismatchReason }> {
-      const target = path.join(root, filePath);
+      const safePath = canonicalRelPath(filePath);
+      if (!safePath || safePath !== filePath || hasForbiddenPathSegment(safePath)) {
+        return { kind: "mismatch", reason: "signature_invalid" };
+      }
+      const target = path.join(root, safePath);
       const resolved = path.resolve(target);
       if (resolved !== resolvedRoot && !resolved.startsWith(resolvedRoot + path.sep)) {
         return { kind: "mismatch", reason: "signature_invalid" };

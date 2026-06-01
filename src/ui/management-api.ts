@@ -20,7 +20,7 @@ import {
 } from "../storage/index.js";
 import type { SkillRecord, SkillSummary } from "../types.js";
 import { resourcePathsForSkill } from "../util/skill-resource-paths.js";
-import { assertSafeSkillName } from "../util/skill-name.js";
+import { safeSkillName as normalizeSkillName } from "../util/skill-name.js";
 import { checkUpdates } from "../tools/check-updates.js";
 import { deleteSkill } from "../tools/delete-skill.js";
 import { addSkill } from "../tools/add-skill.js";
@@ -544,8 +544,7 @@ function safeSkillName(value: unknown): string {
     throw new ApiError(400, "Skill name is required");
   }
   try {
-    assertSafeSkillName(value);
-    return value;
+    return normalizeSkillName(value);
   } catch (error) {
     throw new ApiError(400, error instanceof Error ? error.message : String(error));
   }
