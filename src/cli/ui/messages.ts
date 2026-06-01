@@ -26,7 +26,7 @@ export function makeLogger(stream: NodeJS.WriteStream = process.stdout): Logger 
     info: (message) => stream.write(`${theme.style.dim(theme.symbol.arrow)} ${message}\n`),
     warn: (message) => stream.write(`${theme.style.yellow(theme.symbol.warn)} ${message}\n`),
     error: (message) => process.stderr.write(`${theme.style.red(theme.symbol.cross)} ${message}\n`),
-    ok: (message) => stream.write(`${theme.style.green(theme.symbol.check)} ${message}\n`),
+    ok: (message) => stream.write(`${theme.style.mint(theme.symbol.check)} ${message}\n`),
     raw: (text) => stream.write(text)
   };
 }
@@ -42,4 +42,3 @@ export function noteBox(
   const body = lines.map((line) => `  ${line}`).join("\n");
   return `${theme.style.mint(rule)}\n${theme.style.bold(title)}\n${body}\n${theme.style.mint(rule)}\n`;
 }
-
