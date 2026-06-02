@@ -1,4 +1,8 @@
 export const MINT = "#5ad6c0";
+export const WARN = "#e8a866";
+export const BAD = "#d97171";
+export const BLUE = "#5a9dd6";
+export const VIOLET = "#b48ad6";
 
 export type ColorMode = "auto" | "always" | "never";
 export type SymbolMode = "auto" | "unicode" | "ascii";
@@ -40,12 +44,12 @@ const ANSI = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
   dim: "\x1b[2m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  magenta: "\x1b[35m",
-  cyan: "\x1b[36m",
+  red: "\x1b[38;2;217;113;113m",
+  green: "\x1b[38;2;90;214;192m",
+  yellow: "\x1b[38;2;232;168;102m",
+  blue: "\x1b[38;2;90;157;214m",
+  magenta: "\x1b[38;2;180;138;214m",
+  cyan: "\x1b[38;2;90;157;214m",
   black: "\x1b[30m",
   mint: "\x1b[38;2;90;214;192m",
   mintBg: "\x1b[48;2;90;214;192m"

@@ -15,6 +15,13 @@ import { loadConfig, type Config } from "../config.js";
 import { createServer, type McpToolPolicy } from "../mcp/server.js";
 import { ensureStorage, recoverOrphanBackups } from "../storage/index.js";
 import { log } from "../util/log.js";
+import {
+  createManagementApiRouter,
+  remoteRoleCanWrite,
+  type ManagementAuthAdapter,
+  type ManagementAuthContext,
+  type ManagementAuthResult
+} from "../ui/management-api.js";
 import { createRemoteAuthRouter, REMOTE_SCOPES, RemoteOAuthProvider } from "./auth.js";
 import {
   assertCanReadSkill as assertRemoteSkillReadable,
@@ -89,7 +96,7 @@ function originMiddleware(config: Config) {
     if (origin) {
       res.vary("Origin");
       res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
       res.setHeader(
         "Access-Control-Allow-Headers",
         "authorization,content-type,mcp-session-id,mcp-protocol-version"
@@ -296,6 +303,10 @@ export async function startRemoteServer(
     res.json({ ok: true, name: "autovault", mode: "remote" });
   });
   app.use(providerAuthRoutes(provider, config));
+  app.use("/api/v1", createManagementApiRouter({
+    auth: remoteManagementAuth(provider),
+    mode: "remote"
+  }));
   installMcpRoutes(app, provider, config);
 
   const shouldListen = options.listen ?? true;
@@ -327,6 +338,39 @@ export async function startRemoteServer(
         server.close((error) => (error ? reject(error) : resolve()));
       });
     }
+  };
+}
+
+function remoteManagementAuth(provider: RemoteOAuthProvider): ManagementAuthAdapter {
+  const read = (req: Request): ManagementAuthResult => {
+    const context = remoteManagementContext(provider, req);
+    if (!context) return { ok: false, status: 401, error: "Remote session required" };
+    return { ok: true, context };
+  };
+  return {
+    read,
+    write: (req) => {
+      const result = read(req);
+      if (!result.ok) return result;
+      if (!remoteRoleCanWrite(result.context.role)) {
+        return { ok: false, status: 403, error: "Editor or owner role required" };
+      }
+      return result;
+    }
+  };
+}
+
+function remoteManagementContext(
+  provider: RemoteOAuthProvider,
+  req: Request
+): ManagementAuthContext | null {
+  const user = provider.sessionUser(req);
+  if (!user) return null;
+  return {
+    mode: "remote",
+    role: user.role,
+    user_id: user.user_id,
+    email: user.email
   };
 }
 
