@@ -23,6 +23,8 @@ import { MAX_TOTAL_BYTES } from "../util/limits.js";
 const SESSION_COOKIE = "autovault_ui_session";
 const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,}$/;
 const MANAGEMENT_JSON_LIMIT_BYTES = MAX_TOTAL_BYTES + 512 * 1024;
+const STATIC_RATE_WINDOW_MS = 60_000;
+const STATIC_RATE_MAX_REQUESTS = 600;
 
 export type StartLocalUiServerOptions = {
   port?: number;
@@ -144,6 +146,7 @@ function installStaticRoutes(
   token: string,
   uiAssets: ResolvedUiBundleAssets
 ): void {
+  app.use(localStaticRateLimit());
   app.use((req, res, next) => {
     const tokenParam = typeof req.query.token === "string" ? req.query.token : "";
     if (req.method === "GET" && tokenParam && timingSafeStringEqual(tokenParam, token)) {
@@ -176,6 +179,30 @@ function installStaticRoutes(
   app.get("/", (_req, res) => {
     res.type("html").send(fallbackHtml());
   });
+}
+
+function localStaticRateLimit() {
+  const buckets = new Map<string, { resetAt: number; count: number }>();
+  return (req: Request, res: Response, next: () => void): void => {
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      next();
+      return;
+    }
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || "loopback";
+    const bucket = buckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      buckets.set(key, { resetAt: now + STATIC_RATE_WINDOW_MS, count: 1 });
+      next();
+      return;
+    }
+    bucket.count += 1;
+    if (bucket.count > STATIC_RATE_MAX_REQUESTS) {
+      res.status(429).type("text").send("Too many UI requests");
+      return;
+    }
+    next();
+  };
 }
 
 function acceptsHtml(req: Request): boolean {

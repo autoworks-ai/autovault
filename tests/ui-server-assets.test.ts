@@ -40,6 +40,24 @@ describe("local UI server asset delivery", () => {
     });
   });
 
+  it("sets the session cookie with a fixed local redirect target", async () => {
+    const bundledRoot = path.join(currentStorageRoot(), "bundled-ui");
+    await writeFiles(bundledRoot, [{ path: "index.html", content: "<main>Bundled UI</main>" }]);
+    const handle = await start({
+      offline: true,
+      bundledRoot
+    });
+
+    const response = await fetch(
+      `${handle.url}/nested/path?token=${encodeURIComponent(handle.token)}`,
+      { redirect: "manual" }
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe("/");
+    expect(response.headers.get("set-cookie")).toContain("autovault_ui_session=");
+  });
+
   it("serves cached last-good UI assets when a later CDN check fails", async () => {
     const signer = createUiBundleSigningKeypair();
     const bundledRoot = path.join(currentStorageRoot(), "bundled-ui");
