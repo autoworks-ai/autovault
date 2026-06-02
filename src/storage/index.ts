@@ -15,6 +15,7 @@ import { log } from "../util/log.js";
 import { canonicalRelPath } from "../util/path.js";
 import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES } from "../util/limits.js";
+import { safeSkillNamePathSegment } from "../util/skill-name.js";
 import { tryWithStorageLock, withStorageLock } from "./lock.js";
 
 const SOURCE_FILE = ".autovault-source.json";
@@ -82,7 +83,11 @@ function skillsDir(): string {
 }
 
 export function skillDir(name: string): string {
-  return path.join(skillsDir(), name);
+  const safeName = safeSkillNamePathSegment(name);
+  const root = path.resolve(skillsDir());
+  const target = path.resolve(root, safeName);
+  if (target !== root && target.startsWith(root + path.sep)) return target;
+  throw new Error("Invalid skill name");
 }
 
 export async function ensureStorage(): Promise<void> {
@@ -194,14 +199,20 @@ export async function listInstalledSkillNamesUnlocked(): Promise<string[]> {
     // util/skill-name.ts), so any dir containing a dot is a transient
     // artifact and must not be reported as installed.
     if (entry.name.includes(".")) continue;
+    let safeName: string;
+    try {
+      safeName = safeSkillNamePathSegment(entry.name);
+    } catch {
+      continue;
+    }
     if (entry.isDirectory()) {
-      names.push(entry.name);
+      names.push(safeName);
       continue;
     }
     if (!entry.isSymbolicLink()) continue;
     try {
-      const stat = await fs.stat(path.join(skillsDir(), entry.name));
-      if (stat.isDirectory()) names.push(entry.name);
+      const stat = await fs.stat(path.join(skillsDir(), safeName));
+      if (stat.isDirectory()) names.push(safeName);
     } catch {
       // Ignore broken symlinks; profile sync can clean those up.
     }

@@ -92,10 +92,23 @@ describe("autovault top-level CLI UX", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Update available");
+    expect(result.stdout).toContain(`[update] Update available: AutoVault ${currentVersion} -> 9.9.9`);
     expect(result.stdout).toContain(`${currentVersion} -> 9.9.9`);
-    expect(result.stdout).toContain("autovault update");
-    expect(result.stdout).toContain("https://github.com/autoworks-ai/autovault/releases/latest");
+    expect(result.stdout).toContain("Run     `autovault update`");
+    expect(result.stdout).toContain("Disable `AUTOVAULT_NO_UPDATE_CHECK=1`");
+    expect(result.stdout).not.toContain("Release notes:");
+  });
+
+  it("shows the passive update notice after successful human command output", async () => {
+    const result = await runCli(["sync-profiles"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Profile sync");
+    expect(result.stdout.indexOf("Profile sync")).toBeLessThan(
+      result.stdout.indexOf("Update available")
+    );
+    expect(result.stdout).toContain("Run     `autovault update`");
   });
 
   it("hides the update notice when the installed version is current", async () => {
@@ -109,15 +122,27 @@ describe("autovault top-level CLI UX", () => {
     expect(result.stdout).not.toContain("Update available");
   });
 
+  it("hides the passive update notice when update checks are disabled", async () => {
+    const result = await runCli(["--version"], {
+      AUTOVAULT_NO_UPDATE_CHECK: "1"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).not.toContain("Update available");
+  });
+
   it("prints help to stdout and exits 0", async () => {
     const result = await runCli(["--help"]);
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("Update available");
-    expect(result.stdout).not.toContain("\n\nUsage:");
     expect(result.stdout).toContain("autovault --version");
     expect(result.stdout).toContain("autovault update [version|latest|stable|main]");
+    expect(result.stdout.indexOf("autovault --version")).toBeLessThan(
+      result.stdout.indexOf("Update available")
+    );
   });
 
   it("suggests close command names on typo", async () => {
@@ -136,11 +161,52 @@ describe("autovault top-level CLI UX", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("AutoVault update plan");
-    expect(result.stdout).toContain(`current ${currentVersion}`);
-    expect(result.stdout).toContain("target  v9.9.9");
-    expect(result.stdout).toContain("sh ");
+    expect(result.stdout).toContain("Checking for updates");
+    expect(result.stdout).toContain(`Current: ${currentVersion}`);
+    expect(result.stdout).toContain("Latest:  9.9.9");
+    expect(result.stdout).toContain("Target:  v9.9.9");
+    expect(result.stdout).toContain("Command: AUTOVAULT_REF=v9.9.9");
     await expect(fs.access(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps passive update notices out of JSON and machine-readable outputs", async () => {
+    const sync = await runCli(["sync-profiles", "--json"]);
+    expect(sync.exitCode).toBe(0);
+    expect(sync.stderr).toBe("");
+    expect(sync.stdout).not.toContain("Update available");
+    expect(() => JSON.parse(sync.stdout)).not.toThrow();
+
+    const repo = path.join(currentStorageRoot(), "audit-json-target");
+    await fs.mkdir(path.join(repo, "scripts"), { recursive: true });
+    await fs.writeFile(path.join(repo, "scripts", "deploy.js"), "fetch('https://example.com');\n");
+    const audit = await runCli(["audit-repo", "--repo", repo, "--format", "json"]);
+    expect(audit.exitCode).toBe(0);
+    expect(audit.stderr).toBe("");
+    expect(audit.stdout).not.toContain("Update available");
+    expect(() => JSON.parse(audit.stdout)).not.toThrow();
+  });
+
+  it("does not execute updates from non-TTY sessions without --yes", async () => {
+    const result = await runCli(["update"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Checking for updates");
+    expect(result.stdout).toContain("Run autovault update --yes to apply.");
+    expect(result.stdout).not.toContain("Successfully updated");
+  });
+
+  it("reports up to date without running an update", async () => {
+    const currentVersion = await packageVersion();
+    const result = await runCli(["update"], {
+      AUTOVAULT_LATEST_VERSION: currentVersion
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("Checking for updates");
+    expect(result.stdout).toContain("AutoVault is already up to date.");
+    expect(result.stdout).not.toContain("--yes to apply");
   });
 
   it("uses the unreleased changelog section for main-channel notes", async () => {
@@ -148,7 +214,7 @@ describe("autovault top-level CLI UX", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("target  main");
+    expect(result.stdout).toContain("Target:  main");
     expect(result.stdout).toContain("AUTOVAULT_REF=main");
     expect(result.stdout).toContain("## [Unreleased]");
   });

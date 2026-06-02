@@ -53,13 +53,13 @@ done
 if [ -t 1 ] && [ -z "${NO_COLOR-}" ]; then
   BOLD="$(tput bold 2>/dev/null || printf '')"
   GREY="$(tput setaf 8 2>/dev/null || tput setaf 0 2>/dev/null || printf '')"
-  RED="$(tput setaf 1 2>/dev/null || printf '')"
-  GREEN="$(tput setaf 2 2>/dev/null || printf '')"
-  YELLOW="$(tput setaf 3 2>/dev/null || printf '')"
-  BLUE="$(tput setaf 4 2>/dev/null || printf '')"
-  MAGENTA="$(tput setaf 5 2>/dev/null || printf '')"
-  CYAN="$(tput setaf 6 2>/dev/null || printf '')"
-  MINT="$(printf '\033[38;2;90;214;192m')"
+  RED="$(printf '\033[38;2;217;113;113m')"
+  GREEN="$(printf '\033[38;2;90;214;192m')"
+  YELLOW="$(printf '\033[38;2;232;168;102m')"
+  BLUE="$(printf '\033[38;2;90;157;214m')"
+  MAGENTA="$(printf '\033[38;2;180;138;214m')"
+  CYAN="$BLUE"
+  MINT="$GREEN"
   RESET="$(tput sgr0 2>/dev/null || printf '')"
 else
   BOLD=""
@@ -90,7 +90,7 @@ detail_line() {
 info()      { detail_line "${BOLD}${GREY}>${RESET} $*"; }
 warn()      { detail_line "${YELLOW}!${RESET} $*"; }
 error()     { printf '%s\n' "${RED}x $*${RESET}" >&2; }
-completed() { detail_line "${GREEN}✓${RESET} $*"; }
+completed() { detail_line "${MINT}✓${RESET} $*"; }
 plain()     { [ "$QUIET" = "1" ] && return 0; printf '%s\n' "$*"; }
 
 step() {
@@ -133,20 +133,13 @@ run_quiet() {
     frame=0
     while kill -0 "$cmd_pid" 2>/dev/null; do
       case "$frame" in
-        0) glyph="⠋" ;;
-        1) glyph="⠙" ;;
-        2) glyph="⠹" ;;
-        3) glyph="⠸" ;;
-        4) glyph="⠼" ;;
-        5) glyph="⠴" ;;
-        6) glyph="⠦" ;;
-        7) glyph="⠧" ;;
-        8) glyph="⠇" ;;
-        *) glyph="⠏" ;;
+        0) state="SCAN " ;;
+        1) state="READ " ;;
+        *) state="ADMIT" ;;
       esac
-      printf '\r%*s%s %s' "$DETAIL_INDENT" "" "${MINT}${glyph}${RESET}" "$label"
-      frame=$(( (frame + 1) % 10 ))
-      sleep 0.08
+      printf '\r%*s%s[%s]%s %s' "$DETAIL_INDENT" "" "$MINT" "$state" "$RESET" "$label"
+      frame=$(( (frame + 1) % 3 ))
+      sleep 0.16
     done
     if wait "$cmd_pid"; then
       status=0
@@ -475,18 +468,18 @@ ensure_profile_sources_env() {
 
 print_banner() {
   [ "$QUIET" = "1" ] && return 0
-  if [ "${AUTOVAULT_ASCII:-0}" = "1" ]; then
-    printf '%s\n' "${MINT}   .----. ${RESET}  ${BOLD}AutoVault${RESET}"
-    printf '%s\n' "${MINT}   |  | | ${RESET}  ${GREY}validate -> sign -> vault${RESET}"
-    printf '%s\n' "${MINT}   | O  | ${RESET}  ${GREY}curated skill vault for Claude Code, Codex, and Cursor${RESET}"
-    printf '%s\n' "${MINT}   '+--+' ${RESET}"
-    printf '%s\n' "${MINT}    |  |  ${RESET}"
+  if [ "${AUTOVAULT_ASCII:-0}" = "1" ] || [ ! -t 1 ]; then
+    printf '%s\n' "${MINT}  +----------+${RESET}  ${BOLD}AutoVault${RESET}"
+    printf '%s\n' "${MINT}  |    ()    |${RESET}  ${GREY}reviewed -> signed -> admitted${RESET}"
+    printf '%s\n' "${MINT}  |    ||    |${RESET}  ${GREY}reviewed skill vault for Claude Code, Codex, and Cursor${RESET}"
+    printf '%s\n' "${MINT}  +----------+${RESET}"
+    printf '%s\n' "${MINT}     |    |${RESET}"
   else
-    printf '%s\n' "${MINT}   ╓─────╖ ${RESET}  ${BOLD}AutoVault${RESET}"
-    printf '%s\n' "${MINT}   ║  ╷  ║ ${RESET}  ${GREY}validate → sign → vault${RESET}"
-    printf '%s\n' "${MINT}   ║ ⊙   ║ ${RESET}  ${GREY}curated skill vault for Claude Code, Codex, and Cursor${RESET}"
-    printf '%s\n' "${MINT}   ╙┬───┬╜ ${RESET}"
-    printf '%s\n' "${MINT}    ╵   ╵  ${RESET}"
+    printf '%s\n' "${MINT}  ╭──────────╮${RESET}  ${BOLD}AutoVault${RESET}"
+    printf '%s\n' "${MINT}  │    ()    │${RESET}  ${GREY}reviewed → signed → admitted${RESET}"
+    printf '%s\n' "${MINT}  │    ||    │${RESET}  ${GREY}reviewed skill vault for Claude Code, Codex, and Cursor${RESET}"
+    printf '%s\n' "${MINT}  ╰──┬────┬──╯${RESET}"
+    printf '%s\n' "${MINT}     │    │${RESET}"
   fi
   printf '\n'
 }
@@ -517,7 +510,7 @@ print_celebration() {
 
   printf '\n'
   printf '%s\n' "${MINT}────────────────────────────────────────${RESET}"
-  printf '%s\n' "${GREEN}✓${RESET} ${BOLD}AutoVault is ready.${RESET}"
+  printf '%s\n' "${MINT}✓${RESET} ${BOLD}AutoVault is ready.${RESET}"
   if [ "${AUTOVAULT_VERBOSE:-0}" = "1" ]; then
     printf '%s\n' "  ${GREY}storage ${RESET} $STORAGE_PATH"
     printf '%s\n' "  ${GREY}shim    ${RESET} $BIN_DIR/autovault"

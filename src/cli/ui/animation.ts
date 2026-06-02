@@ -1,4 +1,5 @@
 import { badge } from "./messages.js";
+import type { VaultMarkState } from "./brand.js";
 import { makeTheme, type Theme } from "./theme.js";
 
 export function sleep(ms: number): Promise<void> {
@@ -14,8 +15,9 @@ function shouldAnimate(stream: NodeJS.WriteStream): boolean {
   return stream.isTTY === true;
 }
 
-function renderSpeechLine(theme: Theme, message: string): string {
-  return `${badge("vault", theme)} ${theme.style.bold("Vault:")} ${message}`;
+function renderStateLine(theme: Theme, state: VaultMarkState, message: string): string {
+  const tone = state === "held" ? "warn" : "mint";
+  return `${badge(state.toUpperCase(), theme, tone)} ${theme.style.bold("AutoVault:")} ${message}`;
 }
 
 function erasePreviousBlock(stream: NodeJS.WriteStream, lineCount: number): void {
@@ -36,20 +38,22 @@ export async function sayVault(
   const words = message.split(/\s+/).filter(Boolean);
 
   if (!shouldAnimate(stream)) {
-    stream.write(`${renderSpeechLine(theme, message)}\n`);
+    stream.write(`${renderStateLine(theme, "admit", message)}\n`);
     return;
   }
 
   let lines = 0;
+  const states: VaultMarkState[] = ["scan", "read", "admit"];
   stream.write("\x1b[?25l");
   try {
     for (let i = 0; i <= words.length; i += 1) {
       const current = words.slice(0, i).join(" ");
       erasePreviousBlock(stream, lines);
-      const block = renderSpeechLine(theme, current);
+      const state = i === words.length ? "admit" : states[i % states.length];
+      const block = renderStateLine(theme, state, current);
       stream.write(`${block}\n`);
       lines = block.split("\n").length;
-      await sleep(i === 0 ? 120 : 55 + (i % 4) * 20);
+      await sleep(i === 0 ? 160 : 120 + (i % 3) * 30);
     }
     await sleep(260);
   } finally {

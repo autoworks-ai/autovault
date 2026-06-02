@@ -116,6 +116,9 @@ AutoVault supports:
   forking upstream `SKILL.md`
 - install, update, proposal, bulk-import, removal, resource-read, and drift-check
   workflows
+- enrolled pull-sync foundations for signed upstream skill releases, including
+  metadata-only update checks, local approval policy, bundle verification, and
+  revocation state
 - source adapters for GitHub, `agentskills`, arbitrary HTTPS URLs, local bundles,
   and inline MCP-proposed content
 - three-tier deduplication for proposals
@@ -148,8 +151,10 @@ autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
 autovault audit-repo --repo /path/to/repo [--format json|markdown]
 autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
+autovault init <upstream-catalog-or-directory> [--json]
 autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
 autovault serve [--help]
+autovault ui [--port <n>] [--no-open]
 autovault skill list [--json]
 autovault skill search <query> [--top-k N] [--json]
 autovault skill which <name> [<action>]
@@ -158,6 +163,17 @@ autovault skill <action> <name>
 
 Human-readable output is the default. Use `--json` or `--format json` only
 for scripts and other machine consumers.
+
+`autovault ui` starts a loopback-only browser dashboard for local skill
+metadata edits, named profile management, profile sync, update checks, deletion,
+signed upstream update installs, enrolled-client revocation, and
+permission-group visibility. It serves the packaged React assets and uses the
+same `/api/v1` management API shape as remote AutoVault.
+
+`autovault init <upstream-catalog-or-directory>` enrolls the local vault with a
+signed upstream catalog. The first implementation supports file-backed catalogs
+for local testing and future cloud adapters; downloaded resources still install
+through AutoVault's existing validation, manifest, and profile-sync paths.
 
 Common flows:
 
@@ -175,6 +191,10 @@ autovault add-local ./path/to/your-skill \
 
 # Search installed skills locally.
 autovault skill search code-review --top-k 5
+
+# Enroll a local test upstream and review signed updates in the dashboard.
+autovault init ./path/to/upstream-catalog
+autovault ui
 
 # Remove a vaulted skill and refresh managed profile links.
 autovault remove skill-author
@@ -276,6 +296,8 @@ $AUTOVAULT_STORAGE_PATH/
     <agent>/<skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
     <named-profile>/<skill-name> -> ../../skills/<skill-name> or ../../rendered/<agent>/<skill-name>
   profiles.config.json
+  cloud-sync/
+    upstreams.json             # enrolled upstream/device metadata, mode 0600
 ```
 
 Skills are plain files. Back them up like dotfiles:
@@ -425,6 +447,64 @@ node scripts/probe.mjs
 
 The smoke, probe, and remote-smoke scripts require `npm run build` first because
 they spawn compiled files from `dist/`.
+
+### Fresh Installer Sandbox
+
+Use this when you want to walk through the shell installer like a new user
+without touching your real `~/.autovault`, shell profile, or installed skills.
+The recipe packages the current development checkout, including uncommitted
+files, and points the installer at that local archive.
+
+```bash
+SANDBOX="$(mktemp -d -t autovault-fresh.XXXXXX)"
+FRESH_HOME="$SANDBOX/home"
+ARCHIVE="$SANDBOX/autovault-dev.tgz"
+mkdir -p "$FRESH_HOME"
+
+tar \
+  --exclude ./.git \
+  --exclude ./node_modules \
+  --exclude ./dist \
+  -czf "$ARCHIVE" \
+  -C "$(dirname "$PWD")" "$(basename "$PWD")"
+
+HOME="$FRESH_HOME" \
+AUTOVAULT_HOME="$FRESH_HOME/.autovault" \
+AUTOVAULT_BIN_DIR="$FRESH_HOME/.autovault/bin" \
+AUTOVAULT_TARBALL_URL="file://$ARCHIVE" \
+AUTOVAULT_REF=dev \
+sh scripts/install.sh --verbose
+```
+
+After install, keep the sandboxed `HOME` and `PATH` on commands you want to run
+from the new-user perspective:
+
+```bash
+HOME="$FRESH_HOME" PATH="$FRESH_HOME/.autovault/bin:$PATH" autovault --version
+HOME="$FRESH_HOME" PATH="$FRESH_HOME/.autovault/bin:$PATH" autovault doctor
+HOME="$FRESH_HOME" PATH="$FRESH_HOME/.autovault/bin:$PATH" autovault skill list
+HOME="$FRESH_HOME" PATH="$FRESH_HOME/.autovault/bin:$PATH" autovault ui --no-open --port 0
+```
+
+To skip the setup wizard during install and run it manually:
+
+```bash
+HOME="$FRESH_HOME" \
+AUTOVAULT_HOME="$FRESH_HOME/.autovault" \
+AUTOVAULT_BIN_DIR="$FRESH_HOME/.autovault/bin" \
+AUTOVAULT_TARBALL_URL="file://$ARCHIVE" \
+AUTOVAULT_REF=dev \
+AUTOVAULT_NO_SETUP=1 \
+sh scripts/install.sh --verbose
+
+HOME="$FRESH_HOME" PATH="$FRESH_HOME/.autovault/bin:$PATH" autovault setup --review
+```
+
+Remove the whole sandbox when finished:
+
+```bash
+rm -rf "$SANDBOX"
+```
 
 Architecture map:
 

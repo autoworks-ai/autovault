@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSafeSkillName } from "../src/util/skill-name.js";
+import { assertSafeSkillName, safeSkillNamePathSegment } from "../src/util/skill-name.js";
 import { getSkill } from "../src/tools/get-skill.js";
 import { checkUpdates } from "../src/tools/check-updates.js";
 
@@ -21,6 +21,12 @@ describe("assertSafeSkillName", () => {
     expect(() => assertSafeSkillName("")).toThrow(/Invalid/);
     // @ts-expect-error - exercising runtime guard
     expect(() => assertSafeSkillName(null)).toThrow(/Invalid/);
+  });
+
+  it("returns only validated names as path segments", () => {
+    expect(safeSkillNamePathSegment("alpha-skill")).toBe("alpha-skill");
+    expect(() => safeSkillNamePathSegment("../escape")).toThrow(/Invalid/);
+    expect(() => safeSkillNamePathSegment("foo/bar")).toThrow(/Invalid/);
   });
 });
 
