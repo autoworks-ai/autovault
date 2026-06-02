@@ -9,7 +9,7 @@ export type TableRow = {
 export function statusMark(theme: Theme, status: TableRow["status"] = "muted"): string {
   switch (status) {
     case "ok":
-      return theme.style.green(theme.symbol.check);
+      return theme.style.mint(theme.symbol.check);
     case "warn":
       return theme.style.yellow(theme.symbol.warn);
     case "error":
@@ -36,4 +36,3 @@ export function keyValueRows(rows: TableRow[], theme: Theme, indent = "  "): str
 export function bulletList(items: string[], theme: Theme, indent = "  "): string {
   return items.map((item) => `${indent}${theme.style.dim(theme.symbol.bullet)} ${item}`).join("\n");
 }
-

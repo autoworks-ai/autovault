@@ -20,7 +20,8 @@ import {
 } from "../storage/index.js";
 import type { SkillRecord, SkillSummary } from "../types.js";
 import { resourcePathsForSkill } from "../util/skill-resource-paths.js";
-import { safeSkillName as normalizeSkillName } from "../util/skill-name.js";
+import { canonicalRelPath } from "../util/path.js";
+import { assertSafeSkillName } from "../util/skill-name.js";
 import { checkUpdates } from "../tools/check-updates.js";
 import { deleteSkill } from "../tools/delete-skill.js";
 import { addSkill } from "../tools/add-skill.js";
@@ -336,7 +337,11 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
     requireManagementAuth(options.auth, "write"),
     asyncHandler(async (req, res) => {
       const input = parseBody(profilesPutSchema, req.body);
-      await saveNamedProfileConfig(input);
+      try {
+        await saveNamedProfileConfig(input);
+      } catch (error) {
+        throw profileConfigApiError(error);
+      }
       res.json({ profiles: await profilesPayload() });
     })
   );
@@ -377,6 +382,7 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
     requireManagementAuth(options.auth, "write"),
     asyncHandler(async (req, res) => {
       const input = parseBody(enrollmentSchema, req.body);
+      requireLocalFileEnrollment(options, input);
       const enrollment = await initEnrollment(input);
       res.json({ enrollment });
     })
@@ -387,6 +393,7 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
     requireManagementAuth(options.auth, "write"),
     asyncHandler(async (req, res) => {
       const input = parseBody(enrollmentSchema, req.body);
+      requireLocalFileEnrollment(options, input);
       const enrollment = await completeEnrollment(input);
       res.json({ enrollment });
     })
@@ -463,12 +470,20 @@ function managementContext(options: ManagementApiOptions): Record<string, unknow
     },
     abilities: managementAbilities(options.mode),
     account: managementAccount(options.mode),
-    vault: {
-      mode: config.mode,
-      storage_path: config.storagePath,
-      db_path: config.dbPath
-    },
+    vault: managementVaultContext(options.mode, config),
     compatibility
+  };
+}
+
+function managementVaultContext(
+  mode: ManagementApiOptions["mode"],
+  config: ReturnType<typeof loadConfig>
+): Record<string, unknown> {
+  if (mode === "remote") return { mode: "remote" };
+  return {
+    mode: config.mode,
+    storage_path: config.storagePath,
+    db_path: config.dbPath
   };
 }
 
@@ -539,12 +554,30 @@ function parseBody<T>(schema: z.ZodType<T>, body: unknown): T {
   return parsed.data;
 }
 
+function profileConfigApiError(error: unknown): ApiError {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith("Invalid AutoVault profile config:")) {
+    return new ApiError(400, message);
+  }
+  throw error;
+}
+
+function requireLocalFileEnrollment(
+  options: ManagementApiOptions,
+  input: z.infer<typeof enrollmentSchema>
+): void {
+  if (options.mode === "remote" && input.upstream.type === "file") {
+    throw new ApiError(400, "File upstream enrollments are only available in local mode");
+  }
+}
+
 function safeSkillName(value: unknown): string {
   if (typeof value !== "string" || value.length === 0) {
     throw new ApiError(400, "Skill name is required");
   }
   try {
-    return normalizeSkillName(value);
+    assertSafeSkillName(value);
+    return value;
   } catch (error) {
     throw new ApiError(400, error instanceof Error ? error.message : String(error));
   }
@@ -608,7 +641,11 @@ async function skillBundle(skill: SkillRecord): Promise<SkillDetailResponse["bun
       for (const resource of result.resources) previewMap.set(resource.path, resource.content);
     }
   }
-  const actionPaths = new Set(Object.values(skill.bin).map((action) => action.command));
+  const actionPaths = new Set(
+    Object.values(skill.bin)
+      .map((action) => canonicalRelPath(action.command))
+      .filter((command) => command.length > 0)
+  );
   return {
     root: "SKILL.md",
     files: [

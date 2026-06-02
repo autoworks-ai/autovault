@@ -924,10 +924,15 @@ metadata:
     // SAFE_SLUG_PATTERN rejects colons at install time, so a colon-bearing
     // slug can only arrive via a hostile/legacy on-disk dir. This test pins
     // the defense-in-depth filter inside the emitter.
-    await writeSkill(
-      "codex:setup",
-      skill("codex:setup", { agents: ["claude-code"], tags: ["video"] })
-    );
+    if (process.platform !== "win32") {
+      const hostileRoot = path.join(currentStorageRoot(), "skills", "codex:setup");
+      await fs.mkdir(hostileRoot, { recursive: true });
+      await fs.writeFile(
+        path.join(hostileRoot, "SKILL.md"),
+        skill("codex:setup", { agents: ["claude-code"], tags: ["video"] }),
+        "utf-8"
+      );
+    }
     await writeSkill(
       "ordinary",
       skill("ordinary", { agents: ["claude-code"], tags: ["video"] })

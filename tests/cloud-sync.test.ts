@@ -335,6 +335,50 @@ describe("cloud sync foundation", () => {
     expect((await readSkill("tamper-helper"))?.skillMd).toContain("Body");
   });
 
+  it("refuses upstream bundle symlinks that escape the catalog directory", async () => {
+    await writeSkill("symlink-helper", skillMd("symlink-helper", "1.0.0"));
+    const upstreamDir = path.join(currentStorageRoot(), "symlink-upstream");
+    const signer = createSyncSigningKeypair();
+    const release = createSignedSkillRelease({
+      signer,
+      resource: { id: "skill.symlink-helper", kind: "skill", name: "symlink-helper" },
+      version: "1.1.0",
+      channel: "stable",
+      policy: "user_approve",
+      changelog: "The bundle file will be replaced by a symlink.",
+      skillMd: skillMd("symlink-helper", "1.1.0", "Signed body")
+    });
+    const catalogPath = await writeFakeUpstreamCatalog(upstreamDir, {
+      id: "symlink",
+      name: "Symlink Vault",
+      publicKey: signer.publicKey,
+      releases: [release]
+    });
+    const outsideBundle = path.join(currentStorageRoot(), "outside-bundle.json");
+    await fs.writeFile(outsideBundle, JSON.stringify(release.bundle), "utf-8");
+    const bundlePath = path.join(upstreamDir, release.bundle_path);
+    await fs.rm(bundlePath);
+    await fs.symlink(outsideBundle, bundlePath);
+    await completeEnrollment({
+      upstream: {
+        id: "symlink",
+        name: "Symlink Vault",
+        type: "file",
+        catalog_path: catalogPath,
+        public_key: signer.publicKey
+      }
+    });
+
+    await expect(
+      installSyncResource({
+        resource_id: "skill.symlink-helper",
+        upstream_id: "symlink",
+        accept: true
+      })
+    ).rejects.toThrow(/escapes upstream catalog/i);
+    expect((await readSkill("symlink-helper"))?.version).toBe("1.0.0");
+  });
+
   it("exposes upstreams, sync updates, install, and revoke through the management API", async () => {
     await writeSkill("api-helper", skillMd("api-helper", "1.0.0"));
     const upstreamDir = path.join(currentStorageRoot(), "api-upstream");

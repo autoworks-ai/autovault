@@ -4,7 +4,7 @@ import { loadConfig } from "../config.js";
 import { syncProfiles } from "../profiles/sync.js";
 import { skillDir } from "../storage/index.js";
 import { withStorageLock } from "../storage/lock.js";
-import { safeSkillName } from "../util/skill-name.js";
+import { safeSkillNamePathSegment } from "../util/skill-name.js";
 import { log } from "../util/log.js";
 
 export type DeleteSkillInput = {
@@ -14,7 +14,7 @@ export type DeleteSkillInput = {
 };
 
 export async function deleteSkill(input: DeleteSkillInput): Promise<Record<string, unknown>> {
-  const name = safeSkillName(input.name);
+  const name = safeSkillNamePathSegment(input.name);
   let deleted = false;
 
   await withStorageLock(async () => {

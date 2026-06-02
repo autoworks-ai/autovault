@@ -166,7 +166,7 @@ function renderSkillDetail(skill: SkillView, theme: Theme): string[] {
 }
 
 export async function renderSetupIntro(stream: NodeJS.WriteStream = process.stdout): Promise<void> {
-  await sayVault("Welcome to AutoVault. Let's validate, sign, and vault your skills.", stream);
+  await sayVault("Welcome to AutoVault. Let's review, sign, and admit your skills.", stream);
 }
 
 export function renderDriftReport(

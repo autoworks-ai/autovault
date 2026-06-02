@@ -1,9 +1,16 @@
 import fs from "node:fs/promises";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
+import express from "express";
 import { afterEach, describe, expect, it } from "vitest";
 import { openCapabilityDb } from "../src/capabilities/db.js";
 import { listConfiguredProfiles } from "../src/profiles/sync.js";
 import { readSkill, writeSkill } from "../src/storage/index.js";
+import {
+  createManagementApiRouter,
+  type ManagementAuthAdapter
+} from "../src/ui/management-api.js";
 import { startLocalUiServer, type LocalUiServerHandle } from "../src/ui/local-server.js";
 import { currentStorageRoot } from "./setup.js";
 
@@ -15,6 +22,7 @@ function skillMd(
     tags?: string[];
     version?: string;
     resources?: string[];
+    binCommand?: string;
   } = {}
 ): string {
   const agents = options.agents ?? ["codex"];
@@ -35,6 +43,11 @@ capabilities:
 ${options.resources && options.resources.length > 0
     ? `resources:
 ${options.resources.map((resource) => `  - path: ${resource}\n    type: file`).join("\n")}`
+    : ""}
+${options.binCommand
+    ? `bin:
+  setup:
+    command: ${options.binCommand}`
     : ""}
 ---
 
@@ -105,9 +118,11 @@ describe("management API", () => {
 
   it("lists, reads, edits frontmatter through updateSkill, and deletes with confirmation", async () => {
     await writeSkill("ui-skill", skillMd("ui-skill", {
-      resources: ["references/notes.md"]
+      resources: ["references/notes.md", "./bin/setup"],
+      binCommand: "bin/./setup"
     }), [
-      { path: "references/notes.md", content: "notes" }
+      { path: "references/notes.md", content: "notes" },
+      { path: "bin/setup", content: "#!/usr/bin/env bash\necho setup\n" }
     ]);
     const handle = await start();
 
@@ -153,6 +168,11 @@ describe("management API", () => {
           preview: expect.stringContaining("# ui-skill")
         }),
         expect.objectContaining({
+          path: "bin/setup",
+          group: "actions",
+          preview: "#!/usr/bin/env bash\necho setup\n"
+        }),
+        expect.objectContaining({
           path: "references/notes.md",
           kind: "markdown",
           preview: "notes"
@@ -188,7 +208,10 @@ describe("management API", () => {
 
     const edited = await readSkill("ui-skill");
     expect(edited?.agents).toEqual(["codex", "claude-code"]);
-    expect(edited?.resources.map((resource) => resource.path)).toEqual(["references/notes.md"]);
+    expect(edited?.resources.map((resource) => resource.path)).toEqual([
+      "references/notes.md",
+      "./bin/setup"
+    ]);
 
     const blockedDelete = await api(handle, "/api/v1/skills/ui-skill", {
       method: "DELETE",
@@ -208,6 +231,29 @@ describe("management API", () => {
       result: expect.objectContaining({ deleted: true, name: "ui-skill" })
     });
     await expect(readSkill("ui-skill")).resolves.toBeNull();
+  });
+
+  it("accepts dashboard inline skill creates above one MiB but within bundle limits", async () => {
+    const handle = await start();
+    const chunk = "x".repeat(600 * 1024);
+    const response = await api(handle, "/api/v1/skills", {
+      method: "POST",
+      headers: { origin: handle.url },
+      body: JSON.stringify({
+        source: "inline",
+        identifier: "dashboard-large-inline",
+        skill_md: skillMd("large-dashboard-skill", {
+          resources: ["references/a.txt", "references/b.txt"]
+        }),
+        resources: [
+          { path: "references/a.txt", content: chunk },
+          { path: "references/b.txt", content: chunk }
+        ]
+      })
+    });
+
+    expect(response.status).toBe(201);
+    await expect(readSkill("large-dashboard-skill")).resolves.not.toBeNull();
   });
 
   it("installs a pasted inline skill through the management API add flow", async () => {
@@ -304,6 +350,33 @@ describe("management API", () => {
     expect(stat.isSymbolicLink()).toBe(true);
   });
 
+  it("returns 400 for invalid named profile config writes", async () => {
+    const handle = await start();
+    const response = await api(handle, "/api/v1/profiles", {
+      method: "PUT",
+      headers: { origin: handle.url },
+      body: JSON.stringify({
+        profiles: [
+          {
+            name: "duplicate",
+            agent: "codex",
+            target: path.join(currentStorageRoot(), "profile-a")
+          },
+          {
+            name: "duplicate",
+            agent: "codex",
+            target: path.join(currentStorageRoot(), "profile-b")
+          }
+        ]
+      })
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: expect.stringContaining("Duplicate named profile")
+    });
+  });
+
   it("returns update and permission management data", async () => {
     await writeSkill("updates-skill", skillMd("updates-skill"));
     const db = openCapabilityDb();
@@ -375,4 +448,69 @@ describe("management API", () => {
       }
     });
   });
+
+  it("redacts local filesystem paths from remote management context", async () => {
+    const remote = await startRemoteManagementApi();
+    try {
+      const response = await fetch(`${remote.url}/api/v1/context`);
+      expect(response.status).toBe(200);
+      const body = await response.json() as {
+        context: { vault: Record<string, unknown> };
+      };
+      expect(body.context.vault).toEqual({ mode: "remote" });
+      expect(body.context.vault).not.toHaveProperty("storage_path");
+      expect(body.context.vault).not.toHaveProperty("db_path");
+    } finally {
+      await remote.close();
+    }
+  });
+
+  it("rejects request-controlled file enrollments in remote mode", async () => {
+    const remote = await startRemoteManagementApi();
+    const body = JSON.stringify({
+      upstream: {
+        id: "remote-file",
+        name: "Remote File",
+        type: "file",
+        catalog_path: "/tmp/catalog.json",
+        public_key: "test-public-key"
+      }
+    });
+
+    try {
+      for (const pathName of ["/api/v1/enrollments/init", "/api/v1/enrollments/complete"]) {
+        const response = await fetch(`${remote.url}${pathName}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body
+        });
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toMatchObject({
+          error: expect.stringContaining("local mode")
+        });
+      }
+    } finally {
+      await remote.close();
+    }
+  });
 });
+
+async function startRemoteManagementApi(): Promise<{ url: string; close: () => Promise<void> }> {
+  const auth: ManagementAuthAdapter = {
+    read: () => ({ ok: true, context: { mode: "remote", role: "owner" } }),
+    write: () => ({ ok: true, context: { mode: "remote", role: "owner" } })
+  };
+  const app = express();
+  app.use(express.json());
+  app.use("/api/v1", createManagementApiRouter({ auth, mode: "remote" }));
+  const server = await new Promise<Server>((resolve) => {
+    const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
+  });
+  const address = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    })
+  };
+}

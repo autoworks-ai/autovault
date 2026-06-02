@@ -172,7 +172,8 @@ describe("install.sh", () => {
     expect(result.code).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("AutoVault");
-    expect(result.stdout).toMatch(/validate\s+(→|->)\s+sign\s+(→|->)\s+vault/);
+    expect(result.stdout).toMatch(/reviewed\s+(→|->)\s+signed\s+(→|->)\s+admitted/);
+    expect(result.stdout).toContain("+----------+");
     expect(result.stdout).toMatch(/stage 1\/6\s+detect\s+checking prerequisites and platform/);
     expect(result.stdout).toMatch(/stage 5\/6\s+path\s+installing the autovault shim/);
     expect(result.stdout).toMatch(/stage 6\/6\s+setup\s+skipped by AUTOVAULT_NO_SETUP=1/);
