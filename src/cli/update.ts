@@ -330,14 +330,19 @@ function updateCallFor(info: VersionInfo, ref: string, env: NodeJS.ProcessEnv): 
 }
 
 function formatCommand(call: Pick<UpdateRunnerCall, "command" | "args">): string {
-  return [call.command, ...call.args].join(" ");
+  return [call.command, ...call.args].map(shellQuote).join(" ");
 }
 
 function formatPlanCommand(call: UpdateRunnerCall, ref: string): string {
   if (call.command === "sh") {
-    return `AUTOVAULT_REF=${ref} AUTOVAULT_YES=1 ${formatCommand(call)}`;
+    return `AUTOVAULT_REF=${shellQuote(ref)} AUTOVAULT_YES=1 ${formatCommand(call)}`;
   }
   return formatCommand(call);
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 function targetVersion(ref: string): string {
@@ -445,9 +450,9 @@ export async function runUpdateCommand(
 
   if (parsed.dryRun) return 0;
 
-  const tty = options.isTty ?? isTtyAvailable();
+  const canPrompt = (options.isTty ?? isTtyAvailable()) && stdout.isTTY === true;
   if (!parsed.yes) {
-    if (!tty) {
+    if (!canPrompt) {
       stdout.write("\nRun autovault update --yes to apply.\n");
       return 0;
     }
