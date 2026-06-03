@@ -143,7 +143,7 @@ Distribution:
 The CLI is the local operator surface:
 
 ```text
-autovault add <source-or-path> [--source github|agentskills|url|local] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
+autovault add <source-or-path> [--source github|agentskills|url|local] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
 autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
 autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]

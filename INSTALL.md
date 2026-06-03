@@ -277,7 +277,7 @@ autovault add-local ./path/to/your-skill \
 Machine-readable output:
 
 ```bash
-autovault add ./path/to/your-skill --sync-profiles --json
+autovault add ./path/to/your-skill --sync-profiles --yes --json
 ```
 
 Vendor drop-in pattern:

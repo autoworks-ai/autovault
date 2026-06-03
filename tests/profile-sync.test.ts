@@ -109,6 +109,22 @@ describe("profile sync", () => {
     ).resolves.toContain(path.join("skills", "metadata-routed"));
   });
 
+  it("does not use AutoVault target agents when agents frontmatter is explicit empty", async () => {
+    await ensureStorage();
+    await writeSkill("explicit-empty-agents", skill("explicit-empty-agents", []), [], {
+      source: "github",
+      identifier: "owner/repo:skills/explicit-empty-agents/SKILL.md",
+      fetchedAt: "2026-06-03T00:00:00.000Z",
+      contentHash: "0".repeat(64),
+      targetAgents: ["codex"]
+    });
+
+    const result = await syncProfiles();
+
+    expect(result.profiles.codex).toBeUndefined();
+    expect(result.warnings.join("\n")).toContain("explicit-empty-agents");
+  });
+
   it("uses configured profile roots and lets CLI roots override them", async () => {
     await ensureStorage();
     await writeSkill("configured-skill", skill("configured-skill", ["claude-code"]));

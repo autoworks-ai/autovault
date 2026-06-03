@@ -367,9 +367,10 @@ export async function readSkillUnlocked(name: string): Promise<SkillRecord | nul
     const skillMd = await fs.readFile(skillPath, "utf-8");
     await verifySignatureIfPresent(name, skillMd);
     const { data } = parseFrontmatter(skillMd);
+    const hasAgentsFrontmatter = Object.prototype.hasOwnProperty.call(data, "agents");
     const frontmatterAgents = asStringArray(data.agents);
     let fallbackAgents: string[] = [];
-    if (frontmatterAgents.length === 0) {
+    if (!hasAgentsFrontmatter) {
       const sourceStatus = await readSkillSourceStatusUnlocked(name);
       if (sourceStatus.kind === "present") {
         fallbackAgents = asStringArray(sourceStatus.source.targetAgents);

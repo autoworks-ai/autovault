@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { runAddCommand } from "../src/cli/add.js";
 import type { AddSkillInput } from "../src/tools/add-skill.js";
@@ -8,7 +9,7 @@ import type { AddLocalSkillResult } from "../src/installer/local.js";
 import { readSkillManifest } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CLI_PATH = path.join(REPO_ROOT, "src/cli.ts");
 const TSX_BIN = path.join(REPO_ROOT, "node_modules/.bin/tsx");
 
