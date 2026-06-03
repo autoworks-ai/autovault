@@ -37,15 +37,16 @@ describe("dashboard brand system", () => {
 
   it("uses a collection browser for skills before opening skill detail", () => {
     const app = readProjectFile("ui/client/src/App.tsx");
-    const styles = readProjectFile("ui/client/src/styles.css");
+    const template = readProjectFile("ui/client/src/skill-template.css");
 
     expect(app).toContain("type SkillViewMode");
     expect(app).toContain("type SkillSortKey");
     expect(app).toContain("function SkillsCollection");
     expect(app).not.toContain("return body.skills[0]?.name ?? null;");
-    expect(styles).toContain(".collection-toolbar");
-    expect(styles).toContain(".skill-card-grid");
-    expect(styles).toContain(".skill-table");
+    // Grid + list directory vocabulary, shared verbatim with the website examples page.
+    expect(template).toContain(".dir-toolbar");
+    expect(template).toContain(".skill-tile");
+    expect(template).toContain(".dir-list");
   });
 
   it("shares a cloud-compatible shell with top navigation, account context, and users gating", () => {
@@ -75,16 +76,47 @@ describe("dashboard brand system", () => {
 
   it("renders skill details as an inspectable bundle, not only editable metadata", () => {
     const app = readProjectFile("ui/client/src/App.tsx");
-    const styles = readProjectFile("ui/client/src/styles.css");
+    const template = readProjectFile("ui/client/src/skill-template.css");
 
     expect(app).toContain("type SkillBundleFile");
     expect(app).toContain("function SkillBundleInspector");
     expect(app).toContain("Bundle contents");
-    expect(app).toContain("Provenance");
-    expect(app).toContain("Permission surface");
-    expect(styles).toContain(".skill-detail-tabs");
-    expect(styles).toContain(".bundle-browser");
-    expect(styles).toContain(".resource-preview");
-    expect(styles).toContain(".provenance-grid");
+    // Detail surfaces permissions and provenance alongside the bundle, not just metadata.
+    expect(app).toContain("function SkillPermissionList");
+    expect(app).toContain("function SkillProvenanceTimeline");
+    expect(template).toContain(".sd-tabs");
+    expect(template).toContain(".sd-bundle");
+    expect(template).toContain(".sd-resource-preview");
+    expect(template).toContain(".sd-prov-timeline");
+  });
+
+  it("surfaces the add-skill outcome inside the dialog instead of behind it", () => {
+    const app = readProjectFile("ui/client/src/App.tsx");
+    const styles = readProjectFile("ui/client/src/styles.css");
+
+    // The install handler reports a structured outcome the dialog can render
+    // in context, rather than firing-and-forgetting into a top-level banner
+    // that the modal backdrop hides.
+    expect(app).toContain("type InstallOutcome");
+    expect(app).toContain("onCreate: (payload: AddSkillPayload) => Promise<InstallOutcome>");
+    // Both failure and installed-with-warnings states render in the modal.
+    expect(app).toContain("Install failed");
+    expect(app).toContain('className="dialog-outcome"');
+    expect(styles).toContain(".dialog-outcome");
+  });
+
+  it("ports the website skill template into a portable, imported layer reused across surfaces", () => {
+    const main = readProjectFile("ui/client/src/main.tsx");
+    const template = readProjectFile("ui/client/src/skill-template.css");
+
+    // The shared template is a real, framework-agnostic file wired into the bundle.
+    expect(main).toContain('import "./skill-template.css"');
+    // Detail anatomy ported from SkillDetailPage.vue (header → stats → rail).
+    expect(template).toContain(".sd-head");
+    expect(template).toContain(".sd-stats");
+    expect(template).toContain(".sd-rail");
+    // Token alias layer maps the website's names onto the dashboard --av-* tokens
+    // so the CSS stays byte-close to the website and can converge later.
+    expect(template).toContain("--accent: var(--av-mint)");
   });
 });

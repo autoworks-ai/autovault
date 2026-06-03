@@ -1,10 +1,13 @@
 :root {
   color-scheme: dark;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--av-sans);
   color: #e6edf3;
   background: #0b1014;
   font-synthesis: none;
-  text-rendering: geometricPrecision;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
   --av-bg: #0b1014;
   --av-bg-2: #0f161c;
   --av-panel: #131c24;
@@ -14,12 +17,36 @@
   --av-ink: #e6edf3;
   --av-ink-2: #aab8c5;
   --av-ink-3: #6e8090;
+  --av-ink-4: #4a5b6b;
   --av-mint: #5ad6c0;
   --av-mint-soft: rgba(90, 214, 192, 0.12);
   --av-warn: #e8a866;
   --av-bad: #d97171;
   --av-blue: #5a9dd6;
   --av-violet: #b48ad6;
+
+  /* Type families — single source for the whole app */
+  --av-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --av-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --av-serif: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+
+  /* Radii */
+  --av-r-sm: 4px;
+  --av-r-md: 6px;
+  --av-r-lg: 8px;
+  --av-r-xl: 10px;
+  --av-r-pill: 999px;
+
+  /* Spacing scale (4px base) */
+  --av-space-1: 4px;
+  --av-space-2: 8px;
+  --av-space-3: 12px;
+  --av-space-4: 16px;
+  --av-space-5: 20px;
+  --av-space-6: 24px;
+  --av-space-7: 32px;
+  --av-space-8: 40px;
+
   --av-ease: cubic-bezier(0.4, 0, 0.2, 1);
   --av-ease-lock: cubic-bezier(0.34, 1.56, 0.64, 1);
   --av-dur-fast: 120ms;
@@ -31,6 +58,15 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Headings: refined weight + optical tracking to match autovault.dev */
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 html,
@@ -164,10 +200,12 @@ svg {
   width: 44px;
   height: 44px;
   border: 1px solid rgba(90, 214, 192, 0.32);
-  border-radius: 8px;
+  border-radius: var(--av-r-lg);
   color: var(--av-mint);
   background: var(--av-mint-soft);
   box-shadow: 0 0 0 1px rgba(90, 214, 192, 0.06), 0 16px 40px rgba(90, 214, 192, 0.08);
+  /* Idle "breathe" — the brand's resting halo, on the 4.4s cycle. */
+  animation: av-breathe var(--av-cycle) var(--av-ease) infinite;
 }
 
 .brand-mark::after {
@@ -207,12 +245,12 @@ svg {
 
 .micro-label {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: var(--av-space-2);
   color: var(--av-ink-3);
-  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0;
+  font-family: var(--av-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   line-height: 1.2;
   text-transform: uppercase;
 }
@@ -235,8 +273,9 @@ svg {
 .control-stat strong {
   display: block;
   color: var(--av-ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--av-mono);
   font-size: 20px;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
@@ -266,13 +305,15 @@ svg {
   justify-content: center;
   gap: 8px;
   min-height: 38px;
-  border-radius: 8px;
+  border-radius: var(--av-r-lg);
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background var(--av-dur-fast) var(--av-ease),
     color var(--av-dur-fast) var(--av-ease),
     border-color var(--av-dur-fast) var(--av-ease),
-    box-shadow var(--av-dur-base) var(--av-ease);
+    box-shadow var(--av-dur-base) var(--av-ease),
+    transform var(--av-dur-fast) var(--av-ease);
 }
 
 .nav-button {
@@ -401,11 +442,15 @@ label select:focus {
 
 .topbar {
   min-height: 52px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  row-gap: var(--av-space-3);
 }
 
 .topbar-title {
   display: grid;
-  gap: 10px;
+  gap: var(--av-space-3);
+  flex: 1 1 340px;
   min-width: 0;
 }
 
@@ -413,29 +458,38 @@ label select:focus {
   color: var(--av-ink);
   font-size: clamp(22px, 2.2vw, 30px);
   line-height: 1.12;
+  letter-spacing: -0.025em;
 }
 
 .topbar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: var(--av-space-2);
 }
 
 .top-nav {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: var(--av-space-1);
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .top-nav button {
   min-height: 32px;
   border: 1px solid var(--av-line);
-  border-radius: 8px;
-  padding: 0 10px;
+  border-radius: var(--av-r-md);
+  padding: 0 12px;
   color: var(--av-ink-3);
   background: rgba(16, 24, 32, 0.72);
+  white-space: nowrap;
   cursor: pointer;
+  transition:
+    color var(--av-dur-fast) var(--av-ease),
+    border-color var(--av-dur-fast) var(--av-ease),
+    background var(--av-dur-fast) var(--av-ease);
 }
 
 .top-nav button:hover,
@@ -448,17 +502,24 @@ label select:focus {
 .account-card {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--av-space-2);
+  min-width: 0;
+  max-width: 300px;
   min-height: 42px;
   border: 1px solid var(--av-line);
-  border-radius: 8px;
+  border-radius: var(--av-r-lg);
   padding: 6px 10px;
   color: var(--av-ink);
   background: rgba(16, 24, 32, 0.72);
 }
 
+.account-card > span {
+  min-width: 0;
+}
+
 .account-card.large {
   width: fit-content;
+  max-width: 100%;
   min-height: 58px;
   padding: 10px 12px;
 }
@@ -466,7 +527,9 @@ label select:focus {
 .account-card strong,
 .account-card small {
   display: block;
+  overflow: hidden;
   line-height: 1.2;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -484,15 +547,7 @@ label select:focus {
   box-shadow: 0 0 0 4px rgba(90, 214, 192, 0.12);
 }
 
-.content-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 304px;
-  gap: 18px;
-  align-items: start;
-}
-
-.home-stack,
-.collection-stack {
+.home-stack {
   display: grid;
   gap: 18px;
 }
@@ -510,6 +565,16 @@ label select:focus {
   color: var(--av-ink);
   font-size: clamp(24px, 3vw, 38px);
   line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+/* Editorial brand moment: a single serif-italic accent word in the hero. */
+.serif-accent {
+  font-family: var(--av-serif);
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--av-mint);
 }
 
 .home-hero p {
@@ -548,8 +613,10 @@ label select:focus {
 .home-metric strong {
   display: block;
   color: var(--av-ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--av-mono);
   font-size: 34px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
   line-height: 1;
 }
 
@@ -663,25 +730,6 @@ label select:focus {
   font-size: 12px;
 }
 
-.collection-toolbar {
-  display: grid;
-  grid-template-columns: minmax(180px, auto) minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-}
-
-.collection-toolbar h3 {
-  margin: 0;
-}
-
-.collection-controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.search-control,
 .select-control {
   display: inline-flex;
   grid-template-columns: none;
@@ -695,34 +743,21 @@ label select:focus {
   background: #0c1319;
 }
 
-.search-control {
-  flex: 1 1 230px;
-  max-width: 360px;
-}
-
-.search-control input,
 .select-control select {
   min-width: 0;
+  min-height: 34px;
   border: 0;
   color: var(--av-ink);
   background: transparent;
   outline: none;
-}
-
-.search-control input {
-  width: 100%;
-}
-
-.select-control select {
-  min-height: 34px;
   cursor: pointer;
 }
 
 .micro-symbol {
   color: var(--av-ink-3);
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--av-mono);
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .view-toggle {
@@ -750,108 +785,6 @@ label select:focus {
   background: var(--av-panel);
 }
 
-.skill-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 14px;
-}
-
-.skill-card {
-  display: grid;
-  gap: 12px;
-  min-height: 238px;
-  padding: 15px;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  color: var(--av-ink);
-  background: rgba(19, 28, 36, 0.88);
-  text-align: left;
-  cursor: pointer;
-}
-
-.skill-card:hover {
-  border-color: rgba(90, 214, 192, 0.42);
-  box-shadow: 0 16px 48px rgba(90, 214, 192, 0.06);
-}
-
-.skill-card-top,
-.skill-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.skill-card strong {
-  color: var(--av-ink);
-  font-size: 17px;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-}
-
-.skill-card p {
-  display: -webkit-box;
-  min-height: 64px;
-  margin: 0;
-  color: var(--av-ink-2);
-  line-height: 1.45;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-}
-
-.skill-card-meta span {
-  color: var(--av-ink-3);
-  font-size: 12px;
-}
-
-.skill-table {
-  display: grid;
-  padding: 0;
-  overflow: hidden;
-}
-
-.skill-table-row {
-  display: grid;
-  grid-template-columns: minmax(180px, 1.5fr) minmax(120px, 1fr) 100px 80px 110px;
-  gap: 12px;
-  align-items: center;
-  min-height: 48px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--av-line);
-  color: var(--av-ink-2);
-  background: transparent;
-  text-align: left;
-}
-
-.skill-table-row:last-child {
-  border-bottom: 0;
-}
-
-.skill-table-row:not(.header) {
-  cursor: pointer;
-}
-
-.skill-table-row:not(.header):hover {
-  color: var(--av-ink);
-  background: rgba(90, 214, 192, 0.06);
-}
-
-.skill-table-row.header {
-  min-height: 42px;
-  color: var(--av-ink-3);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.skill-table-row span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .panel {
   min-width: 0;
   border: 1px solid var(--av-line);
@@ -859,15 +792,6 @@ label select:focus {
   padding: 18px;
   background: rgba(19, 28, 36, 0.92);
   box-shadow: 0 16px 60px rgba(0, 0, 0, 0.18);
-}
-
-.editor {
-  display: grid;
-  gap: 16px;
-}
-
-.manifest-editor {
-  border-color: rgba(90, 157, 214, 0.36);
 }
 
 .panel-header h3 {
@@ -905,7 +829,7 @@ label select:focus {
   color: #08241f;
   background: var(--av-mint);
   border-color: var(--av-mint);
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .primary-button:hover {
@@ -918,8 +842,9 @@ label select:focus {
   transition: transform var(--av-dur-base) var(--av-ease-lock);
 }
 
+/* Admit = lock-in: the icon scales into place rather than spinning. */
 .admit-button:hover svg {
-  transform: rotate(45deg);
+  transform: scale(1.12);
 }
 
 .danger-button {
@@ -955,74 +880,6 @@ textarea {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-}
-
-.facts {
-  display: grid;
-  gap: 14px;
-}
-
-.manifest-panel {
-  position: sticky;
-  top: 22px;
-}
-
-.manifest-heading,
-.manifest-block {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-width: 0;
-}
-
-.manifest-heading strong {
-  color: var(--av-mint);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-
-.manifest-block {
-  min-height: 42px;
-  padding: 10px 12px;
-  border: 1px dashed rgba(90, 214, 192, 0.3);
-  border-radius: 8px;
-  background: rgba(90, 214, 192, 0.06);
-}
-
-.manifest-block span {
-  color: var(--av-ink-3);
-  font-size: 12px;
-}
-
-.manifest-block strong {
-  color: var(--av-ink);
-  font-size: 13px;
-}
-
-.fact-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 46px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--av-line);
-}
-
-.fact-row svg {
-  color: var(--av-blue);
-}
-
-.fact-row strong {
-  display: block;
-  color: var(--av-ink);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 18px;
-}
-
-.fact-row span {
-  color: var(--av-ink-3);
 }
 
 .chips {
@@ -1108,213 +965,28 @@ textarea {
   gap: 10px;
 }
 
-.skill-detail-stack {
+/* In-dialog install outcome: top-align the icon against a stacked detail
+   block so a multi-line failure reason or warning list reads cleanly. */
+.add-skill-dialog .notice {
+  align-items: flex-start;
+}
+
+.dialog-outcome {
   display: grid;
-  gap: 18px;
+  gap: 4px;
+  min-width: 0;
 }
 
-.skill-detail-head {
-  display: grid;
-  gap: 14px;
-}
-
-.skill-detail-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
-}
-
-.skill-detail-tabs button {
-  min-height: 34px;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  padding: 0 12px;
-  color: var(--av-ink-3);
-  background: rgba(16, 24, 32, 0.72);
-  cursor: pointer;
-}
-
-.skill-detail-tabs button:hover,
-.skill-detail-tabs button.active {
-  color: var(--av-ink);
-  border-color: rgba(90, 214, 192, 0.34);
-  background: rgba(90, 214, 192, 0.1);
-}
-
-.bundle-browser,
-.skill-overview-panel,
-.permission-surface,
-.provenance-panel,
-.users-panel {
-  display: grid;
-  gap: 16px;
-}
-
-.bundle-layout {
-  display: grid;
-  grid-template-columns: minmax(210px, 0.34fr) minmax(0, 1fr);
-  gap: 14px;
-  align-items: start;
-}
-
-.resource-tree {
-  display: grid;
-  gap: 7px;
-  max-height: 560px;
-  overflow: auto;
-  padding-right: 2px;
-}
-
-.resource-tree button {
-  display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 9px;
-  align-items: center;
-  min-height: 56px;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  padding: 8px;
+.dialog-outcome span {
   color: var(--av-ink-2);
-  background: rgba(16, 24, 32, 0.72);
-  text-align: left;
-  cursor: pointer;
-}
-
-.resource-tree button:hover,
-.resource-tree button.active {
-  color: var(--av-ink);
-  border-color: rgba(90, 214, 192, 0.34);
-  background: rgba(90, 214, 192, 0.08);
-}
-
-.resource-tree .kind {
-  display: inline-flex;
-  justify-content: center;
-  min-height: 22px;
-  border: 1px solid var(--av-line);
-  border-radius: 999px;
-  padding: 2px 7px;
-  color: var(--av-mint);
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
-}
-
-.resource-tree strong,
-.resource-tree small {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resource-tree small {
-  margin-top: 3px;
-  color: var(--av-ink-3);
-  font-size: 11px;
-}
-
-.resource-preview {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  padding: 14px;
-  background: rgba(12, 19, 25, 0.82);
-}
-
-.resource-preview-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.resource-preview h3 {
-  margin: 0;
-  color: var(--av-ink);
-  overflow-wrap: anywhere;
-}
-
-.resource-preview p {
-  margin: 0;
-}
-
-.resource-preview pre,
-.skill-md-preview {
-  max-height: 520px;
-  overflow: auto;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  padding: 14px;
-  color: #d9e6ef;
-  background: #080d11;
-  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-}
-
-.svg-preview {
-  display: grid;
-  place-items: center;
-  min-height: 240px;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  background: #080d11;
-}
-
-.svg-preview svg {
-  width: min(320px, 100%);
-  height: auto;
-}
-
-.overview-grid,
-.provenance-grid,
-.permission-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 10px;
-}
-
-.overview-grid div,
-.provenance-grid div,
-.permission-row {
-  min-width: 0;
-  border: 1px solid var(--av-line);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: rgba(16, 24, 32, 0.72);
-}
-
-.overview-grid span,
-.provenance-grid span,
-.permission-row span {
-  display: block;
-  color: var(--av-ink-3);
-  font-size: 12px;
-}
-
-.overview-grid strong,
-.provenance-grid strong,
-.permission-row strong {
-  display: block;
-  margin-top: 5px;
-  color: var(--av-ink);
-  overflow-wrap: anywhere;
-}
-
-.permission-row.good {
-  border-color: rgba(90, 214, 192, 0.32);
-}
-
-.permission-row.warn {
-  border-color: rgba(232, 168, 102, 0.44);
+  font-size: 0.85rem;
+  word-break: break-word;
 }
 
 .users-panel {
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
 }
 
 .local-user-state {
@@ -1385,7 +1057,10 @@ textarea {
 }
 
 .group-row {
-  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr) minmax(160px, auto);
+  /* Cap the tags column so a group with many tags can't starve the
+     description column to 0 width (it would otherwise wrap one char per line). */
+  grid-template-columns: minmax(160px, 240px) minmax(0, 1fr) minmax(140px, 260px);
+  align-items: start;
 }
 
 .sync-row,
@@ -1437,7 +1112,7 @@ textarea {
 }
 
 .sync-meta span {
-  font-family: "SFMono-Regular", Consolas, monospace;
+  font-family: var(--av-mono);
 }
 
 .client-row {
@@ -1574,6 +1249,46 @@ textarea {
   }
 }
 
+/* Idle brand-mark halo breathe (brand: ~0.7–1 opacity on the 4.4s cycle).
+   Resting state (0%/100%) matches the static box-shadow so reduced-motion
+   settles to the correct look. */
+@keyframes av-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(90, 214, 192, 0.06), 0 16px 40px rgba(90, 214, 192, 0.08);
+  }
+
+  50% {
+    box-shadow: 0 0 0 1px rgba(90, 214, 192, 0.14), 0 18px 48px rgba(90, 214, 192, 0.16);
+  }
+}
+
+/* One orchestrated entrance: workspace sections rise + fade in, staggered.
+   Re-plays when the routed view child remounts on navigation. */
+.workspace > * {
+  animation: av-rise var(--av-dur-slow) var(--av-ease) both;
+}
+
+.workspace > *:nth-child(2) {
+  animation-delay: 45ms;
+}
+
+.workspace > *:nth-child(3) {
+  animation-delay: 90ms;
+}
+
+@keyframes av-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1050px) {
   .shell {
     grid-template-columns: 1fr;
@@ -1583,21 +1298,14 @@ textarea {
     min-height: auto;
   }
 
-  .content-grid,
   .home-grid,
   .home-columns,
-  .collection-toolbar,
   .profile-fields,
   .status-row,
   .group-row,
   .sync-row,
-  .client-row,
-  .skill-table-row {
+  .client-row {
     grid-template-columns: 1fr;
-  }
-
-  .manifest-panel {
-    position: static;
   }
 }
 
@@ -1633,8 +1341,6 @@ textarea {
     height: 72px;
   }
 
-  .collection-controls,
-  .search-control,
   .select-control {
     width: 100%;
     max-width: none;
