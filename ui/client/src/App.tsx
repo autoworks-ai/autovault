@@ -868,7 +868,23 @@ function AddSkillDialog({
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault();
     setOutcome(null);
-    const result = await onCreate(buildPayload());
+    const payload = buildPayload();
+    // The inputs use `required`, which treats whitespace as valid, but
+    // buildPayload trims — so a blank-but-spaces entry would round-trip to a
+    // confusing server failure. Guard the trimmed required fields here.
+    const guardMessage =
+      payload.source === "local"
+        ? payload.skill_dir
+          ? null
+          : "Enter the skill folder path to install from."
+        : payload.source !== "inline" && !payload.identifier
+          ? "Enter a repo/path, URL, or upstream id."
+          : null;
+    if (guardMessage) {
+      setOutcome({ status: "failed", message: guardMessage });
+      return;
+    }
+    const result = await onCreate(payload);
     // Clean install: close and let the parent's navigation reveal the skill.
     // Installed-with-warnings or failure: keep the dialog open and report
     // in context (form state is preserved for a retry on failure).
