@@ -1751,7 +1751,7 @@ function SkillProvenanceTimeline({ detail }: { detail: SkillDetail }) {
         <span className="when">{detail.provenance.integrity}</span>
       </div>
       <div className="sd-prov-row">
-        <span className={`pip ${sourcePip}`}>{sourcePip === "bad" ? <AlertTriangle /> : <CheckCircle2 />}</span>
+        <span className={`pip ${sourcePip}`}>{sourcePip === "bad" ? <AlertTriangle /> : sourcePip === "ok" ? <CheckCircle2 /> : <Minus />}</span>
         <div>
           <div className="ttl">{source.label}</div>
           <div className="det">{source.identifier ? <code>{source.identifier}</code> : "No identifier recorded"}</div>

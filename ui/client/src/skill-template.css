@@ -43,6 +43,7 @@
   --r-md: var(--av-r-md);
   --r-lg: var(--av-r-lg);
   --r-xl: var(--av-r-xl);
+  --r-pill: var(--av-r-pill);
   --ease: var(--av-ease);
   --dur-fast: var(--av-dur-fast);
   --dur-base: var(--av-dur-base);
