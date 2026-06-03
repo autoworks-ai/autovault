@@ -73,6 +73,7 @@ export type SkillSource = {
   identifier: string;
   bundledSkillName?: string;
   version?: string;
+  targetAgents?: string[];
   upstreamSha?: string;
   fetchedAt: string;
   contentHash: string;
@@ -313,10 +314,15 @@ function asCapabilities(value: unknown): SkillRecord["capabilities"] {
   };
 }
 
-function buildSummary(name: string, frontmatter: Record<string, unknown>): SkillSummary {
+function buildSummary(
+  name: string,
+  frontmatter: Record<string, unknown>,
+  fallbackAgents: string[] = []
+): SkillSummary {
   const metadata = (frontmatter.metadata ?? {}) as Record<string, unknown>;
   const capabilities = asCapabilities(frontmatter.capabilities);
   const requiresSecrets = asSecretsArray(frontmatter["requires-secrets"]);
+  const frontmatterAgents = asStringArray(frontmatter.agents);
   return {
     name: asString(frontmatter.name, name),
     title: optionalString(frontmatter.title),
@@ -324,7 +330,7 @@ function buildSummary(name: string, frontmatter: Record<string, unknown>): Skill
     version: asString(metadata.version, "0.0.0"),
     tags: asStringArray(frontmatter.tags),
     category: typeof frontmatter.category === "string" ? frontmatter.category : undefined,
-    agents: asStringArray(frontmatter.agents),
+    agents: frontmatterAgents.length > 0 ? frontmatterAgents : fallbackAgents,
     when_to_use: optionalString(frontmatter.when_to_use),
     when_not_to_use: optionalString(frontmatter.when_not_to_use),
     risk_level: optionalString(frontmatter.risk_level),
@@ -361,7 +367,15 @@ export async function readSkillUnlocked(name: string): Promise<SkillRecord | nul
     const skillMd = await fs.readFile(skillPath, "utf-8");
     await verifySignatureIfPresent(name, skillMd);
     const { data } = parseFrontmatter(skillMd);
-    const summary = buildSummary(name, data);
+    const hasAgentsFrontmatter = Object.prototype.hasOwnProperty.call(data, "agents");
+    let fallbackAgents: string[] = [];
+    if (!hasAgentsFrontmatter) {
+      const sourceStatus = await readSkillSourceStatusUnlocked(name);
+      if (sourceStatus.kind === "present") {
+        fallbackAgents = asStringArray(sourceStatus.source.targetAgents);
+      }
+    }
+    const summary = buildSummary(name, data, fallbackAgents);
     return {
       ...summary,
       skillMd,
@@ -1274,76 +1288,75 @@ async function readLegacyInstallStatus(
 // — "Source metadata signature invalid; reinstall the skill" — instead of the
 // generic "No source metadata recorded" message.
 //
-// Lock domain: take the storage lock for the manifest+source.json read pair.
-// Without it, a concurrent writeSkill swap could expose us to the live → bak
-// → tmp window where the skill directory is briefly absent (round-54 medium
-// finding). The lock is also the right serialization point because manifest
-// and source.json are written together inside writeSkill's tmp dir; reading
-// them under the same lock guarantees we don't catch a half-swapped pair.
+// Lock domain: readSkillSourceStatus() takes the storage lock for the
+// manifest+source.json read pair. readSkillSourceStatusUnlocked() is for
+// callers that already hold it.
+export async function readSkillSourceStatusUnlocked(name: string): Promise<SkillSourceStatus> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(path.join(skillDir(name), SOURCE_FILE), "utf-8");
+  } catch {
+    return { kind: "absent" };
+  }
+
+  let parsed: SkillSource;
+  try {
+    parsed = JSON.parse(raw) as SkillSource;
+  } catch {
+    return { kind: "unparseable" };
+  }
+
+  const manifestRaw = await readManifestRaw(name);
+  if (manifestRaw === null) {
+    // Round-56: distinguish legacy pre-manifest installs from tampering.
+    // Pre-v1 writeSkill produced a detached `.autovault-signature` over
+    // SKILL.md and an unsigned `.autovault-source.json`, with no
+    // `.autovault-manifest`. Treating that case as tampered would
+    // version-skew-break every existing install on upgrade — users would
+    // see "Source metadata signature invalid" on legitimate skills they
+    // installed before this upgrade. Detect the legacy shape by checking
+    // the detached signature against SKILL.md; if it verifies, this is a
+    // legacy install whose source metadata is trustworthy at install time
+    // (main wrote both atomically) but is NOT bound by the manifest, so
+    // post-install source.json tampering is undetectable. Caller
+    // (check_updates) should mark these `unchecked` with a reinstall
+    // hint rather than running drift checks against unverified metadata.
+    const legacy = await readLegacyInstallStatus(name);
+    if (legacy.kind === "legacy") {
+      return { kind: "legacy", source: parsed };
+    }
+    warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "no_manifest" });
+    return { kind: "tampered", reason: "manifest_missing_entry" };
+  }
+  const manifest = parseManifest(manifestRaw);
+  if (!manifest) {
+    warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "manifest_corrupt" });
+    return { kind: "tampered", reason: "manifest_corrupt" };
+  }
+  const result = await verifyFile(manifest, name, SOURCE_FILE, raw);
+  if (!result.present) {
+    // Manifest exists but does not cover SOURCE_FILE. This is either a
+    // pre-round-54 install (writeSkill wrote source.json outside the
+    // signed bundle) OR an attacker swapped a fresh source.json in but
+    // could not produce a valid signature. We cannot distinguish; refuse
+    // to trust the metadata in either case. v1 accepts the cost: legacy
+    // installs must reinstall to regain check_updates support.
+    log.warn("storage.signature_missing", {
+      name,
+      file: SOURCE_FILE,
+      reason: "manifest_missing_source"
+    });
+    return { kind: "tampered", reason: "manifest_missing_entry" };
+  }
+  if (!result.valid) {
+    warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "signature_invalid" });
+    return { kind: "tampered", reason: "signature_invalid" };
+  }
+  return { kind: "present", source: parsed };
+}
+
 export async function readSkillSourceStatus(name: string): Promise<SkillSourceStatus> {
-  return withStorageLock(async () => {
-    let raw: string;
-    try {
-      raw = await fs.readFile(path.join(skillDir(name), SOURCE_FILE), "utf-8");
-    } catch {
-      return { kind: "absent" };
-    }
-
-    let parsed: SkillSource;
-    try {
-      parsed = JSON.parse(raw) as SkillSource;
-    } catch {
-      return { kind: "unparseable" };
-    }
-
-    const manifestRaw = await readManifestRaw(name);
-    if (manifestRaw === null) {
-      // Round-56: distinguish legacy pre-manifest installs from tampering.
-      // Pre-v1 writeSkill produced a detached `.autovault-signature` over
-      // SKILL.md and an unsigned `.autovault-source.json`, with no
-      // `.autovault-manifest`. Treating that case as tampered would
-      // version-skew-break every existing install on upgrade — users would
-      // see "Source metadata signature invalid" on legitimate skills they
-      // installed before this upgrade. Detect the legacy shape by checking
-      // the detached signature against SKILL.md; if it verifies, this is a
-      // legacy install whose source metadata is trustworthy at install time
-      // (main wrote both atomically) but is NOT bound by the manifest, so
-      // post-install source.json tampering is undetectable. Caller
-      // (check_updates) should mark these `unchecked` with a reinstall
-      // hint rather than running drift checks against unverified metadata.
-      const legacy = await readLegacyInstallStatus(name);
-      if (legacy.kind === "legacy") {
-        return { kind: "legacy", source: parsed };
-      }
-      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "no_manifest" });
-      return { kind: "tampered", reason: "manifest_missing_entry" };
-    }
-    const manifest = parseManifest(manifestRaw);
-    if (!manifest) {
-      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "manifest_corrupt" });
-      return { kind: "tampered", reason: "manifest_corrupt" };
-    }
-    const result = await verifyFile(manifest, name, SOURCE_FILE, raw);
-    if (!result.present) {
-      // Manifest exists but does not cover SOURCE_FILE. This is either a
-      // pre-round-54 install (writeSkill wrote source.json outside the
-      // signed bundle) OR an attacker swapped a fresh source.json in but
-      // could not produce a valid signature. We cannot distinguish; refuse
-      // to trust the metadata in either case. v1 accepts the cost: legacy
-      // installs must reinstall to regain check_updates support.
-      log.warn("storage.signature_missing", {
-        name,
-        file: SOURCE_FILE,
-        reason: "manifest_missing_source"
-      });
-      return { kind: "tampered", reason: "manifest_missing_entry" };
-    }
-    if (!result.valid) {
-      warnSignatureMismatchOnce(name, SOURCE_FILE, { reason: "signature_invalid" });
-      return { kind: "tampered", reason: "signature_invalid" };
-    }
-    return { kind: "present", source: parsed };
-  });
+  return withStorageLock(() => readSkillSourceStatusUnlocked(name));
 }
 
 export async function readSkillSource(name: string): Promise<SkillSource | null> {

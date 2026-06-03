@@ -143,6 +143,7 @@ Distribution:
 The CLI is the local operator surface:
 
 ```text
+autovault add <source-or-path> [--source github|agentskills|url|local] [--provenance <value>] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
 autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
 autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]
@@ -183,11 +184,13 @@ autovault doctor
 autovault doctor --clean
 autovault doctor --repair
 
-# Import a local skill bundle through the same gate used by MCP installs.
-autovault add-local ./path/to/your-skill --sync-profiles
-autovault add-local ./path/to/your-skill/SKILL.md --sync-profiles
-autovault add-local ./path/to/your-skill \
-  --source https://github.com/org/repo/tree/main/skills/your-skill
+# Add a known skill from any supported source.
+autovault add ./path/to/your-skill --sync-profiles
+autovault add ./path/to/your-skill/SKILL.md --sync-profiles
+autovault add https://github.com/org/repo/tree/main/skills/your-skill
+autovault add owner/repo:skills/your-skill/SKILL.md
+autovault add my-skill --source agentskills
+autovault add https://example.com/SKILL.md --source url
 
 # Search installed skills locally.
 autovault skill search code-review --top-k 5
@@ -200,10 +203,15 @@ autovault ui
 autovault remove skill-author
 ```
 
-`add-local` accepts a bundle directory or a direct `SKILL.md` path. If
-`--source` is omitted, AutoVault records the normalized absolute bundle
-directory as local provenance; pass `--source` only when you want a repository
-URL or other canonical provenance string.
+`autovault add` is the canonical terminal path for known skills from local
+bundles, GitHub repositories, agentskills slugs, or HTTPS URLs. Existing
+installer scripts can keep using `add-local` as a compatibility alias for
+local bundles; there, `--source` still means local provenance. For new local
+adds, omit provenance and AutoVault records the normalized absolute bundle
+directory.
+If a remote skill omits AutoVault-specific `agents` frontmatter, pass
+`--agent codex` (repeatable) for profile sync, or `--no-sync-profiles` for a
+vault-only install.
 
 `autovault setup` is the first-run adoption wizard. It scans the vault, bundled
 skills, and discovered native roots such as `~/.claude/skills`,

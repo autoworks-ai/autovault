@@ -233,34 +233,51 @@ Named profile targets must be distinct from each other and from legacy
 AutoVault still only removes symlinks that already point into its managed
 profile tree; project-local files such as `.md` notes are left alone.
 
-## 4b. Add a local skill bundle
+## 4b. Add a known skill
 
-Third-party installers should use `add-local` when they already have a local
-skill directory on disk:
+Use `autovault add` for known skills from local bundles, GitHub repositories,
+agentskills slugs, or HTTPS URLs:
 
 ```bash
-autovault add-local ./path/to/your-skill --sync-profiles
-autovault add-local ./path/to/your-skill/SKILL.md --sync-profiles
-autovault add-local ./path/to/your-skill \
-  --source https://github.com/org/repo/tree/main/skills/your-skill
+autovault add ./path/to/your-skill --sync-profiles
+autovault add ./path/to/your-skill/SKILL.md --sync-profiles
+autovault add https://github.com/org/repo/tree/main/skills/your-skill
+autovault add owner/repo:skills/your-skill/SKILL.md
+autovault add my-skill --source agentskills
+autovault add https://example.com/SKILL.md --source url
+autovault add https://example.com/SKILL.md --source url --agent codex
 ```
 
-The command accepts a bundle directory or a direct `SKILL.md` path. If
-`--source` is omitted, AutoVault records the normalized absolute bundle
-directory as local provenance; pass `--source` when you want a repository URL
-or other canonical provenance string. It walks sibling resources in
-deterministic order, skips AutoVault metadata files, refuses symlinks, runs the
-same validation/signing pipeline as other install paths, and records honest
+For local paths, AutoVault accepts a bundle directory or a direct `SKILL.md`
+path. If provenance is omitted, AutoVault records the normalized absolute
+bundle directory. Local add walks sibling resources in deterministic order,
+skips AutoVault metadata files, refuses symlinks, runs the same
+validation/signing pipeline as other install paths, and records honest
 `source: "local"` provenance. With `--sync-profiles`, legacy skills that omit
 `agents` can infer agents from explicit/discovered profile roots or
 `~/.claude/skills` / `~/.agents/skills`; explicit `agents: []` stays invalid.
 Local installs are reported as unchecked by `check_updates`; rerun the vendor
 installer to refresh them.
 
+Remote skills may not include AutoVault-specific `agents` frontmatter. When
+profile sync is enabled, pass one or more `--agent` flags so AutoVault knows
+where to expose the skill without patching upstream bytes. Use
+`--no-sync-profiles` for a vault-only remote install.
+
+`add-local` remains as a compatibility alias for third-party installers that
+already have a local skill directory on disk. In that alias, `--source` still
+means the local provenance string:
+
+```bash
+autovault add-local ./path/to/your-skill --sync-profiles
+autovault add-local ./path/to/your-skill \
+  --source https://github.com/org/repo/tree/main/skills/your-skill
+```
+
 Machine-readable output:
 
 ```bash
-autovault add-local ./path/to/your-skill --sync-profiles --json
+autovault add ./path/to/your-skill --sync-profiles --yes --json
 ```
 
 Vendor drop-in pattern:

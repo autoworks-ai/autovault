@@ -106,7 +106,7 @@ export function parseGithubIdentifier(identifier: string): GithubIdentifier {
   const parsed = parseGithubSourceIdentifier(identifier);
   if (parsed.kind !== "exact") {
     throw new Error(
-      `Invalid GitHub identifier: ${identifier}. Expected owner/repo[@ref][:path/to/SKILL.md] or a GitHub blob URL.`
+      `Invalid GitHub identifier: ${identifier}. Expected owner/repo[@ref][:path/to/SKILL.md-or-directory] or a GitHub blob URL.`
     );
   }
   return {
@@ -133,7 +133,7 @@ function parseCompactGithubIdentifier(identifier: string): GithubExactIdentifier
   const [owner, repo] = ownerRepo.split("/");
   if (!owner || !repo) {
     throw new Error(
-      `Invalid GitHub identifier: ${identifier}. Expected owner/repo[@ref][:path/to/SKILL.md]`
+      `Invalid GitHub identifier: ${identifier}. Expected owner/repo[@ref][:path/to/SKILL.md-or-directory]`
     );
   }
   return {
@@ -141,7 +141,7 @@ function parseCompactGithubIdentifier(identifier: string): GithubExactIdentifier
     owner,
     repo,
     ref: refRaw && refRaw.length > 0 ? refRaw : "HEAD",
-    filePath: pathPart && pathPart.length > 0 ? pathPart : "SKILL.md"
+    filePath: pathPart && pathPart.length > 0 ? skillMarkdownPathFromIdentifier(pathPart) : "SKILL.md"
   };
 }
 
@@ -178,11 +178,15 @@ function parseGithubUrlIdentifier(identifier: string): GithubParsedIdentifier {
     const alternatives = buildBlobUrlAlternatives(owner, repo, segments.slice(3));
     if (alternatives.length === 0) {
       throw new Error(
-        `Invalid GitHub blob URL: ${identifier}. Expected https://github.com/<owner>/<repo>/blob/<ref>/<path>/SKILL.md.`
+        `Invalid GitHub blob URL: ${identifier}. Expected https://github.com/<owner>/<repo>/blob/<ref>/<path>/SKILL.md or a skill directory.`
       );
     }
+    const firstSegmentRawPath = segments.slice(4).join("/");
+    const firstSegmentFilePath = firstSegmentRawPath
+      ? skillMarkdownPathFromIdentifier(firstSegmentRawPath)
+      : undefined;
     const firstSegmentRef = alternatives.find(
-      (candidate) => candidate.ref === segments[3] && candidate.filePath === segments.slice(4).join("/")
+      (candidate) => candidate.ref === segments[3] && candidate.filePath === firstSegmentFilePath
     );
     const selected = firstSegmentRef ?? alternatives[0];
     return {
@@ -233,8 +237,8 @@ function buildBlobUrlAlternatives(
   for (let refLength = tail.length - 1; refLength >= 1; refLength -= 1) {
     const ref = tail.slice(0, refLength).join("/");
     const rawPath = tail.slice(refLength).join("/");
-    if (!ref || !rawPath || !isSkillMarkdownPath(rawPath)) continue;
-    const filePath = canonicalGithubFilePath("SKILL.md", rawPath);
+    if (!ref || !rawPath) continue;
+    const filePath = skillMarkdownPathFromIdentifier(rawPath);
     alternatives.push({
       owner,
       repo,
@@ -302,6 +306,12 @@ function decodeGithubUrlSegment(segment: string): string {
 
 function isSkillMarkdownPath(filePath: string): boolean {
   return path.posix.basename(filePath).toLowerCase() === "skill.md";
+}
+
+function skillMarkdownPathFromIdentifier(rawPath: string): string {
+  const canonical = canonicalGithubFilePath("SKILL.md", rawPath);
+  if (isSkillMarkdownPath(canonical)) return canonical;
+  return path.posix.join(canonical, "SKILL.md");
 }
 
 function compactGithubIdentifier(owner: string, repo: string, ref: string, filePath: string): string {

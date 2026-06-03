@@ -88,6 +88,43 @@ describe("profile sync", () => {
     await expect(fs.stat(path.join(externalRoot, "system-skill"))).resolves.toBeTruthy();
   });
 
+  it("uses AutoVault target agents when SKILL.md has no agents frontmatter", async () => {
+    await ensureStorage();
+    await writeSkill("metadata-routed", skill("metadata-routed"), [], {
+      source: "github",
+      identifier: "owner/repo:skills/metadata-routed/SKILL.md",
+      fetchedAt: "2026-06-03T00:00:00.000Z",
+      contentHash: "0".repeat(64),
+      targetAgents: ["codex"]
+    });
+
+    const result = await syncProfiles();
+
+    expect(result.profiles.codex).toEqual(["metadata-routed"]);
+    expect(result.warnings.join("\n")).not.toContain("metadata-routed");
+    await expect(
+      fs.readlink(
+        path.join(currentStorageRoot(), "profiles", "codex", "metadata-routed")
+      )
+    ).resolves.toContain(path.join("skills", "metadata-routed"));
+  });
+
+  it("does not use AutoVault target agents when agents frontmatter is explicit empty", async () => {
+    await ensureStorage();
+    await writeSkill("explicit-empty-agents", skill("explicit-empty-agents", []), [], {
+      source: "github",
+      identifier: "owner/repo:skills/explicit-empty-agents/SKILL.md",
+      fetchedAt: "2026-06-03T00:00:00.000Z",
+      contentHash: "0".repeat(64),
+      targetAgents: ["codex"]
+    });
+
+    const result = await syncProfiles();
+
+    expect(result.profiles.codex).toBeUndefined();
+    expect(result.warnings.join("\n")).toContain("explicit-empty-agents");
+  });
+
   it("uses configured profile roots and lets CLI roots override them", async () => {
     await ensureStorage();
     await writeSkill("configured-skill", skill("configured-skill", ["claude-code"]));

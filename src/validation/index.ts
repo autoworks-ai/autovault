@@ -10,6 +10,10 @@ import { runSecurityScan, scanResource } from "./security.js";
 
 export type ValidationResource = { path: string; content: string };
 
+export type ValidateSkillInputOptions = {
+  allowMissingAgents?: boolean;
+};
+
 function isUnsafeBinPath(p: string): boolean {
   if (typeof p !== "string" || p.length === 0) return true;
   if (/^\//.test(p) || /^[a-zA-Z]:/.test(p)) return true;
@@ -200,7 +204,8 @@ function checkBinResourceMapping(
 
 export function validateSkillInput(
   skillMd: string,
-  resources: ValidationResource[] = []
+  resources: ValidationResource[] = [],
+  options: ValidateSkillInputOptions = {}
 ): ValidationResult {
   const { strictSecurity } = loadConfig();
   const warnings: string[] = [];
@@ -236,7 +241,9 @@ export function validateSkillInput(
     };
   }
 
-  const schemaResult = validateSchema(parsed.data);
+  const schemaResult = validateSchema(parsed.data, {
+    allowMissingAgents: options.allowMissingAgents
+  });
   const resourceUniquenessErrors = checkResourceUniqueness(resources);
   const reservedPathErrors = checkResourceReservedPaths(resources);
   const frontmatterResourceErrors = checkFrontmatterResourcesMapping(parsed.data, resources);

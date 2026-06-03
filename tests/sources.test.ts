@@ -23,6 +23,25 @@ function makeResponse(
   } as unknown as Response;
 }
 
+function requestUrl(input: string | URL): URL {
+  return input instanceof URL ? input : new URL(input);
+}
+
+function isGitHubApiPath(input: string | URL, prefix: string): boolean {
+  const url = requestUrl(input);
+  return url.hostname === "api.github.com" && url.pathname.startsWith(prefix);
+}
+
+function isGitHubApiExactPath(input: string | URL, path: string): boolean {
+  const url = requestUrl(input);
+  return url.hostname === "api.github.com" && url.pathname === path;
+}
+
+function isRawGitHubPath(input: string | URL, suffix: string): boolean {
+  const url = requestUrl(input);
+  return url.hostname === "raw.githubusercontent.com" && url.pathname.endsWith(suffix);
+}
+
 describe("github source", () => {
   it("parses owner/repo[@ref][:path]", () => {
     expect(parseGithubIdentifier("owner/repo")).toMatchObject({
@@ -43,11 +62,25 @@ describe("github source", () => {
       ref: "v1",
       filePath: "skills/foo:name/SKILL.md"
     });
+    expect(parseGithubIdentifier("owner/repo@v1:skills/foo")).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      ref: "v1",
+      filePath: "skills/foo/SKILL.md"
+    });
   });
 
   it("parses GitHub blob URLs as exact skill targets", () => {
     expect(
       parseGithubIdentifier("https://github.com/owner/repo/blob/main/skills/foo/SKILL.md")
+    ).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      ref: "main",
+      filePath: "skills/foo/SKILL.md"
+    });
+    expect(
+      parseGithubIdentifier("https://github.com/owner/repo/blob/main/skills/foo")
     ).toMatchObject({
       owner: "owner",
       repo: "repo",
@@ -118,18 +151,44 @@ describe("github source", () => {
     expect(result.resolvedIdentifier).toBe("owner/repo@main:skills/foo/SKILL.md");
   });
 
+  it("fetches GitHub directory identifiers by appending SKILL.md", async () => {
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: x\n---\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const compact = await fetchSkillFromGitHub("owner/repo:skills/foo", { fetch: fetcher });
+    const blob = await fetchSkillFromGitHub(
+      "https://github.com/owner/repo/blob/main/skills/foo",
+      { fetch: fetcher }
+    );
+
+    expect(compact.sourceUrl).toContain("/skills/foo/SKILL.md");
+    expect(blob.sourceUrl).toContain("/skills/foo/SKILL.md");
+    expect(blob.resolvedIdentifier).toBe("owner/repo@main:skills/foo/SKILL.md");
+    expect(requested.some((u) => isRawGitHubPath(u, "/skills/foo"))).toBe(false);
+  });
+
   it("resolves GitHub blob URLs whose branch names contain slashes", async () => {
     const requested: string[] = [];
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
-      if (u.includes("/commits/feature%2Fskill-import")) {
+      if (isGitHubApiExactPath(url, "/repos/owner/repo/commits/feature%2Fskill-import")) {
         return makeResponse(JSON.stringify({ sha: "3".repeat(40) }));
       }
-      if (u.includes("api.github.com")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/")) {
         return makeResponse("not found", { ok: false, status: 404 });
       }
-      if (u.endsWith("/skills/foo/SKILL.md")) {
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
         return makeResponse("---\nname: x\n---\n");
       }
       return makeResponse("not found", { ok: false, status: 404 });
@@ -143,7 +202,11 @@ describe("github source", () => {
     expect(result.resolvedIdentifier).toBe(
       "owner/repo@feature/skill-import:skills/foo/SKILL.md"
     );
-    expect(requested.some((u) => u.includes("/commits/feature%2Fskill-import"))).toBe(true);
+    expect(
+      requested.some((u) =>
+        isGitHubApiExactPath(u, "/repos/owner/repo/commits/feature%2Fskill-import")
+      )
+    ).toBe(true);
   });
 
   it("discovers one SKILL.md from a GitHub repo-root URL and auto-selects it", async () => {
@@ -158,15 +221,15 @@ description: This description is intentionally long enough to satisfy schema len
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
-      if (u.includes("/commits/HEAD")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/HEAD")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
-      if (u.includes("/git/trees/")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
         return makeResponse(
           JSON.stringify({ tree: [{ path: "skills/foo/SKILL.md", type: "blob" }] })
         );
       }
-      if (u.endsWith("/skills/foo/SKILL.md")) {
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
         return makeResponse(skillMd);
       }
       return makeResponse("not found", { ok: false, status: 404 });
@@ -178,7 +241,11 @@ description: This description is intentionally long enough to satisfy schema len
     expect(result.skillMd).toBe(skillMd);
     expect(result.upstreamSha).toBe("1".repeat(40));
     expect(result.resolvedIdentifier).toBe("owner/repo:skills/foo/SKILL.md");
-    expect(requested.some((u) => u.includes("/git/trees/" + "1".repeat(40)))).toBe(true);
+    expect(
+      requested.some((u) =>
+        isGitHubApiPath(u, `/repos/owner/repo/git/trees/${"1".repeat(40)}`)
+      )
+    ).toBe(true);
   });
 
   it("returns candidate metadata when repo-root discovery finds multiple skills", async () => {
@@ -197,11 +264,10 @@ description: Beta skill description long enough for display.
 # Beta
 `;
     const fetcher = vi.fn(async (url: string | URL) => {
-      const u = url.toString();
-      if (u.includes("/commits/HEAD")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/HEAD")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
-      if (u.includes("/git/trees/")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
         return makeResponse(
           JSON.stringify({
             tree: [
@@ -211,8 +277,8 @@ description: Beta skill description long enough for display.
           })
         );
       }
-      if (u.endsWith("/skills/a/SKILL.md")) return makeResponse(skillA);
-      if (u.endsWith("/skills/b/SKILL.md")) return makeResponse(skillB);
+      if (isRawGitHubPath(url, "/skills/a/SKILL.md")) return makeResponse(skillA);
+      if (isRawGitHubPath(url, "/skills/b/SKILL.md")) return makeResponse(skillB);
       return makeResponse("not found", { ok: false, status: 404 });
     }) as unknown as typeof fetch;
 
@@ -247,11 +313,10 @@ description: This description is intentionally long enough to satisfy schema len
 # Body
 `;
     const fetcher = vi.fn(async (url: string | URL) => {
-      const u = url.toString();
-      if (u.includes("/commits/main")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/main")) {
         return makeResponse(JSON.stringify({ sha: "2".repeat(40) }));
       }
-      if (u.includes("/git/trees/")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
         return makeResponse(
           JSON.stringify({
             tree: [
@@ -261,7 +326,7 @@ description: This description is intentionally long enough to satisfy schema len
           })
         );
       }
-      if (u.endsWith("/skills/nested/skill.md")) {
+      if (isRawGitHubPath(url, "/skills/nested/skill.md")) {
         return makeResponse(skillMd);
       }
       return makeResponse("not found", { ok: false, status: 404 });
@@ -287,20 +352,20 @@ description: This description is intentionally long enough to satisfy schema len
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
-      if (u.endsWith("/commits/feature%2Fskill-import")) {
+      if (isGitHubApiExactPath(url, "/repos/owner/repo/commits/feature%2Fskill-import")) {
         return makeResponse(JSON.stringify({ sha: "4".repeat(40) }));
       }
-      if (u.includes("api.github.com") && u.includes("/commits/")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
         return makeResponse("not found", { ok: false, status: 404 });
       }
-      if (u.includes("/git/trees/")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
         return makeResponse(
           JSON.stringify({
             tree: [{ path: "skills/nested/SKILL.md", type: "blob" }]
           })
         );
       }
-      if (u.endsWith("/skills/nested/SKILL.md")) {
+      if (isRawGitHubPath(url, "/skills/nested/SKILL.md")) {
         return makeResponse(skillMd);
       }
       return makeResponse("not found", { ok: false, status: 404 });
@@ -314,16 +379,19 @@ description: This description is intentionally long enough to satisfy schema len
     expect(result.resolvedIdentifier).toBe(
       "owner/repo@feature/skill-import:skills/nested/SKILL.md"
     );
-    expect(requested.some((u) => u.includes("/commits/feature%2Fskill-import"))).toBe(true);
+    expect(
+      requested.some((u) =>
+        isGitHubApiExactPath(u, "/repos/owner/repo/commits/feature%2Fskill-import")
+      )
+    ).toBe(true);
   });
 
   it("reports a clean error when repo-root discovery finds no skill", async () => {
     const fetcher = vi.fn(async (url: string | URL) => {
-      const u = url.toString();
-      if (u.includes("/commits/HEAD")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/HEAD")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
-      if (u.includes("/git/trees/")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
         return makeResponse(JSON.stringify({ tree: [{ path: "README.md", type: "blob" }] }));
       }
       return makeResponse("not found", { ok: false, status: 404 });

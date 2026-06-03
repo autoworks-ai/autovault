@@ -290,6 +290,27 @@ describe("management API", () => {
     });
   });
 
+  it("returns an actionable validation reason, not a bare 'validation failed'", async () => {
+    const handle = await start();
+    const response = await api(handle, "/api/v1/skills", {
+      method: "POST",
+      headers: { origin: handle.url },
+      body: JSON.stringify({
+        source: "inline",
+        identifier: "dashboard-paste",
+        // Description under the 20-char schema minimum: the failure detail
+        // lives in validation.errors, which the old formatter never read.
+        skill_md: skillMd("invalid-paste", { description: "too short" })
+      })
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toContain("Skill install failed:");
+    expect(body.error).not.toBe("Skill install failed: validation failed");
+    expect(body.error).toContain("description");
+  });
+
   it("saves named profiles and previews membership", async () => {
     await writeSkill("profile-visible", skillMd("profile-visible", {
       agents: ["codex"],

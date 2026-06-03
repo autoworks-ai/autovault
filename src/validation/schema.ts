@@ -41,7 +41,7 @@ const NO_CONTROL_CHARS = /^[^\x00-\x1F\x7F]*$/;
 // lowercase alphanumeric + hyphen, must start with a letter. No `.`, no `/`,
 // no `\`, no `..`. The schema gate is layer one; syncProfiles also runs a
 // path-resolve check as defense-in-depth.
-const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
+export const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]*$/;
 const agentNameSchema = z
   .string()
   .min(1)
@@ -118,11 +118,30 @@ const schema = z.object({
     .optional()
 });
 
-export function validateSchema(data: Record<string, unknown>): {
+const schemaAllowingMissingAgents = schema.extend({
+  agents: z.array(agentNameSchema).optional()
+});
+
+function hasOwn(data: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(data, key);
+}
+
+export function validateAgentName(agent: string): boolean {
+  return AGENT_NAME_PATTERN.test(agent);
+}
+
+export function validateSchema(
+  data: Record<string, unknown>,
+  options: { allowMissingAgents?: boolean } = {}
+): {
   valid: boolean;
   errors: string[];
 } {
-  const result = schema.safeParse(data);
+  const activeSchema =
+    options.allowMissingAgents === true && !hasOwn(data, "agents")
+      ? schemaAllowingMissingAgents
+      : schema;
+  const result = activeSchema.safeParse(data);
   if (result.success) {
     return { valid: true, errors: [] };
   }
