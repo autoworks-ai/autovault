@@ -43,11 +43,25 @@ describe("github source", () => {
       ref: "v1",
       filePath: "skills/foo:name/SKILL.md"
     });
+    expect(parseGithubIdentifier("owner/repo@v1:skills/foo")).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      ref: "v1",
+      filePath: "skills/foo/SKILL.md"
+    });
   });
 
   it("parses GitHub blob URLs as exact skill targets", () => {
     expect(
       parseGithubIdentifier("https://github.com/owner/repo/blob/main/skills/foo/SKILL.md")
+    ).toMatchObject({
+      owner: "owner",
+      repo: "repo",
+      ref: "main",
+      filePath: "skills/foo/SKILL.md"
+    });
+    expect(
+      parseGithubIdentifier("https://github.com/owner/repo/blob/main/skills/foo")
     ).toMatchObject({
       owner: "owner",
       repo: "repo",
@@ -116,6 +130,32 @@ describe("github source", () => {
     expect(raw).toContain("/1234567890abcdef1234567890abcdef12345678/skills/foo/SKILL.md");
     expect(raw).not.toContain("/main/skills/foo/SKILL.md");
     expect(result.resolvedIdentifier).toBe("owner/repo@main:skills/foo/SKILL.md");
+  });
+
+  it("fetches GitHub directory identifiers by appending SKILL.md", async () => {
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (u.includes("api.github.com")) {
+        return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (u.endsWith("/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: x\n---\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const compact = await fetchSkillFromGitHub("owner/repo:skills/foo", { fetch: fetcher });
+    const blob = await fetchSkillFromGitHub(
+      "https://github.com/owner/repo/blob/main/skills/foo",
+      { fetch: fetcher }
+    );
+
+    expect(compact.sourceUrl).toContain("/skills/foo/SKILL.md");
+    expect(blob.sourceUrl).toContain("/skills/foo/SKILL.md");
+    expect(blob.resolvedIdentifier).toBe("owner/repo@main:skills/foo/SKILL.md");
+    expect(requested.some((u) => u.endsWith("/skills/foo"))).toBe(false);
   });
 
   it("resolves GitHub blob URLs whose branch names contain slashes", async () => {

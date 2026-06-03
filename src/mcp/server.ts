@@ -137,7 +137,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "add_skill",
-    "Add a known skill from a source. For GitHub, agentskills, and URL sources, pass `source` plus `identifier`; remote bytes are fetched and validated before storage. For local bundles, pass `source: \"local\"` and `skill_dir`; `identifier` can override local provenance like CLI add-local --source, otherwise the normalized bundle root is recorded. Configured profile links are synced by default unless `sync_profiles: false` is passed. Caller-authored SKILL.md bytes should use `propose_skill`, not add_skill.",
+    "Add a known skill from a source. For GitHub, agentskills, and URL sources, pass `source` plus `identifier`; remote bytes are fetched and validated before storage. Remote skills without `agents` frontmatter need `target_agents` for profile sync, or `sync_profiles: false` for vault-only install. For local bundles, pass `source: \"local\"` and `skill_dir`; `identifier` can override local provenance like CLI add-local --source, otherwise the normalized bundle root is recorded. Caller-authored SKILL.md bytes should use `propose_skill`, not add_skill.",
     {
       source: z.enum(["github", "agentskills", "url", "local"]),
       identifier: z.string().optional(),
@@ -145,6 +145,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
       skill_dir: z.string().optional(),
       sync_profiles: z.boolean().optional(),
       profile_roots: z.record(z.string(), z.string()).optional(),
+      target_agents: z.array(z.string()).optional(),
       discover_profile_roots: z.boolean().optional(),
       verbose: z.boolean().optional()
     },

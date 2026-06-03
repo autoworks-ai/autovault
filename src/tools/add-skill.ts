@@ -10,6 +10,7 @@ export type AddSkillInput = {
   sync_profiles?: boolean;
   profile_roots?: Record<string, string>;
   discover_profile_roots?: boolean;
+  target_agents?: string[];
   verbose?: boolean;
 };
 
@@ -48,7 +49,11 @@ export async function addSkill(input: AddSkillInput): Promise<Record<string, unk
     await installSkill({
       source: input.source,
       identifier: input.identifier,
-      version: input.version
+      version: input.version,
+      sync_profiles: input.sync_profiles,
+      profile_roots: input.profile_roots,
+      discover_profile_roots: input.discover_profile_roots,
+      target_agents: input.target_agents
     }),
     input.verbose
   );

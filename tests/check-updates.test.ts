@@ -20,6 +20,8 @@ metadata:
 
 const skillMdV2 = skillMd.replace("# Body", "# Body v2");
 
+const skillMdWithoutAgents = skillMd.replace("agents: [codex]\n", "");
+
 async function writeBundledSkill(
   name: string,
   body: string,
@@ -49,6 +51,24 @@ describe("checkUpdates", () => {
       { fetchers: { github: fetcher } }
     );
     const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+    expect(result.up_to_date).toContain("drift-skill");
+    expect(result.drifted).toHaveLength(0);
+    expect(result.unchecked).toHaveLength(0);
+  });
+
+  it("reports up_to_date when target agents are stored outside remote SKILL.md", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd: skillMdWithoutAgents,
+      sourceUrl: "https://x",
+      upstreamSha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo", target_agents: ["codex"] },
+      { fetchers: { github: fetcher } }
+    );
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+
     expect(result.up_to_date).toContain("drift-skill");
     expect(result.drifted).toHaveLength(0);
     expect(result.unchecked).toHaveLength(0);

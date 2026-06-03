@@ -1,5 +1,6 @@
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { validateSkillInput } from "../validation/index.js";
+import { validateAgentName } from "../validation/schema.js";
 import {
   type SkillSource,
   validateResourcePathShape,
@@ -28,6 +29,10 @@ export type InstallSkillInput = {
   bundled_skill_name?: string;
   resources?: InstallSkillResource[];
   expected_name?: string;
+  sync_profiles?: boolean;
+  profile_roots?: Record<string, string>;
+  discover_profile_roots?: boolean;
+  target_agents?: string[];
 };
 
 type InstallDeps = {
@@ -42,6 +47,32 @@ type ResourceMergeResult = {
   resources: InstallSkillResource[];
   rejection: string | null;
 };
+
+type TargetAgentsResult =
+  | { agents: string[]; errors: [] }
+  | { agents: []; errors: string[] };
+
+function normalizeTargetAgents(value: string[] | undefined): TargetAgentsResult {
+  const agents: string[] = [];
+  const seen = new Set<string>();
+  const errors: string[] = [];
+  for (const [index, raw] of (value ?? []).entries()) {
+    const agent = raw.trim();
+    if (!validateAgentName(agent)) {
+      errors.push(`target_agents[${index}] must match ^[a-z][a-z0-9-]*$: ${raw}`);
+      continue;
+    }
+    if (!seen.has(agent)) {
+      seen.add(agent);
+      agents.push(agent);
+    }
+  }
+  return errors.length > 0 ? { agents: [], errors } : { agents, errors: [] };
+}
+
+function hasAgentsFrontmatter(data: Record<string, unknown>): boolean {
+  return Object.prototype.hasOwnProperty.call(data, "agents");
+}
 
 function mergeResources(
   fromInput: InstallSkillResource[],
@@ -85,6 +116,22 @@ export async function installSkill(
   input: InstallSkillInput,
   deps: InstallDeps = {}
 ): Promise<Record<string, unknown>> {
+  const targetAgents = normalizeTargetAgents(input.target_agents);
+  if (targetAgents.errors.length > 0) {
+    return {
+      success: false,
+      name: "",
+      validation: {
+        valid: false,
+        repaired: false,
+        errors: targetAgents.errors,
+        warnings: [],
+        securityFlags: []
+      },
+      warnings: []
+    };
+  }
+
   let skillMd = input.skill_md;
   let fetched: FetchedSkill | null = null;
 
@@ -219,7 +266,9 @@ export async function installSkill(
   }
 
   const { output: normalizedSkillMd } = attemptRepair(skillMd);
-  const validation = validateSkillInput(skillMd, resources);
+  const validation = validateSkillInput(skillMd, resources, {
+    allowMissingAgents: !isInline
+  });
   if (!validation.valid) {
     log.info("install_skill.rejected", {
       identifier: input.identifier,
@@ -236,6 +285,24 @@ export async function installSkill(
 
   const { data } = parseFrontmatter(normalizedSkillMd);
   const name = typeof data.name === "string" ? data.name : "unnamed-skill";
+  const missingAgents = !hasAgentsFrontmatter(data);
+  if (missingAgents && (input.sync_profiles ?? true) && targetAgents.agents.length === 0) {
+    const identifier = fetched?.resolvedIdentifier ?? input.identifier;
+    return {
+      success: false,
+      name,
+      outcome: "target_agents_required",
+      validation,
+      warnings: [
+        "The fetched skill has no agents frontmatter, so profile sync needs an explicit target. Re-run with --agent <agent> or --no-sync-profiles."
+      ],
+      source: {
+        source: input.source,
+        identifier,
+        upstreamSha: fetched?.upstreamSha
+      }
+    };
+  }
   if (input.expected_name && name !== input.expected_name) {
     return {
       success: false,
@@ -277,6 +344,7 @@ export async function installSkill(
     identifier: input.skill_md ? input.identifier : fetched?.resolvedIdentifier ?? input.identifier,
     bundledSkillName: input.bundled_skill_name,
     version: input.version,
+    targetAgents: targetAgents.agents.length > 0 ? targetAgents.agents : undefined,
     upstreamSha: fetched?.upstreamSha,
     fetchedAt: new Date().toISOString(),
     contentHash: bundleHash(normalizedSkillMd, resources)
@@ -295,13 +363,18 @@ export async function installSkill(
   // for the operator, and return success.
   const postInstallWarnings: string[] = [];
   let sync: Awaited<ReturnType<typeof syncProfiles>> | undefined;
-  try {
-    sync = await syncProfiles();
-    for (const w of sync.warnings) postInstallWarnings.push(w);
-  } catch (error) {
-    const message = `Profile sync failed after install (vault state is correct): ${String(error)}`;
-    log.warn("install_skill.profile_sync_failed", { name, error: String(error) });
-    postInstallWarnings.push(message);
+  if (input.sync_profiles ?? true) {
+    try {
+      sync = await syncProfiles({
+        profileRoots: input.profile_roots,
+        discover: input.discover_profile_roots
+      });
+      for (const w of sync.warnings) postInstallWarnings.push(w);
+    } catch (error) {
+      const message = `Profile sync failed after install (vault state is correct): ${String(error)}`;
+      log.warn("install_skill.profile_sync_failed", { name, error: String(error) });
+      postInstallWarnings.push(message);
+    }
   }
 
   log.info("install_skill.installed", { name, source: sourceMeta.source });

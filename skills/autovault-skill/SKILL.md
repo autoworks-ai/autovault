@@ -67,6 +67,29 @@ ls -l ~/.claude/skills
 ls -l ~/.codex/skills
 ```
 
+## CLI workflow
+
+Use `autovault add` for known skills from local bundles, GitHub repositories,
+agentskills slugs, or HTTPS URLs:
+
+```bash
+autovault add ./path/to/skill --sync-profiles
+autovault add https://github.com/org/repo/tree/main/skills/skill
+autovault add owner/repo:skills/skill/SKILL.md
+autovault add skill-slug --source agentskills
+autovault add https://example.com/SKILL.md --source url
+autovault add https://example.com/SKILL.md --source url --agent codex
+```
+
+`autovault add-local` remains a compatibility alias for local bundle installer
+scripts. For newly authored skill text from an agent session, use
+`propose_skill` when MCP tools are available instead of writing directly into
+the vault.
+
+If a remote skill lacks AutoVault-specific `agents` frontmatter, keep upstream
+bytes unchanged and route profile sync with `--agent <agent>`. Use
+`--no-sync-profiles` when you only want the skill stored in the vault.
+
 ## Optional compatibility: MCP tools
 
 Some hosts may still connect the AutoVault MCP compatibility server. Only use

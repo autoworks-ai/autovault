@@ -147,7 +147,8 @@ const skillCreateSchema = z.discriminatedUnion("source", [
     .object({
       source: z.enum(["github", "agentskills", "url"]),
       identifier: z.string().trim().min(1),
-      version: z.string().trim().min(1).optional()
+      version: z.string().trim().min(1).optional(),
+      target_agents: stringListSchema.optional()
     })
     .strict(),
   z
@@ -258,11 +259,12 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
                 source: input.source,
                 identifier: input.identifier,
                 version: input.version,
+                target_agents: input.target_agents,
                 sync_profiles: true,
                 discover_profile_roots: true
               });
       if (result.success !== true) {
-        throw new ApiError(400, `Skill install failed: ${formatWarnings(result)}`);
+        throw new ApiError(400, `Skill install failed: ${formatFailureReason(result)}`);
       }
       const name = typeof result.name === "string" ? result.name : "";
       if (!name) throw new ApiError(500, "Skill install succeeded without returning a name");
@@ -302,7 +304,7 @@ export function createManagementApiRouter(options: ManagementApiOptions): expres
         discover_profile_roots: true
       });
       if (update.success !== true) {
-        throw new ApiError(400, `Frontmatter update failed: ${formatWarnings(update)}`);
+        throw new ApiError(400, `Frontmatter update failed: ${formatFailureReason(update)}`);
       }
       const updated = await readSkill(name);
       if (!updated) throw new ApiError(500, `Skill disappeared after update: ${name}`);
@@ -795,12 +797,30 @@ function normalizeFrontmatter(input: unknown): Record<string, unknown> {
   return { ...input as Record<string, unknown> };
 }
 
-function formatWarnings(result: Record<string, unknown>): string {
-  const warnings = Array.isArray(result.warnings)
-    ? result.warnings.filter((warning): warning is string => typeof warning === "string")
-    : [];
-  if (warnings.length > 0) return warnings.join("; ");
+function formatFailureReason(result: Record<string, unknown>): string {
+  // A validation failure puts its real detail in result.validation.errors
+  // (schema/mapping) and result.validation.securityFlags (denylist hits) —
+  // the top-level `warnings` array is empty on that branch. Reading only
+  // `warnings` collapsed every validation failure to the useless literal
+  // "validation failed", so surface the validation detail first. Optional
+  // access keeps this safe for callers whose result has no `validation`.
+  const validation = (result.validation ?? {}) as {
+    errors?: unknown;
+    securityFlags?: unknown;
+  };
+  const detail = [
+    ...toStringList(validation.errors),
+    ...toStringList(validation.securityFlags),
+    ...toStringList(result.warnings)
+  ];
+  if (detail.length > 0) return detail.join("; ");
   return "validation failed";
+}
+
+function toStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 function listCapabilityGroups(): Array<{

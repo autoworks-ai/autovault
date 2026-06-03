@@ -18,6 +18,16 @@ metadata:
 # Body
 `;
 
+const skillMdWithoutAgents = `---
+name: fetched-skill
+description: A description that is intentionally long enough to satisfy the schema length check.
+metadata:
+  version: "1.2.3"
+---
+
+# Body
+`;
+
 describe("installSkill", () => {
   it("installs a skill from inline skill_md and records inline source", async () => {
     const result = await installSkill({
@@ -67,6 +77,96 @@ describe("installSkill", () => {
     const source = await readSkillSource("fetched-skill");
     expect(source?.source).toBe("github");
     expect(source?.identifier).toBe("owner/repo:skills/foo/SKILL.md");
+  });
+
+  it("installs remote skills without agents when target agents are explicit", async () => {
+    const githubFetcher = vi.fn().mockResolvedValue({
+      skillMd: skillMdWithoutAgents,
+      sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/SKILL.md",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+    });
+
+    const result = await installSkill(
+      { source: "github", identifier: "owner/repo", target_agents: ["codex"] },
+      { fetchers: { github: githubFetcher } }
+    );
+
+    expect(result.success).toBe(true);
+    const stored = await readSkill("fetched-skill");
+    expect(stored?.skillMd).toBe(skillMdWithoutAgents);
+    expect(stored?.agents).toEqual(["codex"]);
+    const source = await readSkillSource("fetched-skill");
+    expect(source).toMatchObject({
+      source: "github",
+      targetAgents: ["codex"]
+    });
+  });
+
+  it("installs remote skills without agents as vault-only when sync is disabled", async () => {
+    const githubFetcher = vi.fn().mockResolvedValue({
+      skillMd: skillMdWithoutAgents,
+      sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/SKILL.md",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+    });
+
+    const result = await installSkill(
+      { source: "github", identifier: "owner/repo", sync_profiles: false },
+      { fetchers: { github: githubFetcher } }
+    );
+
+    expect(result.success).toBe(true);
+    const stored = await readSkill("fetched-skill");
+    expect(stored?.skillMd).toBe(skillMdWithoutAgents);
+    expect(stored?.agents).toEqual([]);
+    const source = await readSkillSource("fetched-skill");
+    expect(source?.targetAgents).toBeUndefined();
+  });
+
+  it("does not write a remote skill missing agents when sync needs a target", async () => {
+    const githubFetcher = vi.fn().mockResolvedValue({
+      skillMd: skillMdWithoutAgents,
+      sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/SKILL.md",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+    });
+
+    const result = await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: githubFetcher } }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      name: "fetched-skill",
+      outcome: "target_agents_required"
+    });
+    await expect(readSkill("fetched-skill")).resolves.toBeNull();
+  });
+
+  it("still rejects present unsafe agents on remote skills", async () => {
+    const unsafeAgents = `---
+name: unsafe-agents
+description: A description that is intentionally long enough to satisfy schema checks.
+agents: ["../codex"]
+metadata:
+  version: "1.0.0"
+---
+
+body`;
+    const result = await installSkill(
+      { source: "github", identifier: "owner/repo", target_agents: ["codex"] },
+      {
+        fetchers: {
+          github: vi.fn().mockResolvedValue({
+            skillMd: unsafeAgents,
+            sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/SKILL.md"
+          })
+        }
+      }
+    );
+
+    expect(result.success).toBe(false);
+    const errors = (result as { validation?: { errors?: string[] } }).validation?.errors ?? [];
+    expect(errors.join("\n")).toContain("agent name must match");
   });
 
   it("returns multiple GitHub candidates without writing a skill", async () => {

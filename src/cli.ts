@@ -16,7 +16,6 @@ import {
   listConfiguredProfiles,
   resolveCapabilities,
   syncProfiles,
-  type AddLocalSkillResult,
   type AuditRepoResult,
   type ImportAutohubResult,
   type ResolveCapabilitiesResult,
@@ -27,6 +26,7 @@ import { compactSyncResult, formatResultSync } from "./util/sync-format.js";
 function usageText(): string {
   return `Usage:
   autovault --version
+  autovault add <source-or-path> [--source github|agentskills|url|local] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
   autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]
@@ -198,6 +198,7 @@ function parseProfileLink(value: string | undefined): [string, string] {
 }
 
 const TOP_LEVEL_COMMANDS = [
+  "add",
   "add-local",
   "audit-repo",
   "doctor",
@@ -273,90 +274,6 @@ function formatProfilesList(result: Awaited<ReturnType<typeof listConfiguredProf
     lines.push(
       `    skills ${profile.skills.length === 0 ? "none" : profile.skills.join(", ")}`
     );
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-function formatAddLocalResult(result: AddLocalSkillResult, skillDir: string): string {
-  const theme = makeTheme(process.stdout);
-  const lines: string[] = [];
-  lines.push("");
-  lines.push(`${badge("vault", theme)} ${theme.style.bold("AutoVault local installer")}`);
-  lines.push(sectionTitle(result.success ? "Admission receipt" : "Admission blocked", theme));
-  lines.push(
-    keyValueRows(
-      [
-        { label: "scan", value: skillDir, status: "muted" },
-        {
-          label: "validate",
-          value: result.validation.valid ? "passed" : "failed",
-          status: result.validation.valid ? "ok" : "error"
-        }
-      ],
-      theme
-    )
-  );
-  if (result.success) {
-    lines.push(
-      keyValueRows(
-        [
-          { label: "sign", value: result.name, status: "ok" },
-          ...(result.paths ? [{ label: "storage", value: result.paths.skill, status: "ok" as const }] : []),
-          ...(result.source
-            ? [
-                {
-                  label: "source",
-                  value: result.sourceInferred
-                    ? `${result.source.identifier} (inferred)`
-                    : result.source.identifier,
-                  status: "muted" as const
-                }
-              ]
-            : []),
-          ...(result.inferredAgents && result.inferredAgents.length > 0
-            ? [
-                {
-                  label: "agents",
-                  value: `${result.inferredAgents.join(", ")} (${result.agentInferenceReason ?? "inferred"})`,
-                  status: "muted" as const
-                }
-              ]
-            : [])
-        ],
-        theme
-      )
-    );
-    if (result.sync) {
-      lines.push("");
-      lines.push(`${badge("sync", theme, "dim")} profile sync`);
-      const linkedEntries = Object.entries(result.sync.linkedRoots);
-      if (linkedEntries.length === 0) {
-        lines.push(`  ${theme.style.dim("No external profile roots linked.")}`);
-      } else {
-        for (const [agent, root] of linkedEntries) {
-          const count = result.sync.profiles[agent]?.length ?? 0;
-          lines.push(
-            `  ${theme.style.green(theme.symbol.check)} ${agent} ${theme.style.dim(root)} (${count} skill${count === 1 ? "" : "s"})`
-          );
-        }
-      }
-    }
-    if (result.warnings.length > 0) {
-      lines.push("");
-      lines.push(`${badge("warn", theme, "warn")} warnings`);
-      lines.push(bulletList(result.warnings, theme));
-    }
-    lines.push(
-      renderSuccessOutro(
-        "Skill vaulted",
-        hostRestartGuidance().map((line) => `${theme.style.dim("next")} ${line}`),
-        process.stdout
-      ).trimEnd()
-    );
-  } else {
-    lines.push("");
-    lines.push(`${badge("error", theme, "warn")} errors`);
-    lines.push(bulletList([...result.validation.errors, ...result.warnings], theme));
   }
   return `${lines.join("\n")}\n`;
 }
@@ -579,10 +496,17 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "add") {
+    const { runAddCommand } = await import("./cli/add.js");
+    const outcome = await runAddCommand(args);
+    if (outcome.shouldWriteUpdateNotice) writeOptionalUpdateNotice();
+    return;
+  }
+
   if (command === "add-local") {
     const { runAddLocalCommand } = await import("./cli/add-local.js");
-    await runAddLocalCommand(args);
-    if (!hasFlag(args, "--json")) writeOptionalUpdateNotice();
+    const outcome = await runAddLocalCommand(args);
+    if (outcome.shouldWriteUpdateNotice) writeOptionalUpdateNotice();
     return;
   }
 
