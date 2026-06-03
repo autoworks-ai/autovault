@@ -1,6 +1,5 @@
 import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft,
   AlertTriangle,
   CheckCircle2,
   FileText,
@@ -8,16 +7,15 @@ import {
   Home,
   Loader2,
   List,
+  Minus,
   Plus,
   RefreshCw,
   Save,
   Search,
   ShieldCheck,
   SlidersHorizontal,
-  Tags,
   Trash2,
   Users,
-  Wrench,
   X
 } from "lucide-react";
 
@@ -216,6 +214,15 @@ type AddSkillPayload =
   | { source: "github" | "agentskills" | "url"; identifier: string }
   | { source: "local"; identifier?: string; skill_dir: string };
 
+// The result of an add-skill attempt, surfaced inside the dialog so the
+// operator sees the outcome in context instead of behind the modal backdrop.
+// `installed` carries any non-blocking warnings (auto-normalized frontmatter,
+// non-strict security advisories, post-install profile-sync notes); `failed`
+// carries the actionable reason (validation errors, fetch failures).
+type InstallOutcome =
+  | { status: "installed"; name: string; warnings: string[] }
+  | { status: "failed"; message: string };
+
 type ApiInit = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
@@ -379,21 +386,31 @@ export function App() {
     }
   }
 
-  async function createSkill(payload: AddSkillPayload): Promise<void> {
+  async function createSkill(payload: AddSkillPayload): Promise<InstallOutcome> {
     setBusy(true);
     setError(null);
     try {
-      const body = await api<{ skill: SkillDetail; result: unknown }>("/skills", {
+      const body = await api<{ skill: SkillDetail; result: { warnings?: unknown } }>("/skills", {
         method: "POST",
         body: payload
       });
-      await Promise.all([refreshSkills(body.skill.name), refreshProfiles(), refreshUpdates()]);
+      const warnings = Array.isArray(body.result?.warnings)
+        ? body.result.warnings.filter((warning): warning is string => typeof warning === "string")
+        : [];
+      // The 201 means the skill is committed and signed. Surface it
+      // immediately, then refresh in the background — a follow-up refresh
+      // rejection must not be reported as an install failure.
       setSelectedName(body.skill.name);
       setDetail(body.skill);
       setView("skills");
-      setAddSkillOpen(false);
+      void Promise.all([refreshSkills(body.skill.name), refreshProfiles(), refreshUpdates()]).catch(
+        () => {
+          /* background refresh; the install already succeeded */
+        }
+      );
+      return { status: "installed", name: body.skill.name, warnings };
     } catch (createError) {
-      setError(errorMessage(createError));
+      return { status: "failed", message: errorMessage(createError) };
     } finally {
       setBusy(false);
     }
@@ -822,42 +839,67 @@ function AddSkillDialog({
   open: boolean;
   busy: boolean;
   onClose: () => void;
-  onCreate: (payload: AddSkillPayload) => Promise<void>;
+  onCreate: (payload: AddSkillPayload) => Promise<InstallOutcome>;
 }) {
   const [source, setSource] = useState<AddSkillPayload["source"]>("inline");
   const [identifier, setIdentifier] = useState("");
   const [skillMd, setSkillMd] = useState("");
   const [skillDir, setSkillDir] = useState("");
+  const [outcome, setOutcome] = useState<InstallOutcome | null>(null);
+
+  // The dialog stays mounted (renders null when closed), so clear any prior
+  // outcome each time it reopens.
+  useEffect(() => {
+    if (open) setOutcome(null);
+  }, [open]);
 
   if (!open) return null;
 
-  function submit(event: FormEvent): void {
-    event.preventDefault();
+  function buildPayload(): AddSkillPayload {
     if (source === "inline") {
-      void onCreate({
-        source,
-        identifier: identifier.trim() || undefined,
-        skill_md: skillMd
-      });
-      return;
+      return { source, identifier: identifier.trim() || undefined, skill_md: skillMd };
     }
     if (source === "local") {
-      void onCreate({
-        source,
-        identifier: identifier.trim() || undefined,
-        skill_dir: skillDir.trim()
-      });
+      return { source, identifier: identifier.trim() || undefined, skill_dir: skillDir.trim() };
+    }
+    return { source, identifier: identifier.trim() };
+  }
+
+  async function submit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    setOutcome(null);
+    const payload = buildPayload();
+    // The inputs use `required`, which treats whitespace as valid, but
+    // buildPayload trims — so a blank-but-spaces entry would round-trip to a
+    // confusing server failure. Guard the trimmed required fields here.
+    const guardMessage =
+      payload.source === "local"
+        ? payload.skill_dir
+          ? null
+          : "Enter the skill folder path to install from."
+        : payload.source !== "inline" && !payload.identifier
+          ? "Enter a repo/path, URL, or upstream id."
+          : null;
+    if (guardMessage) {
+      setOutcome({ status: "failed", message: guardMessage });
       return;
     }
-    void onCreate({
-      source,
-      identifier: identifier.trim()
-    });
+    const result = await onCreate(payload);
+    // Clean install: close and let the parent's navigation reveal the skill.
+    // Installed-with-warnings or failure: keep the dialog open and report
+    // in context (form state is preserved for a retry on failure).
+    if (result.status === "installed" && result.warnings.length === 0) {
+      onClose();
+      return;
+    }
+    setOutcome(result);
   }
+
+  const installed = outcome?.status === "installed" ? outcome : null;
 
   return (
     <div className="dialog-backdrop" role="presentation">
-      <form className="panel add-skill-dialog av-state-scan" onSubmit={submit}>
+      <form className="panel add-skill-dialog" onSubmit={(event) => void submit(event)}>
         <div className="panel-header">
           <div>
             <span className="micro-label">admit skill</span>
@@ -874,7 +916,10 @@ function AddSkillDialog({
           Source
           <select
             value={source}
-            onChange={(event) => setSource(event.target.value as AddSkillPayload["source"])}
+            onChange={(event) => {
+              setOutcome(null);
+              setSource(event.target.value as AddSkillPayload["source"]);
+            }}
           >
             <option value="inline">Paste SKILL.md</option>
             <option value="github">GitHub</option>
@@ -889,7 +934,10 @@ function AddSkillDialog({
             Skill folder
             <input
               value={skillDir}
-              onChange={(event) => setSkillDir(event.target.value)}
+              onChange={(event) => {
+                setOutcome(null);
+                setSkillDir(event.target.value);
+              }}
               placeholder="/path/to/skill"
               required
             />
@@ -899,7 +947,10 @@ function AddSkillDialog({
             Identifier
             <input
               value={identifier}
-              onChange={(event) => setIdentifier(event.target.value)}
+              onChange={(event) => {
+                setOutcome(null);
+                setIdentifier(event.target.value);
+              }}
               placeholder={source === "inline" ? "dashboard-paste" : "repo/path, URL, or upstream id"}
               required={source !== "inline"}
             />
@@ -911,7 +962,10 @@ function AddSkillDialog({
             SKILL.md
             <textarea
               value={skillMd}
-              onChange={(event) => setSkillMd(event.target.value)}
+              onChange={(event) => {
+                setOutcome(null);
+                setSkillMd(event.target.value);
+              }}
               placeholder={"---\nname: my-skill\ndescription: ...\n---\n\n# my-skill"}
               rows={12}
               required
@@ -919,14 +973,44 @@ function AddSkillDialog({
           </label>
         ) : null}
 
+        {outcome?.status === "failed" ? (
+          <div className="notice error" role="alert">
+            <AlertTriangle />
+            <div className="dialog-outcome">
+              <strong>Install failed</strong>
+              <span>{outcome.message}</span>
+            </div>
+          </div>
+        ) : null}
+
+        {installed ? (
+          <div className="notice success" role="status">
+            <CheckCircle2 />
+            <div className="dialog-outcome">
+              <strong>Installed {installed.name} with {installed.warnings.length} note{installed.warnings.length === 1 ? "" : "s"}</strong>
+              {installed.warnings.map((warning, index) => (
+                <span key={index}>{warning}</span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className="dialog-actions">
-          <button type="button" className="ghost-button" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button type="submit" className="primary-button" disabled={busy}>
-            <Plus />
-            Install
-          </button>
+          {installed ? (
+            <button type="button" className="primary-button" onClick={onClose}>
+              View skill
+            </button>
+          ) : (
+            <>
+              <button type="button" className="ghost-button" onClick={onClose} disabled={busy}>
+                Cancel
+              </button>
+              <button type="submit" className="primary-button" disabled={busy}>
+                {busy ? <Loader2 className="spin" /> : <Plus />}
+                Install
+              </button>
+            </>
+          )}
         </div>
       </form>
     </div>
@@ -965,10 +1049,19 @@ function HomeView({
 
   return (
     <div className="home-stack">
-      <section className="panel home-hero av-state-scan">
+      <section className="panel home-hero">
         <div>
           <span className="micro-label">vault overview</span>
-          <h3>{attentionCount === 0 ? "Vault steady" : `${attentionCount} item${attentionCount === 1 ? "" : "s"} need review`}</h3>
+          <h3>
+            {attentionCount === 0 ? (
+              <>Vault <span className="serif-accent">steady</span></>
+            ) : (
+              <>
+                {attentionCount} item{attentionCount === 1 ? "" : "s"} need{" "}
+                <span className="serif-accent">review</span>
+              </>
+            )}
+          </h3>
           <p>Inspect local skills, profile membership, upstream updates, and enrolled clients from one signed control surface.</p>
         </div>
         <div className="home-mark" aria-hidden="true">
@@ -1101,14 +1194,13 @@ function SkillsCollection({
   onOpenSkill: (name: string) => void;
 }) {
   return (
-    <div className="collection-stack">
-      <div className="panel collection-toolbar">
-        <div>
-          <span className="micro-label">skill vault</span>
-          <h3>{skills.length} of {totalSkills} skills</h3>
+    <div className="dir-page">
+      <div className="dir-toolbar">
+        <div className="dir-count">
+          <strong>{skills.length}</strong> of {totalSkills} skills
         </div>
-        <div className="collection-controls">
-          <label className="search-control">
+        <div className="dir-controls">
+          <label className="dir-search">
             <Search />
             <input
               value={query}
@@ -1168,48 +1260,78 @@ function SkillsCollection({
       {skills.length === 0 ? (
         <div className="empty-state">No skills match the current filters</div>
       ) : viewMode === "grid" ? (
-        <div className="skill-card-grid">
-          {skills.map((skill) => (
-            <button className="skill-card" key={skill.name} onClick={() => onOpenSkill(skill.name)}>
-              <div className="skill-card-top">
-                <span className="status-pill active">{skill.version}</span>
-                <span className="status-pill user-approve">{capabilityLabel(skill)}</span>
-              </div>
-              <strong>{skill.title || skill.name}</strong>
-              <p>{skill.description}</p>
-              <div className="skill-card-meta">
-                <span>{skill.agents.join(", ") || "unassigned"}</span>
-                <span>{skill.resource_count} files</span>
-                <span>{skill.actions.length} actions</span>
-              </div>
-              <div className="chips compact">
-                {skill.tags.slice(0, 4).map((tag) => <span key={tag}>{tag}</span>)}
-              </div>
-            </button>
-          ))}
+        <div className="dir-grid">
+          {skills.map((skill) => {
+            const orgText = skill.title && skill.title !== skill.name ? skill.name : skill.category ?? "";
+            return (
+              <button className="skill-tile" key={skill.name} onClick={() => onOpenSkill(skill.name)}>
+                <div className="stl-head">
+                  <span className="stl-icon">{skillInitials(skill.title || skill.name)}</span>
+                  <span className="stl-name">
+                    <span className="name">{skill.title || skill.name}</span>
+                    {orgText ? <span className="org">{orgText}</span> : null}
+                  </span>
+                  <span className="stl-badges">
+                    <span className="cap-pill ver">v{skill.version}</span>
+                    <CapabilityPill skill={skill} />
+                  </span>
+                </div>
+                <p className="stl-desc">{skill.description}</p>
+                <div className="stl-agents">
+                  {skill.agents.length === 0 ? (
+                    <span className="ag">unassigned</span>
+                  ) : (
+                    skill.agents.slice(0, 5).map((agent) => <span className="ag" key={agent}>{agent}</span>)
+                  )}
+                </div>
+                <div className="stl-meta">
+                  <span>{skill.resource_count} files</span>
+                  <span>{skill.actions.length} actions</span>
+                  <span>{skill.tags.length} tags</span>
+                </div>
+              </button>
+            );
+          })}
         </div>
       ) : (
-        <div className="panel skill-table" role="table" aria-label="Installed skills">
-          <div className="skill-table-row header" role="row">
+        <div className="dir-list" role="table" aria-label="Installed skills">
+          <div className="dir-list-head" role="row">
             <span>Name</span>
+            <span>Description</span>
             <span>Agents</span>
             <span>Version</span>
             <span>Files</span>
-            <span>Capability</span>
           </div>
           {skills.map((skill) => (
-            <button className="skill-table-row" key={skill.name} onClick={() => onOpenSkill(skill.name)} role="row">
-              <span>{skill.title || skill.name}</span>
-              <span>{skill.agents.join(", ") || "unassigned"}</span>
-              <span>{skill.version}</span>
-              <span>{skill.resource_count}</span>
-              <span>{capabilityLabel(skill)}</span>
+            <button className="dir-list-item" key={skill.name} onClick={() => onOpenSkill(skill.name)} role="row">
+              <span className="li-name">
+                <strong>{skill.title || skill.name}</strong>
+              </span>
+              <span className="li-desc">{skill.description}</span>
+              <span className="li-cell">{skill.agents.join(", ") || "unassigned"}</span>
+              <span className="li-cell">{skill.version}</span>
+              <span className="li-cell">{skill.resource_count}</span>
             </button>
           ))}
         </div>
       )}
     </div>
   );
+}
+
+function CapabilityPill({ skill }: { skill: SkillSummary }) {
+  if (skill.capabilities.network) return <span className="cap-pill net">network</span>;
+  if (skill.capabilities.filesystem === "readwrite") return <span className="cap-pill write">write</span>;
+  if (skill.actions.length > 0) return <span className="cap-pill">actions</span>;
+  return <span className="cap-pill read">read</span>;
+}
+
+function skillInitials(label: string): string {
+  const cleaned = label.replace(/[^a-zA-Z0-9]+/g, " ").trim();
+  if (!cleaned) return "AV";
+  const parts = cleaned.split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function VaultMark() {
@@ -1263,90 +1385,236 @@ function SkillEditor({
     });
   }
 
+  const source = detail.provenance.source;
+  const badge = sourceBadgeVariant(source.status);
+
   return (
-    <div className="skill-detail-stack">
-      <section className="panel skill-detail-head av-state-admit">
-        <div className="panel-header">
-          <div>
-            <span className="micro-label">skill package</span>
-            <h3>{detail.title || detail.name}</h3>
-            <p>{detail.description}</p>
-          </div>
-          <div className="button-row">
-            <button type="button" className="icon-button" onClick={onBack} disabled={busy}>
-              <ArrowLeft />
-              All skills
-            </button>
-            <button type="button" className="icon-button" onClick={() => void onUpdate(detail.name)} disabled={busy}>
-              <RefreshCw />
-              Update
-            </button>
-          </div>
-        </div>
-        <div className="skill-detail-tabs" role="tablist" aria-label="Skill detail sections">
-          <DetailTab active={tab === "files"} onClick={() => setTab("files")}>Files</DetailTab>
-          <DetailTab active={tab === "overview"} onClick={() => setTab("overview")}>Overview</DetailTab>
-          <DetailTab active={tab === "permissions"} onClick={() => setTab("permissions")}>Permissions</DetailTab>
-          <DetailTab active={tab === "provenance"} onClick={() => setTab("provenance")}>Provenance</DetailTab>
-          <DetailTab active={tab === "edit"} onClick={() => setTab("edit")}>Edit</DetailTab>
-        </div>
-      </section>
+    <div className="sd-page">
+      <nav className="sd-crumb" aria-label="Breadcrumb">
+        <button onClick={onBack} disabled={busy}>Skills</button>
+        <span className="sep">/</span>
+        <span className="cur">{detail.name}</span>
+      </nav>
 
-      <div className="content-grid">
-        {tab === "files" ? (
-          <SkillBundleInspector detail={detail} />
-        ) : tab === "overview" ? (
-          <SkillOverview detail={detail} />
-        ) : tab === "permissions" ? (
-          <PermissionSurface detail={detail} />
-        ) : tab === "provenance" ? (
-          <SkillProvenancePanel detail={detail} />
-        ) : (
-          <form className="panel editor manifest-editor" onSubmit={submit}>
-            <div className="panel-header">
-              <div>
-                <span className="micro-label">frontmatter</span>
-                <h3>Edit metadata</h3>
-                <p>Focused writes rebuild SKILL.md through AutoVault validation.</p>
+      <header className="sd-head">
+        <div>
+          <div className="ttl-row">
+            <span className="icon-tile">{skillInitials(detail.title || detail.name)}</span>
+            <div>
+              <h1>
+                {detail.title || detail.name}
+                {detail.title && detail.title !== detail.name ? (
+                  <span className="org"> {detail.name}</span>
+                ) : null}
+              </h1>
+              <div className="sub-row">
+                <span className="verified"><ShieldCheck /> Signed</span>
+                <span className={`source-badge ${badge}`}>{source.label}</span>
+                <span className="dot" />
+                <span>v{detail.version}</span>
+                {detail.category ? (
+                  <>
+                    <span className="dot" />
+                    <span>{detail.category}</span>
+                  </>
+                ) : null}
               </div>
-              <button type="submit" className="primary-button" disabled={busy}>
-                <Save />
-                Save
-              </button>
             </div>
+          </div>
+          <p className="desc">{detail.description}</p>
+        </div>
+        <div className="sd-actions">
+          <button
+            type="button"
+            className="sd-installbtn"
+            onClick={() => void onUpdate(detail.name)}
+            disabled={busy}
+          >
+            <RefreshCw />
+            Update from source
+          </button>
+          <div className="sd-secondary-actions">
+            <button type="button" className="sd-sbtn" onClick={() => setTab("provenance")} disabled={busy}>
+              <ShieldCheck />
+              Verify
+            </button>
+            <button
+              type="button"
+              className="sd-sbtn danger"
+              onClick={() => void onDelete(detail.name)}
+              disabled={busy}
+            >
+              <Trash2 />
+              Delete
+            </button>
+          </div>
+          {source.reason ? <p className="sd-copy-status">{source.reason}</p> : null}
+        </div>
+      </header>
 
-            <label>
-              Title
-              <input value={title} onChange={(event) => setTitle(event.target.value)} />
-            </label>
-            <label>
-              Description
-              <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} />
-            </label>
-            <div className="two-col">
-              <label>
-                Agents
-                <input value={agents} onChange={(event) => setAgents(event.target.value)} />
-              </label>
-              <label>
-                Tags
-                <input value={tags} onChange={(event) => setTags(event.target.value)} />
-              </label>
-            </div>
-            <div className="two-col">
-              <label>
-                Version
-                <input value={version} onChange={(event) => setVersion(event.target.value)} />
-              </label>
-              <label>
-                Category
-                <input value={category} onChange={(event) => setCategory(event.target.value)} />
-              </label>
-            </div>
-          </form>
-        )}
+      <div className="sd-stats">
+        <div className="st">
+          <div className="lbl">Version</div>
+          <div className="val">{detail.version}</div>
+          <div className="trend muted">manifest</div>
+        </div>
+        <div className="st">
+          <div className="lbl">Bundle files</div>
+          <div className="val">{detail.bundle.files.length}</div>
+          <div className="trend muted">signed on write</div>
+        </div>
+        <div className="st">
+          <div className="lbl">Agents</div>
+          <div className="val">{detail.agents.length}</div>
+          <div className="trend muted">{detail.agents.length === 0 ? "unassigned" : "assigned"}</div>
+        </div>
+        <div className="st">
+          <div className="lbl">Actions</div>
+          <div className="val">{detail.actions.length}</div>
+          <div className="trend muted">{detail.capabilities.tools.length} tools</div>
+        </div>
+      </div>
 
-        <SkillFacts detail={detail} busy={busy} onDelete={onDelete} />
+      <div className="sd-tabs" role="tablist" aria-label="Skill detail sections">
+        <DetailTab active={tab === "files"} onClick={() => setTab("files")}>
+          Files <span className="ct">{detail.bundle.files.length}</span>
+        </DetailTab>
+        <DetailTab active={tab === "overview"} onClick={() => setTab("overview")}>Overview</DetailTab>
+        <DetailTab active={tab === "permissions"} onClick={() => setTab("permissions")}>Permissions</DetailTab>
+        <DetailTab active={tab === "provenance"} onClick={() => setTab("provenance")}>Provenance</DetailTab>
+        <DetailTab active={tab === "edit"} onClick={() => setTab("edit")}>Edit</DetailTab>
+      </div>
+
+      <div className="sd-body">
+        <main>
+          {tab === "files" ? (
+            <SkillBundleInspector detail={detail} />
+          ) : tab === "overview" ? (
+            <div className="sd-md">
+              <div className="sd-md-head">
+                <span className="lights"><span /><span /><span /></span>
+                <span className="filename">SKILL.md</span>
+              </div>
+              <div className="sd-md-body">
+                <pre>{detail.skill_md}</pre>
+              </div>
+            </div>
+          ) : tab === "permissions" ? (
+            <SkillPermissionList detail={detail} />
+          ) : tab === "provenance" ? (
+            <SkillProvenanceTimeline detail={detail} />
+          ) : (
+            <form className="sd-edit" onSubmit={submit}>
+              <div className="panel-header">
+                <div>
+                  <span className="micro-label">frontmatter</span>
+                  <h3>Edit metadata</h3>
+                  <p>Focused writes rebuild SKILL.md through AutoVault validation.</p>
+                </div>
+                <button type="submit" className="primary-button" disabled={busy}>
+                  <Save />
+                  Save
+                </button>
+              </div>
+
+              <label>
+                Title
+                <input value={title} onChange={(event) => setTitle(event.target.value)} />
+              </label>
+              <label>
+                Description
+                <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} />
+              </label>
+              <div className="two-col">
+                <label>
+                  Agents
+                  <input value={agents} onChange={(event) => setAgents(event.target.value)} />
+                </label>
+                <label>
+                  Tags
+                  <input value={tags} onChange={(event) => setTags(event.target.value)} />
+                </label>
+              </div>
+              <div className="two-col">
+                <label>
+                  Version
+                  <input value={version} onChange={(event) => setVersion(event.target.value)} />
+                </label>
+                <label>
+                  Category
+                  <input value={category} onChange={(event) => setCategory(event.target.value)} />
+                </label>
+              </div>
+            </form>
+          )}
+        </main>
+
+        <aside className="sd-rail">
+          <div className="sd-card">
+            <h4>Compatibility</h4>
+            <div className="sd-agent-list">
+              {detail.agents.length === 0 ? (
+                <div className="sd-agent-row">
+                  <span className="swatch" style={{ background: "var(--av-ink-4)" }} />
+                  <span className="lbl">No agents assigned</span>
+                  <span className="stat off">idle</span>
+                </div>
+              ) : (
+                detail.agents.map((agent) => (
+                  <div className="sd-agent-row" key={agent}>
+                    <span className="swatch" style={{ background: agentSwatch(agent) }} />
+                    <span className="lbl">{agent}</span>
+                    <span className="stat">active</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="sd-card">
+            <h4>Metadata</h4>
+            <div className="kv">
+              <span className="k">Version</span>
+              <span className="v mono">{detail.version}</span>
+              <span className="k">Category</span>
+              <span className="v">{detail.category ?? "uncategorized"}</span>
+              <span className="k">Files</span>
+              <span className="v mono">{detail.bundle.files.length}</span>
+              <span className="k">Tags</span>
+              <span className="v">{detail.tags.length || "none"}</span>
+              <span className="k">Integrity</span>
+              <span className="v accent">{detail.provenance.integrity}</span>
+            </div>
+          </div>
+
+          <div className="sd-card">
+            <h4>Permissions</h4>
+            <div className="sd-perm-list">
+              <PermLine
+                label="Network"
+                state={detail.capabilities.network ? "warn" : "no"}
+                scope={detail.capabilities.network ? "allowed" : "off"}
+              />
+              <PermLine
+                label="Filesystem"
+                state={detail.capabilities.filesystem === "readwrite" ? "warn" : "ok"}
+                scope={detail.capabilities.filesystem}
+              />
+            </div>
+          </div>
+
+          <div className="sd-card">
+            <h4>Source</h4>
+            <div className="kv">
+              <span className="k">Origin</span>
+              <span className="v">{source.label}</span>
+              <span className="k">Status</span>
+              <span className="v">{source.status}</span>
+              <span className="k">Identifier</span>
+              <span className="v mono">{source.identifier ?? "not recorded"}</span>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -1372,48 +1640,54 @@ function SkillBundleInspector({ detail }: { detail: SkillDetail }) {
   const [selectedPath, setSelectedPath] = useState(detail.bundle.files[0]?.path ?? detail.bundle.root);
   const selected = detail.bundle.files.find((file) => file.path === selectedPath) ?? detail.bundle.files[0];
   return (
-    <section className="panel bundle-browser">
-      <div className="panel-header">
+    <section className="sd-bundle">
+      <div className="sd-bundle-head">
         <div>
-          <span className="micro-label">Bundle contents</span>
-          <h3>{detail.bundle.files.length} files</h3>
+          <h2>Bundle contents</h2>
           <p>Every declared file is inspectable here. Scripts and action files are previewed as text only.</p>
         </div>
-        <span className="status-pill active">{detail.bundle.root}</span>
+        <div className="sd-bundle-count">
+          <strong>{detail.bundle.files.length}</strong>
+          <span>files</span>
+        </div>
       </div>
 
-      <div className="bundle-layout">
-        <nav className="resource-tree" aria-label="Skill bundle files">
+      <div className="sd-bundle-grid">
+        <nav className="sd-resource-tree" aria-label="Skill bundle files">
           {detail.bundle.files.map((file) => (
-            <button
-              key={file.path}
-              className={selected?.path === file.path ? "active" : ""}
-              onClick={() => setSelectedPath(file.path)}
-            >
-              <span className="kind">{file.kind}</span>
-              <span>
-                <strong>{file.title}</strong>
-                <small>{file.path}</small>
-              </span>
-            </button>
+            <div className={`sd-resource-row ${selected?.path === file.path ? "active" : ""}`} key={file.path}>
+              <button onClick={() => setSelectedPath(file.path)}>
+                <span className="kind">{file.kind}</span>
+                <span className="file">
+                  <span className="title">{file.title}</span>
+                  <span className="path">{file.path}</span>
+                </span>
+              </button>
+            </div>
           ))}
         </nav>
 
         {selected ? (
-          <article className="resource-preview">
-            <div className="resource-preview-head">
+          <article className="sd-resource-preview">
+            <div className="sd-resource-preview-head">
               <div>
-                <span className="micro-label">{selected.group}</span>
-                <h3>{selected.path}</h3>
+                <span className="kind">{selected.kind}</span>
+                <span className="filename">{selected.path}</span>
               </div>
-              <span className="status-pill user-approve">{selected.kind}</span>
+              <span className="cap-pill ver">{selected.group}</span>
             </div>
-            <p>{selected.summary}</p>
+            {selected.summary ? (
+              <div className="sd-resource-summary">
+                <p>{selected.summary}</p>
+              </div>
+            ) : null}
             {selected.preview_status === "loaded" ? (
               selected.kind === "svg" ? (
-                <div className="svg-preview" dangerouslySetInnerHTML={{ __html: selected.preview ?? "" }} />
+                <div className="sd-resource-visual" dangerouslySetInnerHTML={{ __html: selected.preview ?? "" }} />
               ) : (
-                <pre>{selected.preview}</pre>
+                <div className="sd-resource-code">
+                  <pre>{selected.preview}</pre>
+                </div>
               )
             ) : (
               <div className="empty-state">Preview unavailable for this resource</div>
@@ -1425,141 +1699,128 @@ function SkillBundleInspector({ detail }: { detail: SkillDetail }) {
   );
 }
 
-function SkillOverview({ detail }: { detail: SkillDetail }) {
-  const body = detail.skill_md.split("---").slice(2).join("---").trim() || detail.skill_md;
+function SkillPermissionList({ detail }: { detail: SkillDetail }) {
   return (
-    <section className="panel skill-overview-panel">
-      <span className="micro-label">overview</span>
-      <h3>{detail.name}</h3>
-      <p>{detail.description}</p>
-      <div className="overview-grid">
-        <OverviewItem label="Version" value={detail.version} />
-        <OverviewItem label="Category" value={detail.category ?? "uncategorized"} />
-        <OverviewItem label="Agents" value={detail.agents.join(", ") || "unassigned"} />
-        <OverviewItem label="Tags" value={detail.tags.join(", ") || "none"} />
+    <div className="sd-card">
+      <h4>Declared capability requirements</h4>
+      <div className="sd-perm-list">
+        <PermLine
+          label="Network access"
+          state={detail.capabilities.network ? "warn" : "no"}
+          scope={detail.capabilities.network ? "allowed" : "not declared"}
+        />
+        <PermLine
+          label="Filesystem"
+          state={detail.capabilities.filesystem === "readwrite" ? "warn" : "ok"}
+          scope={detail.capabilities.filesystem}
+        />
+        <PermLine
+          label="MCP tools"
+          state={detail.capabilities.tools.length > 0 ? "ok" : "no"}
+          scope={detail.capabilities.tools.join(", ") || "none"}
+        />
+        <PermLine
+          label="Actions"
+          state={detail.actions.length > 0 ? "ok" : "no"}
+          scope={detail.actions.join(", ") || "none"}
+        />
       </div>
-      <pre className="skill-md-preview">{body}</pre>
-    </section>
-  );
-}
-
-function OverviewItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }
 
-function PermissionSurface({ detail }: { detail: SkillDetail }) {
-  return (
-    <section className="panel permission-surface">
-      <span className="micro-label">Permission surface</span>
-      <h3>Declared capability requirements</h3>
-      <div className="permission-grid">
-        <PermissionRow label="Network" value={detail.capabilities.network ? "allowed" : "not declared"} tone={detail.capabilities.network ? "warn" : "good"} />
-        <PermissionRow label="Filesystem" value={detail.capabilities.filesystem} tone={detail.capabilities.filesystem === "readwrite" ? "warn" : "good"} />
-        <PermissionRow label="Tools" value={detail.capabilities.tools.join(", ") || "none"} />
-        <PermissionRow label="Actions" value={detail.actions.join(", ") || "none"} />
-      </div>
-    </section>
-  );
-}
-
-function PermissionRow({
+function PermLine({
   label,
-  value,
-  tone = "neutral"
+  state,
+  scope
 }: {
   label: string;
-  value: string;
-  tone?: "neutral" | "good" | "warn";
+  state: "ok" | "warn" | "no";
+  scope: string;
 }) {
+  const Icon = state === "ok" ? CheckCircle2 : state === "warn" ? AlertTriangle : Minus;
   return (
-    <div className={`permission-row ${tone}`}>
+    <div className="sd-perm-row">
+      <span className={`ico ${state}`}><Icon /></span>
       <span>{label}</span>
-      <strong>{value}</strong>
+      <span className="scope">{scope}</span>
     </div>
   );
 }
 
-function SkillProvenancePanel({ detail }: { detail: SkillDetail }) {
+function SkillProvenanceTimeline({ detail }: { detail: SkillDetail }) {
   const source = detail.provenance.source;
+  const sourcePip =
+    source.status === "present"
+      ? "ok"
+      : source.status === "tampered" || source.status === "unparseable"
+        ? "bad"
+        : "";
   return (
-    <section className="panel provenance-panel">
-      <span className="micro-label">Provenance</span>
-      <h3>Source and integrity</h3>
-      <div className="provenance-grid">
-        <OverviewItem label="Integrity" value={detail.provenance.integrity} />
-        <OverviewItem label="Source" value={source.label} />
-        <OverviewItem label="Status" value={source.status} />
-        <OverviewItem label="Identifier" value={source.identifier ?? "not recorded"} />
-        <OverviewItem label="Fetched" value={source.fetched_at ?? "not recorded"} />
-        <OverviewItem label="Content hash" value={source.content_hash ? shortHash(source.content_hash) : "not recorded"} />
+    <div className="sd-prov-timeline">
+      <div className="sd-prov-row">
+        <span className="pip ok"><ShieldCheck /></span>
+        <div>
+          <div className="ttl">Signed locally</div>
+          <div className="det">Ed25519 detached signature, verified on read</div>
+        </div>
+        <span className="when">{detail.provenance.integrity}</span>
       </div>
-      {source.reason ? <div className="notice error"><AlertTriangle /><span>{source.reason}</span></div> : null}
-    </section>
+      <div className="sd-prov-row">
+        <span className={`pip ${sourcePip}`}>{sourcePip === "bad" ? <AlertTriangle /> : sourcePip === "ok" ? <CheckCircle2 /> : <Minus />}</span>
+        <div>
+          <div className="ttl">{source.label}</div>
+          <div className="det">{source.identifier ? <code>{source.identifier}</code> : "No identifier recorded"}</div>
+        </div>
+        <span className="when">{source.status}</span>
+      </div>
+      {source.content_hash ? (
+        <div className="sd-prov-row">
+          <span className="pip ok"><CheckCircle2 /></span>
+          <div>
+            <div className="ttl">Content hash</div>
+            <div className="det"><code>{shortHash(source.content_hash)}</code></div>
+          </div>
+          <span className="when">sha-256</span>
+        </div>
+      ) : null}
+      {source.fetched_at ? (
+        <div className="sd-prov-row">
+          <span className="pip ok"><CheckCircle2 /></span>
+          <div>
+            <div className="ttl">Fetched from source</div>
+            <div className="det">{source.fetched_at}</div>
+          </div>
+          <span className="when">fetched</span>
+        </div>
+      ) : null}
+      {source.reason ? (
+        <div className="sd-prov-row">
+          <span className="pip bad"><AlertTriangle /></span>
+          <div>
+            <div className="ttl">Needs review</div>
+            <div className="det">{source.reason}</div>
+          </div>
+          <span className="when">flag</span>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
-function SkillFacts({
-  detail,
-  busy,
-  onDelete
-}: {
-  detail: SkillDetail;
-  busy: boolean;
-  onDelete: (name: string) => Promise<void>;
-}) {
-  return (
-    <aside className="panel facts manifest-panel av-state-admit">
-      <div className="manifest-heading">
-        <span className="micro-label">manifest</span>
-        <strong>{detail.version}</strong>
-      </div>
-      <div className="manifest-block">
-        <span>write path</span>
-        <strong>validated</strong>
-      </div>
-      <div className="fact-row">
-        <Tags />
-        <div>
-          <strong>{detail.tags.length || 0}</strong>
-          <span>tags</span>
-        </div>
-      </div>
-      <div className="fact-row">
-        <Users />
-        <div>
-          <strong>{detail.agents.length || 0}</strong>
-          <span>agents</span>
-        </div>
-      </div>
-      <div className="fact-row">
-        <Wrench />
-        <div>
-          <strong>{detail.actions.length || 0}</strong>
-          <span>actions</span>
-        </div>
-      </div>
-      <div className="fact-row">
-        <FileText />
-        <div>
-          <strong>{detail.bundle.files.length || 0}</strong>
-          <span>bundle files</span>
-        </div>
-      </div>
-      <div className="chips">
-        {detail.agents.map((agent) => <span key={agent}>{agent}</span>)}
-        {detail.tags.map((tag) => <span key={tag}>{tag}</span>)}
-      </div>
-      <button className="danger-button" onClick={() => void onDelete(detail.name)} disabled={busy}>
-        <Trash2 />
-        Delete
-      </button>
-    </aside>
-  );
+function sourceBadgeVariant(status: SkillProvenance["source"]["status"]): string {
+  if (status === "present") return "";
+  if (status === "tampered" || status === "unparseable") return "rejected";
+  return "held";
+}
+
+function agentSwatch(agent: string): string {
+  const palette = ["var(--av-mint)", "var(--av-blue)", "var(--av-violet)", "var(--av-warn)"];
+  let hash = 0;
+  for (let index = 0; index < agent.length; index += 1) {
+    hash = (hash * 31 + agent.charCodeAt(index)) >>> 0;
+  }
+  return palette[hash % palette.length];
 }
 
 type EditableProfile = {
@@ -1724,7 +1985,7 @@ function UpdatesPanel({
         <div className="sync-list">
           {syncResources.map((resource) => (
             <div
-              className={`sync-row av-state-scan ${resource.installable ? "av-state-admit" : "av-state-held"}`}
+              className={`sync-row ${resource.installable ? "av-state-admit" : "av-state-held"}`}
               key={`${resource.upstream_id}:${resource.id}`}
             >
               <div className="sync-main">
@@ -2055,13 +2316,6 @@ function skillMatchesFilter(skill: SkillSummary, filterKey: SkillFilterKey): boo
   if (filterKey === "actions") return skill.actions.length > 0;
   if (filterKey === "unassigned") return skill.agents.length === 0;
   return true;
-}
-
-function capabilityLabel(skill: SkillSummary): string {
-  if (skill.capabilities.network) return "network";
-  if (skill.capabilities.filesystem === "readwrite") return "write";
-  if (skill.actions.length > 0) return "actions";
-  return "read";
 }
 
 function firstAgent(skill: SkillSummary): string {
