@@ -15,6 +15,14 @@
 
 <p align="center"><strong>A local-first vault for the skills your agents actually use.</strong></p>
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/8d23c38b-186a-424e-8e92-3dfdb82f143b" width="760"></video>
+</p>
+
+<p align="center">
+  <sub>~48-second demo — dashboard and terminal use simulated skills and data.</sub>
+</p>
+
 `SKILL.md` files already move through GitHub repos, team docs, public indexes,
 Slack threads, and agent-written drafts. AutoVault gives those files one
 canonical home: validate them at admission time, sign what passes, track where
