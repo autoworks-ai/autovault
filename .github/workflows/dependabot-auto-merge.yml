@@ -159,11 +159,12 @@ jobs:
             exit 0
           fi
 
-          if [ "$queue_enabled" = "true" ]; then
-            gh pr merge --auto --match-head-commit "$HEAD_SHA" "$PR_URL"
-          else
-            gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
-          fi
+          # Always request squash: it matches the repo's only allowed method and
+          # the merge queue's configured method. When a merge queue governs main,
+          # gh ignores the explicit method and enqueues the PR; omitting it makes
+          # gh default the auto-merge request to a (disallowed) merge commit, which
+          # GitHub can never honor, so the PR is never enqueued and never merges.
+          gh pr merge --auto --squash --match-head-commit "$HEAD_SHA" "$PR_URL"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
