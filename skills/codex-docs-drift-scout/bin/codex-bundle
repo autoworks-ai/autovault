@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# codex-bundle: render the AutoVault-managed Codex automation from signed skill
+# templates, symlink the rendered directory into Codex, and record a
+# machine-local render index so `autovault doctor` can verify render fidelity
+# non-interactively.
+#
+# This helper only RENDERS and RECORDS. The first-class drift check is now
+# `autovault doctor [--json]`, which re-verifies the signed templates and
+# hash-compares them against this index. There is no local `check` action.
+
+usage() {
+  cat >&2 <<'TEXT'
+Usage:
+  codex-bundle install --project-root PATH [--codex-home PATH] [--automation-id ID] [--render-root PATH] [--replace-existing]
+
+Required:
+  --project-root  Absolute path to the target repository (no shipped default).
+
+Defaults:
+  --codex-home    ${CODEX_HOME:-$HOME/.codex}
+  --automation-id docs-drift-scout
+  --render-root   ${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}/rendered/codex-automations/<automation-id>
+
+Audit the rendered state with:
+  autovault doctor codex-docs-drift-scout --json
+TEXT
+  exit 2
+}
+
+die() {
+  printf 'codex-bundle: %s\n' "$*" >&2
+  exit 1
+}
+
+action="${1:-}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$action" in
+  install) ;;
+  *) usage ;;
+esac
+
+project_root=""
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+automation_id="docs-drift-scout"
+render_root=""
+replace_existing="false"
+
+expand_home() {
+  case "$1" in
+    "~") printf '%s\n' "$HOME" ;;
+    "~/"*) printf '%s/%s\n' "$HOME" "${1#~/}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+absolute_path() {
+  local raw
+  raw="$(expand_home "$1")"
+  case "$raw" in
+    /*) printf '%s\n' "$raw" ;;
+    *) printf '%s/%s\n' "$(pwd -P)" "$raw" ;;
+  esac
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project-root)
+      project_root="${2:?--project-root requires a path}"
+      shift 2
+      ;;
+    --project-root=*)
+      project_root="${1#--project-root=}"
+      shift
+      ;;
+    --codex-home)
+      codex_home="${2:?--codex-home requires a path}"
+      shift 2
+      ;;
+    --codex-home=*)
+      codex_home="${1#--codex-home=}"
+      shift
+      ;;
+    --automation-id)
+      automation_id="${2:?--automation-id requires a value}"
+      shift 2
+      ;;
+    --automation-id=*)
+      automation_id="${1#--automation-id=}"
+      shift
+      ;;
+    --render-root)
+      render_root="${2:?--render-root requires a path}"
+      shift 2
+      ;;
+    --render-root=*)
+      render_root="${1#--render-root=}"
+      shift
+      ;;
+    --replace-existing)
+      replace_existing="true"
+      shift
+      ;;
+    --help|-h)
+      usage
+      ;;
+    *)
+      die "unknown argument: $1"
+      ;;
+  esac
+done
+
+[[ -n "$project_root" ]] || die "--project-root is required (no shipped default)"
+[[ "$automation_id" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || die "invalid automation id: $automation_id"
+
+project_root="$(expand_home "$project_root")"
+[[ -d "$project_root" ]] || die "project root does not exist: $project_root"
+project_root="$(cd "$project_root" && pwd -P)"
+
+storage_path="$(absolute_path "${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}")"
+codex_home="$(absolute_path "$codex_home")"
+if [[ -z "$render_root" ]]; then
+  render_root="$storage_path/rendered/codex-automations/$automation_id"
+fi
+render_root="$(absolute_path "$render_root")"
+
+# Machine-local path to the copilot-review skill the automation prompt links to.
+# Derived (not baked) so no personal absolute path lives inside the signed
+# template bytes.
+copilot_review_skill="$storage_path/skills/copilot-review/SKILL.md"
+
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+skill_root="$(cd "$script_dir/.." && pwd -P)"
+skill_name="$(basename "$skill_root")"
+automation_template="$skill_root/resources/codex/automation.toml.tpl"
+environment_template="$skill_root/resources/codex/environment.toml.tpl"
+automation_template_rel="resources/codex/automation.toml.tpl"
+environment_template_rel="resources/codex/environment.toml.tpl"
+automation_path="$render_root/automation.toml"
+environment_path="$render_root/environment.toml"
+codex_automation_dir="$codex_home/automations"
+codex_link="$codex_automation_dir/$automation_id"
+render_index_path="$storage_path/render-index.json"
+
+[[ -f "$automation_template" ]] || die "missing template: $automation_template"
+[[ -f "$environment_template" ]] || die "missing template: $environment_template"
+
+command -v python3 >/dev/null 2>&1 || die "python3 is required to validate rendered TOML and record the render index"
+
+render_template() {
+  local template="$1"
+  local content
+  content="$(<"$template")"
+  content="${content//\{\{PROJECT_ROOT\}\}/$project_root}"
+  content="${content//\{\{CODEX_HOME\}\}/$codex_home}"
+  content="${content//\{\{AUTOMATION_ID\}\}/$automation_id}"
+  content="${content//\{\{RENDER_ROOT\}\}/$render_root}"
+  content="${content//\{\{COPILOT_REVIEW_SKILL\}\}/$copilot_review_skill}"
+  printf '%s\n' "$content"
+}
+
+write_rendered() {
+  local template="$1"
+  local target="$2"
+  local tmp
+  tmp="${target}.tmp.$$"
+  render_template "$template" > "$tmp"
+  mv "$tmp" "$target"
+  chmod 600 "$target" 2>/dev/null || true
+}
+
+# Validate rendered TOML (install-time gate) and write/refresh the render index
+# entry. One python3 invocation so a parse failure aborts the install BEFORE the
+# Codex symlink is published. The index records, per bundle: the owning skill,
+# the render root, the managed link root, the symlink path, the vault-template
+# content hashes (the same bytes `autovault doctor` re-verifies), and the
+# rendered-file hashes.
+record_render_index() {
+  python3 - \
+    "$render_index_path" \
+    "$skill_name" \
+    "$render_root" \
+    "$codex_automation_dir" \
+    "$codex_link" \
+    "$automation_template_rel" "$automation_template" \
+    "$environment_template_rel" "$environment_template" \
+    "$automation_path" \
+    "$environment_path" <<'PY'
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import tomllib
+
+(
+    index_path,
+    skill,
+    render_root,
+    link_root,
+    symlink,
+    automation_tpl_rel,
+    automation_tpl_abs,
+    environment_tpl_rel,
+    environment_tpl_abs,
+    automation_rendered,
+    environment_rendered,
+) = sys.argv[1:]
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# Install-time TOML validity gate. A buggy template or substitution that yields
+# invalid TOML fails the install here, before anything is symlinked. Post-install
+# the rendered file is hash-verified unchanged, so doctor never needs to parse it.
+for rendered in (automation_rendered, environment_rendered):
+    try:
+        with open(rendered, "rb") as handle:
+            tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        sys.stderr.write(f"codex-bundle: rendered TOML did not parse ({rendered}): {error}\n")
+        sys.exit(3)
+
+entry = {
+    "skill": skill,
+    "renderRoot": render_root,
+    "linkRoot": link_root,
+    "symlink": symlink,
+    "templates": [
+        {"path": automation_tpl_rel, "hash": sha256_file(automation_tpl_abs)},
+        {"path": environment_tpl_rel, "hash": sha256_file(environment_tpl_abs)},
+    ],
+    "rendered": [
+        {"path": os.path.basename(automation_rendered), "hash": sha256_file(automation_rendered)},
+        {"path": os.path.basename(environment_rendered), "hash": sha256_file(environment_rendered)},
+    ],
+}
+
+index = {"version": 1, "entries": []}
+try:
+    with open(index_path, "r", encoding="utf-8") as handle:
+        loaded = json.load(handle)
+    if isinstance(loaded, dict) and isinstance(loaded.get("entries"), list):
+        index = {"version": 1, "entries": list(loaded["entries"])}
+except FileNotFoundError:
+    pass
+except (OSError, json.JSONDecodeError):
+    # A corrupt index is already flagged by doctor; start clean rather than
+    # refuse the install. Other entries in a corrupt file cannot be trusted.
+    index = {"version": 1, "entries": []}
+
+# Replace any prior entry that published the same Codex symlink (re-install).
+index["entries"] = [
+    existing
+    for existing in index["entries"]
+    if not (isinstance(existing, dict) and existing.get("symlink") == symlink)
+]
+index["entries"].append(entry)
+
+directory = os.path.dirname(index_path) or "."
+os.makedirs(directory, exist_ok=True)
+fd, tmp_path = tempfile.mkstemp(prefix=".render-index.", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(index, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    os.replace(tmp_path, index_path)
+    try:
+        os.chmod(index_path, 0o600)
+    except OSError:
+        pass
+except BaseException:
+    try:
+        os.unlink(tmp_path)
+    except OSError:
+        pass
+    raise
+PY
+}
+
+install_bundle() {
+  mkdir -p "$render_root" "$codex_automation_dir"
+  chmod 700 "$render_root" 2>/dev/null || true
+
+  write_rendered "$automation_template" "$automation_path"
+  write_rendered "$environment_template" "$environment_path"
+
+  # Gate + record before publishing the symlink, so an invalid render never
+  # results in a live Codex automation pointing at it.
+  record_render_index
+
+  if [[ -L "$codex_link" ]]; then
+    ln -sfn "$render_root" "$codex_link"
+  elif [[ -e "$codex_link" ]]; then
+    if [[ "$replace_existing" != "true" ]]; then
+      die "Codex automation path exists and is not a symlink: $codex_link (rerun with --replace-existing to move it aside)"
+    fi
+    backup="${codex_link}.backup.$(date +%Y%m%d%H%M%S)"
+    mv "$codex_link" "$backup"
+    printf 'moved existing Codex automation path to %s\n' "$backup"
+    ln -s "$render_root" "$codex_link"
+  else
+    ln -s "$render_root" "$codex_link"
+  fi
+
+  printf 'rendered automation: %s\n' "$automation_path"
+  printf 'rendered environment: %s\n' "$environment_path"
+  printf 'render index: %s\n' "$render_index_path"
+  printf 'codex symlink: %s -> %s\n' "$codex_link" "$render_root"
+  printf 'audit with: autovault doctor %s --json\n' "$skill_name"
+}
+
+install_bundle

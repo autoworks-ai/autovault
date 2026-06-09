@@ -18,4 +18,5 @@ skills/*
 !skills/.gitkeep
 !skills/autovault-skill/
 !skills/skill-author/
-
+!skills/codex-docs-drift-scout/
+!skills/codex-docs-drift-scout/**

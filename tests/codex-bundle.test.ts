@@ -1,0 +1,349 @@
+import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { addLocalSkill } from "../src/installer/local.js";
+import { runDoctorReport } from "../src/cli/doctor.js";
+import { currentStorageRoot } from "./setup.js";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, "..");
+const skillName = "codex-docs-drift-scout";
+const repoSkillDir = path.join(repoRoot, "skills", skillName);
+const repoBin = path.join(repoSkillDir, "bin", "codex-bundle");
+
+function runBundle(
+  scriptPath: string,
+  args: string[],
+  env: Record<string, string> = {}
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("bash", [scriptPath, ...args], {
+      cwd: repoRoot,
+      env: { ...process.env, HOME: os.homedir(), ...env },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
+// Install the tracked demo skill into the per-test temp vault, then hand back
+// the path to the VAULT COPY of the bin helper. The check verifies the signed
+// vault copy, so the render must run from there — not the repo tree.
+async function installVaultSkill(): Promise<string> {
+  const result = await addLocalSkill({ skillDir: repoSkillDir });
+  if (!result.success) {
+    throw new Error(`vault install failed: ${result.validation.errors.join("; ")}`);
+  }
+  return path.join(currentStorageRoot(), "skills", skillName, "bin", "codex-bundle");
+}
+
+async function makeScratch(): Promise<{ projectRoot: string; codexHome: string }> {
+  const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-codex-scratch-"));
+  const projectRoot = path.join(scratch, "autohub");
+  const codexHome = path.join(scratch, ".codex");
+  await fs.mkdir(projectRoot, { recursive: true });
+  await fs.mkdir(path.join(codexHome, "automations"), { recursive: true });
+  return { projectRoot, codexHome };
+}
+
+function renderFor(
+  report: Awaited<ReturnType<typeof runDoctorReport>>,
+  name: string
+) {
+  const skill = report.skills.find((entry) => entry.name === name);
+  if (!skill) throw new Error(`skill ${name} not present in doctor report`);
+  return skill.render;
+}
+
+describe("Codex docs drift bundle helper + autovault doctor render fidelity", () => {
+  it("renders from the signed vault copy and doctor reports render fidelity ok", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const resolvedProjectRoot = await fs.realpath(projectRoot);
+
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    const renderRoot = path.join(
+      currentStorageRoot(),
+      "rendered",
+      "codex-automations",
+      "docs-drift-scout"
+    );
+    const automationPath = path.join(renderRoot, "automation.toml");
+    const environmentPath = path.join(renderRoot, "environment.toml");
+    const automation = await fs.readFile(automationPath, "utf8");
+    const environment = await fs.readFile(environmentPath, "utf8");
+    expect(automation).toContain(`cwds = ["${resolvedProjectRoot}"]`);
+    expect(automation).toContain(`local_environment_config_path = "${environmentPath}"`);
+    expect(automation).not.toContain("{{");
+    expect(environment).toContain('name = "autohub"');
+    expect(environment).not.toContain("{{");
+
+    // The render index lives OUTSIDE rendered/, a sibling under the storage root.
+    const indexRaw = await fs.readFile(
+      path.join(currentStorageRoot(), "render-index.json"),
+      "utf8"
+    );
+    const index = JSON.parse(indexRaw);
+    expect(index.entries).toHaveLength(1);
+    expect(index.entries[0].skill).toBe(skillName);
+    expect(index.entries[0].templates).toHaveLength(2);
+    expect(index.entries[0].rendered).toHaveLength(2);
+
+    const linkPath = path.join(codexHome, "automations", "docs-drift-scout");
+    await expect(fs.readlink(linkPath)).resolves.toBe(renderRoot);
+
+    const report = await runDoctorReport({});
+    expect(renderFor(report, skillName)).toMatchObject({ kind: "ok" });
+    expect(report.summary.errors).toBe(0);
+  });
+
+  it("reports skipped (not ok) for a vault-installed skill never rendered here", async () => {
+    await installVaultSkill();
+    const report = await runDoctorReport({});
+    expect(renderFor(report, skillName).kind).toBe("skipped");
+    expect(report.summary.errors).toBe(0);
+  });
+
+  it("flags a hand-edited rendered file as an error", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    const automationPath = path.join(
+      currentStorageRoot(),
+      "rendered",
+      "codex-automations",
+      "docs-drift-scout",
+      "automation.toml"
+    );
+    await fs.appendFile(automationPath, "\n# local drift\n");
+
+    const report = await runDoctorReport({});
+    const render = renderFor(report, skillName);
+    expect(render.kind).toBe("error");
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("flags a deleted render dir as an error even when scoped (entry + symlink survive)", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    const renderRoot = path.join(
+      currentStorageRoot(),
+      "rendered",
+      "codex-automations",
+      "docs-drift-scout"
+    );
+    // Routine accident: wipe rendered/ but leave the index entry and the live
+    // ~/.codex symlink behind. Because the index lives outside rendered/, the
+    // evidence survives and the missing rendered files surface as errors.
+    await fs.rm(renderRoot, { recursive: true, force: true });
+
+    const report = await runDoctorReport({ skill: skillName });
+    expect(renderFor(report, skillName).kind).toBe("error");
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("flags an orphan symlink (entry deleted, symlink live) as a global error, not skipped", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+
+    const installA = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(installA, installA.stderr).toMatchObject({ code: 0 });
+
+    const installB = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome,
+      "--automation-id",
+      "docs-drift-scout-extra"
+    ]);
+    expect(installB, installB.stderr).toMatchObject({ code: 0 });
+
+    // Delete entry B from the index but leave its ~/.codex symlink live. Entry A
+    // keeps the managed link root in the closed set, so the orphan sweep scans
+    // ~/.codex/automations and catches the dangling symlink.
+    const indexPath = path.join(currentStorageRoot(), "render-index.json");
+    const index = JSON.parse(await fs.readFile(indexPath, "utf8"));
+    index.entries = index.entries.filter(
+      (entry: { symlink: string }) => !entry.symlink.endsWith("docs-drift-scout-extra")
+    );
+    expect(index.entries).toHaveLength(1);
+    await fs.writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`, "utf8");
+
+    const orphanLink = path.join(codexHome, "automations", "docs-drift-scout-extra");
+    await expect(fs.lstat(orphanLink)).resolves.toBeTruthy();
+
+    const report = await runDoctorReport({});
+    // Entry A is intact, so the skill itself is still ok — the orphan is a
+    // report-level error, NOT a per-skill render failure.
+    expect(renderFor(report, skillName).kind).toBe("ok");
+    expect(report.render.orphans.length).toBeGreaterThan(0);
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("errors when a template was edited after signing (step 1: template integrity)", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    // Edit the vaulted template after signing, WITHOUT repair. The signature no
+    // longer covers these bytes, so the integrity walk refuses to hand them back.
+    const vaultTemplate = path.join(
+      currentStorageRoot(),
+      "skills",
+      skillName,
+      "resources",
+      "codex",
+      "automation.toml.tpl"
+    );
+    await fs.appendFile(vaultTemplate, "\n# tampered template\n");
+
+    const report = await runDoctorReport({ skill: skillName });
+    const render = renderFor(report, skillName);
+    expect(render.kind).toBe("error");
+    expect(render.kind === "error" && render.problems.join("; ")).toMatch(
+      /template integrity check failed/
+    );
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("errors when a template changed since render even after repair re-signs it (step 2: staleness)", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    // Change the vaulted template (records were taken against the v1 bytes).
+    const vaultTemplate = path.join(
+      currentStorageRoot(),
+      "skills",
+      skillName,
+      "resources",
+      "codex",
+      "automation.toml.tpl"
+    );
+    await fs.appendFile(vaultTemplate, "\n# template moved on, never re-rendered\n");
+
+    // --repair re-signs the CHANGED bytes, so template integrity (step 1) passes
+    // again. Render fidelity is checked AFTER repair, so the staleness branch
+    // (recorded template hash != current verified template hash) is what fires.
+    const report = await runDoctorReport({ skill: skillName, repair: true });
+    const skill = report.skills.find((entry) => entry.name === skillName);
+    if (!skill) throw new Error("skill missing from report");
+    expect(skill.repair_status).toBe("repaired");
+    expect(skill.integrity.kind).toBe("ok");
+    expect(skill.render.kind).toBe("error");
+    expect(skill.render.kind === "error" && skill.render.problems.join("; ")).toMatch(
+      /changed since render/
+    );
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("errors when the codex symlink is repointed away from the render root (step 4)", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    const linkPath = path.join(codexHome, "automations", "docs-drift-scout");
+    await fs.unlink(linkPath);
+    await fs.symlink(projectRoot, linkPath);
+
+    const report = await runDoctorReport({ skill: skillName });
+    const render = renderFor(report, skillName);
+    expect(render.kind).toBe("error");
+    expect(render.kind === "error" && render.problems.join("; ")).toMatch(/symlink points at/);
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("surfaces a corrupt render index as a report-level error", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      "--codex-home",
+      codexHome
+    ]);
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    const indexPath = path.join(currentStorageRoot(), "render-index.json");
+    await fs.writeFile(indexPath, "{ this is not valid json", "utf8");
+
+    const report = await runDoctorReport({});
+    expect(report.render.index).toBe("corrupt");
+    expect(report.summary.errors).toBeGreaterThan(0);
+  });
+
+  it("fails the install when --project-root is omitted (no shipped default)", async () => {
+    const result = await runBundle(repoBin, ["install"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("--project-root is required");
+  });
+});
