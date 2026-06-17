@@ -32,7 +32,7 @@ export type SkillSummary = {
   author?: string;
   // From frontmatter metadata.source (e.g. upstream GitHub URL). Distinct from
   // the AutoVault-internal provenance object returned as `source` by get_skill.
-  source?: string;
+  frontmatter_source?: string;
 };
 
 export type SkillBinAction = {

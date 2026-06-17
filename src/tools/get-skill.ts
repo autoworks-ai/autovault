@@ -38,7 +38,7 @@ export async function getSkill(
       capabilities: parseRenderedCapabilities(rendered.skill_md),
       author: skill.author ?? extractAuthor(rendered.skill_md),
       source, // AutoVault provenance object (distinct from frontmatter metadata.source)
-      frontmatter_source: skill.source ?? extractSource(rendered.skill_md),
+      frontmatter_source: skill.frontmatter_source ?? extractSource(rendered.skill_md),
       agent,
       applied_transforms: rendered.applied_transforms,
       warnings: rendered.warnings,
@@ -58,7 +58,7 @@ export async function getSkill(
     capabilities: skill.capabilities,
     author: skill.author,
     source, // AutoVault provenance object
-    frontmatter_source: skill.source,
+    frontmatter_source: skill.frontmatter_source,
     ...(resourceContents ? { resource_contents: resourceContents } : {})
   };
 }

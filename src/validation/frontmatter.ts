@@ -47,8 +47,12 @@ export function getMetadata(
 ): Record<string, unknown> {
   let data: Record<string, unknown>;
   if (typeof input === "string") {
-    const { data: parsed } = parseFrontmatter(input);
-    data = parsed;
+    try {
+      const { data: parsed } = parseFrontmatter(input);
+      data = parsed;
+    } catch {
+      return {};
+    }
   } else {
     data = input;
   }
