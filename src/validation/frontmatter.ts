@@ -63,12 +63,9 @@ export function getMetadata(
   // Defend against prototype pollution (repo already forbids __proto__ etc in other paths).
   // Copy only own enumerable properties into a null-prototype object.
   const safe: Record<string, unknown> = Object.create(null);
-  for (const key of Object.getOwnPropertyNames(rawMeta)) {
+  for (const key of Object.keys(rawMeta)) {
     if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
-    // Only copy own properties
-    if (Object.prototype.hasOwnProperty.call(rawMeta, key)) {
-      safe[key] = (rawMeta as Record<string, unknown>)[key];
-    }
+    safe[key] = (rawMeta as Record<string, unknown>)[key];
   }
   return safe;
 }
