@@ -278,6 +278,10 @@ validation path:
 3. Validate schema with `zod`.
 4. Scan content against the denylist in `scripts/security/patterns.json`.
 5. Cross-check declared capabilities against observed behavior.
+
+Skills may include `metadata.author` and `metadata.source` (see Agent Skills spec).
+AutoVault-curated skills ship with `author: AutoVault` so hosts can group and
+attribute them in skill browsers (matching how Resend skills appear as "Resend").
 6. Deduplicate exact, near-exact, and functionally similar proposals.
 7. Write the skill, source sidecar, signed manifest, and Ed25519 signature.
 

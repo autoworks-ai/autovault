@@ -323,6 +323,8 @@ function buildSummary(
   const capabilities = asCapabilities(frontmatter.capabilities);
   const requiresSecrets = asSecretsArray(frontmatter["requires-secrets"]);
   const frontmatterAgents = asStringArray(frontmatter.agents);
+  const author = typeof metadata.author === "string" && metadata.author.length > 0 ? metadata.author : undefined;
+  const source = typeof metadata.source === "string" && metadata.source.length > 0 ? metadata.source : undefined;
   return {
     name: asString(frontmatter.name, name),
     title: optionalString(frontmatter.title),
@@ -337,7 +339,9 @@ function buildSummary(
     capabilities,
     requires_tools: capabilities.tools,
     requires_secrets: requiresSecrets,
-    requiresSecrets
+    requiresSecrets,
+    author,
+    source
   };
 }
 
@@ -911,7 +915,9 @@ export async function readSkillSummary(name: string): Promise<SkillSummary | nul
     capabilities: record.capabilities,
     requires_tools: record.requires_tools,
     requires_secrets: record.requires_secrets,
-    requiresSecrets: record.requiresSecrets
+    requiresSecrets: record.requiresSecrets,
+    author: record.author,
+    source: record.source
   };
 }
 

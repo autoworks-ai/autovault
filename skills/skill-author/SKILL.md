@@ -6,7 +6,9 @@ tags: [authoring, skills, autovault, meta, demo]
 agents: [claude-code, codex, autojack]
 category: meta
 metadata:
+  author: AutoVault
   version: "1.0.0"
+  source: https://github.com/autoworks-ai/autovault
 capabilities:
   network: false
   filesystem: readwrite
@@ -35,6 +37,9 @@ skill already exists, reuse or extend it instead of creating a duplicate.
 name: kebab-case-name           # letters, digits, hyphens, underscores
 description: At least 20 characters explaining WHAT the skill does and WHEN to use it.
 agents: [claude-code, codex]    # at least one visible target profile
+metadata:
+  author: YourOrg               # for host UI grouping / attribution (Grok etc.)
+  source: https://github.com/yourorg/your-skill
 ---
 ```
 
@@ -45,6 +50,9 @@ agents: [claude-code, codex]    # at least one visible target profile
 - `agents` is required. A skill with no target profile would enter the vault
   but be invisible to every generated skill directory, so AutoVault rejects it
   instead of accepting a hidden install.
+- `metadata.author` and `metadata.source` (optional but recommended for
+  published/curated skills) surface in host UIs for attribution and grouping
+  (see agentskills.io spec and how Grok displays "(user · Resend)" skills).
 
 ## Recommended frontmatter
 
@@ -53,7 +61,9 @@ license: MIT
 tags: [topic, tool, domain]
 category: <one-word-bucket>
 metadata:
+  author: YourOrg
   version: "1.0.0"
+  source: https://github.com/yourorg/your-skill
 capabilities:
   network: false | true
   filesystem: readonly | readwrite
@@ -185,7 +195,9 @@ license: MIT
 tags: [domain, tool]
 category: general
 metadata:
+  author: YourOrg
   version: "1.0.0"
+  source: https://github.com/yourorg/your-skill
 capabilities:
   network: false
   filesystem: readonly

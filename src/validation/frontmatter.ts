@@ -36,3 +36,37 @@ function trimTrailingSpacesAndTabs(input: string): string {
   }
   return end === input.length ? input : input.slice(0, end);
 }
+
+/**
+ * Extract the metadata map (if present) from frontmatter data or raw SKILL.md.
+ * Avoids duplicating parse logic; callers can pass an already-parsed data record
+ * to skip re-parsing YAML.
+ */
+export function getMetadata(
+  input: string | Record<string, unknown>
+): Record<string, unknown> {
+  let data: Record<string, unknown>;
+  if (typeof input === "string") {
+    const { data: parsed } = parseFrontmatter(input);
+    data = parsed;
+  } else {
+    data = input;
+  }
+  const meta = (data as Record<string, unknown>).metadata;
+  if (typeof meta === "object" && meta !== null && !Array.isArray(meta)) {
+    return { ...meta } as Record<string, unknown>;
+  }
+  return {};
+}
+
+export function extractAuthor(input: string | Record<string, unknown>): string | undefined {
+  const meta = getMetadata(input);
+  const value = meta.author;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function extractSource(input: string | Record<string, unknown>): string | undefined {
+  const meta = getMetadata(input);
+  const value = meta.source;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}

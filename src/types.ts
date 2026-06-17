@@ -27,6 +27,12 @@ export type SkillSummary = {
   // Public JSON alias; internal TypeScript callers should prefer requiresSecrets.
   requires_secrets: SkillSecretRequirement[];
   requiresSecrets: SkillSecretRequirement[];
+  // Optional attribution from frontmatter metadata (per agentskills.io convention).
+  // Used by hosts (e.g. Grok) for grouping/filtering in skill lists.
+  author?: string;
+  // From frontmatter metadata.source (e.g. upstream GitHub URL). Distinct from
+  // the AutoVault-internal provenance object returned as `source` by get_skill.
+  source?: string;
 };
 
 export type SkillBinAction = {
