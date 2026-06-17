@@ -51,16 +51,26 @@ export function getMetadata(
       const { data: parsed } = parseFrontmatter(input);
       data = parsed;
     } catch {
-      return {};
+      return Object.create(null);
     }
   } else {
     data = input;
   }
-  const meta = (data as Record<string, unknown>).metadata;
-  if (typeof meta === "object" && meta !== null && !Array.isArray(meta)) {
-    return { ...meta } as Record<string, unknown>;
+  const rawMeta = (data as Record<string, unknown>).metadata;
+  if (typeof rawMeta !== "object" || rawMeta === null || Array.isArray(rawMeta)) {
+    return Object.create(null);
   }
-  return {};
+  // Defend against prototype pollution (repo already forbids __proto__ etc in other paths).
+  // Copy only own enumerable properties into a null-prototype object.
+  const safe: Record<string, unknown> = Object.create(null);
+  for (const key of Object.getOwnPropertyNames(rawMeta)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    // Only copy own properties
+    if (Object.prototype.hasOwnProperty.call(rawMeta, key)) {
+      safe[key] = (rawMeta as Record<string, unknown>)[key];
+    }
+  }
+  return safe;
 }
 
 export function extractAuthor(input: string | Record<string, unknown>): string | undefined {

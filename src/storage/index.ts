@@ -323,13 +323,13 @@ function buildSummary(
   const capabilities = asCapabilities(frontmatter.capabilities);
   const requiresSecrets = asSecretsArray(frontmatter["requires-secrets"]);
   const frontmatterAgents = asStringArray(frontmatter.agents);
-  const author = typeof metadata.author === "string" && metadata.author.length > 0 ? metadata.author : undefined;
-  const frontmatterSource = typeof metadata.source === "string" && metadata.source.length > 0 ? metadata.source : undefined;
+  const author = Object.hasOwn(metadata, "author") && typeof metadata.author === "string" && metadata.author.length > 0 ? metadata.author : undefined;
+  const frontmatterSource = Object.hasOwn(metadata, "source") && typeof metadata.source === "string" && metadata.source.length > 0 ? metadata.source : undefined;
   return {
     name: asString(frontmatter.name, name),
     title: optionalString(frontmatter.title),
     description: asString(frontmatter.description, ""),
-    version: asString(metadata.version, "0.0.0"),
+    version: Object.hasOwn(metadata, "version") && typeof metadata.version === "string" && metadata.version.length > 0 ? metadata.version : "0.0.0",
     tags: asStringArray(frontmatter.tags),
     category: typeof frontmatter.category === "string" ? frontmatter.category : undefined,
     agents: frontmatterAgents.length > 0 ? frontmatterAgents : fallbackAgents,
