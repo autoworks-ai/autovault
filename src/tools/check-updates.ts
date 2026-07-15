@@ -1,6 +1,6 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { collectLocalSkillBundle } from "../installer/local.js";
 import {
   listInstalledSkillNames,
   readSkill,
@@ -12,9 +12,9 @@ import { fetchSkillFromAgentSkills } from "../sources/agentskills.js";
 import { fetchSkillFromGitHub } from "../sources/github.js";
 import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
+import { normalizeFetchedBundle } from "../sources/normalize.js";
 import { listTransformReviews, type TransformReview } from "../transforms/index.js";
 import { bundleHash, type HashedResource } from "../util/hash.js";
-import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { attemptRepair } from "../validation/frontmatter.js";
 
@@ -55,26 +55,13 @@ async function readBundledInlineBundle(
   assertSafeSkillName(bundledName);
   const bundledRoot = deps.bundledSkillsDir ?? defaultBundledSkillsDir();
   const skillRoot = path.join(bundledRoot, bundledName);
-  const raw = await fs.readFile(path.join(skillRoot, "SKILL.md"), "utf-8");
-  const { output } = attemptRepair(raw);
-
-  const resources: HashedResource[] = [];
-  async function walk(current: string, relative: string): Promise<void> {
-    const entries = await fs.readdir(current, { withFileTypes: true });
-    for (const entry of entries) {
-      const abs = path.join(current, entry.name);
-      const rel = relative ? `${relative}/${entry.name}` : entry.name;
-      if (isIgnoredArtifactPath(rel)) continue;
-      if (entry.isDirectory()) {
-        await walk(abs, rel);
-      } else if (entry.name !== "SKILL.md" && !entry.name.startsWith(".autovault-")) {
-        const content = await fs.readFile(abs, "utf-8");
-        resources.push({ path: rel, content });
-      }
-    }
-  }
-  await walk(skillRoot, "");
-  return { skillMd: output, resources };
+  // Use the same collector as installBundledSkill so drift checks inherit the
+  // identical path, artifact, symlink/special-file, and byte-limit boundary.
+  // A second ad-hoc walker can otherwise hash bytes that the installer would
+  // refuse (or traverse package metadata the installer deliberately ignores).
+  const bundle = await collectLocalSkillBundle(skillRoot);
+  const { output } = attemptRepair(bundle.skillMd);
+  return { skillMd: output, resources: bundle.resources };
 }
 
 async function fetchForSource(
@@ -244,27 +231,18 @@ export async function checkUpdates(
         });
         continue;
       }
-      // Round-53 fix: install_skill records contentHash from
-      // bundleHash(normalizedSkillMd, resources) where normalizedSkillMd is the
-      // output of attemptRepair (tabs → spaces, trailing whitespace stripped).
-      // The bundled-inline path above already mirrors this. The remote path
-      // previously hashed raw `fetched.skillMd`, so any GitHub/URL/agentskills
-      // skill whose upstream SKILL.md needed repair would install fine but
-      // permanently report `content hash changed` — drift output becomes noise
-      // and users learn to ignore it. Apply attemptRepair before hashing so
-      // install-time and check_updates-time hashes agree on a stable, repaired
-      // form.
-      const { output: normalizedUpstream } = attemptRepair(fetched.skillMd);
-      const upstreamHash = bundleHash(normalizedUpstream, fetched.resources ?? []);
-      if (
-        upstreamHash !== source.contentHash ||
-        (fetched.upstreamSha && source.upstreamSha && fetched.upstreamSha !== source.upstreamSha)
-      ) {
+      // Apply the same repair + missing-resource frontmatter synthesis used at
+      // install time before hashing. Repository SHA is provenance only: drift
+      // is a property of the selected normalized bundle, not unrelated commits
+      // elsewhere in the repository.
+      const normalizedUpstream = normalizeFetchedBundle(fetched);
+      const upstreamHash = bundleHash(normalizedUpstream.skillMd, normalizedUpstream.resources);
+      if (upstreamHash !== source.contentHash) {
         drifted.push({
           name,
           source: source.source,
           identifier: source.identifier,
-          reason: upstreamHash !== source.contentHash ? "content hash changed" : "upstream sha changed",
+          reason: "content hash changed",
           upstreamSha: fetched.upstreamSha
         });
       } else {

@@ -65,4 +65,41 @@ describe("bundled skills pass validation", () => {
     }
   });
 
+  it("documents only MCP tool names registered by the compatibility server", async () => {
+    const serverSource = await fs.readFile(
+      path.resolve(here, "..", "src", "mcp", "server.ts"),
+      "utf-8"
+    );
+    const registered = new Set(
+      [...serverSource.matchAll(/server\.tool\(\s*"([a-z][a-z0-9_]*)"/g)].map(
+        (match) => match[1]
+      )
+    );
+    const documented = new Set<string>();
+
+    for (const name of ["autovault-skill", "skill-author"]) {
+      const skillMd = await fs.readFile(path.join(skillsRoot, name, "SKILL.md"), "utf-8");
+      for (const match of skillMd.matchAll(/\b([a-z][a-z0-9_]+)\(\{/g)) {
+        documented.add(match[1]);
+      }
+      expect(skillMd).not.toMatch(/\bsearch_skills\b/);
+    }
+
+    expect([...documented].sort()).toEqual(
+      [...documented].filter((name) => registered.has(name)).sort()
+    );
+  });
+
+  it("keeps skill-author focused on AutoVault packaging rather than general skill design", async () => {
+    const skillMd = await fs.readFile(
+      path.join(skillsRoot, "skill-author", "SKILL.md"),
+      "utf-8"
+    );
+
+    expect(skillMd).toMatch(/AutoVault packaging/i);
+    expect(skillMd).toMatch(/host-native.*skill-creator/i);
+    expect(skillMd).toMatch(/get_skill\(\{query/i);
+    expect(skillMd).not.toContain("demo");
+  });
+
 });

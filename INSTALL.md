@@ -123,13 +123,13 @@ Bootstrapping 3 skill(s) into /Users/you/.autovault and syncing profiles
 { "success": true, "name": "codex-docs-drift-scout", ... }
 --- installing skill-author ---
 { "success": true, "name": "skill-author", ... }
---- get_skill query ---
-{ "matches": [ ... ], "skill": { ... } }
 ```
 
 Each install runs the full validation gate (schema, security denylist,
-capability cross-check). Bootstrap also passes profile sync with native root
-discovery enabled, so existing `~/.claude/skills`, `~/.codex/skills`, and
+capability cross-check) and records signed inline provenance with the stable
+bundled skill name. That makes the packaged source checkable by
+`check_updates`. Bootstrap also passes profile sync with native root discovery
+enabled, so existing `~/.claude/skills`, `~/.codex/skills`, and
 `~/.cursor/skills` roots are refreshed automatically. If any skill is rejected,
 the gate will explain why.
 
@@ -611,14 +611,16 @@ If the bundled skills have changed, re-run the bootstrap:
 node scripts/bootstrap-skills.mjs
 ```
 
-`add_skill` overwrites existing local bundled skills, so re-running bootstrap is
-safe and idempotent.
+The bundled installer atomically replaces the prior signed bundle, so re-running
+bootstrap is safe and idempotent.
 
 ## Checking for upstream drift
 
 AutoVault can detect when an installed skill has drifted from its source:
 
-- Skills installed from `github`, `agentskills`, or `url` are compared against the current upstream content.
+- Skills installed from `github`, `agentskills`, or `url` are compared against
+  the normalized selected bundle. A repository SHA change with identical skill
+  bytes remains up to date.
 - Bundled inline skills are checked against the repo's `skills/<name>/SKILL.md`.
 - Other inline skills have no upstream to compare and are reported as unchecked.
 - Transforms are compared against their pinned base `SKILL.md`; changed bases

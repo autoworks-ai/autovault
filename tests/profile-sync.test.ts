@@ -365,6 +365,51 @@ describe("profile sync", () => {
     ).toBe(true);
   });
 
+  it("reclaims a desired external symlink whose outside target is missing", async () => {
+    await ensureStorage();
+    await writeSkill("dangling-skill", skill("dangling-skill", ["claude-code"]));
+
+    const externalRoot = path.join(currentStorageRoot(), "external-dangling");
+    await fs.mkdir(externalRoot, { recursive: true });
+    const linkPath = path.join(externalRoot, "dangling-skill");
+    const missingTarget = path.join(currentStorageRoot(), "removed-native-skill");
+    await fs.symlink(missingTarget, linkPath, "dir");
+
+    const result = await syncProfiles({
+      profileRoots: { "claude-code": externalRoot }
+    });
+
+    const after = await fs.readlink(linkPath);
+    expect(path.resolve(externalRoot, after)).toBe(
+      path.join(currentStorageRoot(), "profiles", "claude-code", "dangling-skill")
+    );
+    await expect(fs.stat(linkPath)).resolves.toBeTruthy();
+    expect(result.warnings.some((warning) => warning.includes("dangling-skill"))).toBe(false);
+  });
+
+  it("reclaims a desired external symlink whose outside target fails with ENOTDIR", async () => {
+    await ensureStorage();
+    await writeSkill("notdir-skill", skill("notdir-skill", ["claude-code"]));
+
+    const externalRoot = path.join(currentStorageRoot(), "external-notdir");
+    await fs.mkdir(externalRoot, { recursive: true });
+    const fileParent = path.join(currentStorageRoot(), "not-a-directory");
+    await fs.writeFile(fileParent, "file", "utf-8");
+    const linkPath = path.join(externalRoot, "notdir-skill");
+    await fs.symlink(path.join(fileParent, "child"), linkPath, "dir");
+
+    const result = await syncProfiles({
+      profileRoots: { "claude-code": externalRoot }
+    });
+
+    const after = await fs.readlink(linkPath);
+    expect(path.resolve(externalRoot, after)).toBe(
+      path.join(currentStorageRoot(), "profiles", "claude-code", "notdir-skill")
+    );
+    await expect(fs.stat(linkPath)).resolves.toBeTruthy();
+    expect(result.warnings.some((warning) => warning.includes("notdir-skill"))).toBe(false);
+  });
+
   // Round-47 finding: writeSkill renames liveDir → <name>.bak.<ts>.<rand>
   // before renaming the staged tmp into liveDir. During that gap, an unlocked
   // syncProfiles would call listInstalledSkillNames (which filters dotted

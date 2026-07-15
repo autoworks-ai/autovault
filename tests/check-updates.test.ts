@@ -56,6 +56,28 @@ describe("checkUpdates", () => {
     expect(result.unchecked).toHaveLength(0);
   });
 
+  it("reports up_to_date when only the repository SHA changes", async () => {
+    const installFetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    });
+    await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: installFetcher } }
+    );
+    const checkFetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    });
+
+    const result = await checkUpdates(undefined, { fetchers: { github: checkFetcher } });
+
+    expect(result.up_to_date).toContain("drift-skill");
+    expect(result.drifted).toHaveLength(0);
+  });
+
   it("reports up_to_date when target agents are stored outside remote SKILL.md", async () => {
     const fetcher = vi.fn().mockResolvedValue({
       skillMd: skillMdWithoutAgents,
@@ -74,7 +96,7 @@ describe("checkUpdates", () => {
     expect(result.unchecked).toHaveLength(0);
   });
 
-  it("reports drift when content hash changes upstream", async () => {
+  it("reports drift when only the SKILL.md body changes upstream", async () => {
     const installFetcher = vi.fn().mockResolvedValue({
       skillMd,
       sourceUrl: "https://x",
@@ -87,7 +109,7 @@ describe("checkUpdates", () => {
     const checkFetcher = vi.fn().mockResolvedValue({
       skillMd: skillMdV2,
       sourceUrl: "https://x",
-      upstreamSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     });
     const result = await checkUpdates(undefined, { fetchers: { github: checkFetcher } });
     expect(result.drifted).toHaveLength(1);
@@ -225,6 +247,25 @@ bin:
     const result = await checkUpdates(undefined, { fetchers: { github: checkFetcher } });
     expect(result.drifted.map((d) => d.name)).toContain("drift-skill");
     expect(result.drifted[0].reason).toBe("content hash changed");
+  });
+
+  it("normalizes inferred remote resources identically during install and update checks", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://x",
+      upstreamSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      resources: [{ path: "references/guide.md", content: "# Guide\n" }]
+    });
+    const installed = await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: fetcher } }
+    );
+    expect(installed.success).toBe(true);
+
+    const result = await checkUpdates(undefined, { fetchers: { github: fetcher } });
+
+    expect(result.up_to_date).toContain("drift-skill");
+    expect(result.drifted).toHaveLength(0);
   });
 
   it("treats remote SKILL.md as up_to_date when only repairable whitespace differs (round-53)", async () => {

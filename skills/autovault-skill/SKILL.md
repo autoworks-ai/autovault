@@ -12,7 +12,7 @@ agents:
   - autojack
 category: meta
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
 capabilities:
   network: false
   filesystem: readonly
@@ -58,6 +58,20 @@ $AUTOVAULT_STORAGE_PATH/
 Use synced skills directly through the host's normal skill mechanism. If a
 skill is visible in the current agent session, it is already available; no
 `mcp__autovault__*` tools are required.
+
+For source-aware terminal installs, use the unified CLI:
+
+```text
+autovault add ./path/to/skill --sync-profiles
+autovault add owner/repo:path/to/skill/SKILL.md
+autovault add https://github.com/owner/repo/tree/main/path/to/skill
+```
+
+GitHub imports collect every regular sibling file beneath the selected skill
+directory at one immutable commit. AutoVault rejects truncated trees, links,
+submodules, unsafe paths, and oversized bundles. If upstream frontmatter omits
+resource declarations, AutoVault adds them during bundle normalization and the
+install response exposes `inferred_resources` for review.
 
 For local troubleshooting, inspect the profile directory:
 
@@ -105,7 +119,8 @@ The compatibility server exposes these MCP tools:
 - `add_skill({source, identifier, version?, skill_dir?, sync_profiles?,
   profile_roots?, discover_profile_roots?, verbose?})` - installs from
   `github`, `agentskills`, `url`, or a local bundle. Local bundles sync
-  configured profile roots by default.
+  configured profile roots by default. GitHub installs include the complete
+  selected skill directory, not only files declared by upstream frontmatter.
 - `update_skill({name, source?, identifier?, skill_dir?, skill_md?, resources?,
   reuse_existing_resources?, verbose?})` - refreshes or replaces an installed
   skill. Use `source: "inline"` plus `reuse_existing_resources: true` for
@@ -122,9 +137,11 @@ The compatibility server exposes these MCP tools:
   sync_profiles?, profile_roots?, discover_profile_roots?, verbose?})` -
   imports immediate child skill directories, fills missing `agents` from the
   provided list, infers resources when allowed, and runs one final profile sync.
-- `check_updates(skill?)` - compares installed content hash against the
-  recorded source. Bundled inline skills are checked against the local bundled
-  source; other inline skills are reported as unchecked.
+- `check_updates({skill?})` - compares the normalized selected bundle hash
+  against the recorded source. A repository HEAD/SHA change alone is not drift;
+  changed `SKILL.md` or resource bytes are drift. Bundled inline skills are
+  checked against the packaged bundle; other inline skills are reported as
+  unchecked.
 
 ## Optional MCP workflow
 
@@ -144,6 +161,11 @@ The compatibility server exposes these MCP tools:
    profile sync runs once.
 5. Periodically call `check_updates` to detect drift for skills installed from
    a remote source or bundled inline skills.
+
+Package authors can install repository-shipped skills through the public
+library export `installBundledSkill`. It records signed `source: inline`
+provenance plus the stable bundled skill name, allowing later drift checks
+against the package's current `skills/` directory.
 
 Skip this workflow entirely when the MCP tools are not connected. Missing MCP
 tools are not an error for filesystem-synced skills.

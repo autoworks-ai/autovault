@@ -26,6 +26,10 @@ export {
   type LocalSkillBundle
 } from "./installer/local.js";
 export {
+  installBundledSkill,
+  type InstallBundledSkillOptions
+} from "./installer/bundled.js";
+export {
   normalizeSkillInstallMode,
   skillInstallSteps,
   type SkillInstallMode,

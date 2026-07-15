@@ -14,6 +14,7 @@ import {
 } from "../sources/github.js";
 import { fetchSkillFromUrl } from "../sources/url.js";
 import type { FetchedSkill } from "../sources/types.js";
+import { normalizeFetchedBundle } from "../sources/normalize.js";
 import { bundleHash } from "../util/hash.js";
 import { checkBundleLimits } from "../util/limits.js";
 import { log } from "../util/log.js";
@@ -134,10 +135,14 @@ export async function installSkill(
 
   let skillMd = input.skill_md;
   let fetched: FetchedSkill | null = null;
+  let inferredResources: Array<{ path: string; type: "file" }> = [];
 
   if (!skillMd) {
     try {
-      fetched = await fetchByInput(input, deps);
+      const rawFetched = await fetchByInput(input, deps);
+      const normalizedFetched = normalizeFetchedBundle(rawFetched);
+      fetched = normalizedFetched;
+      inferredResources = normalizedFetched.inferredResources;
       skillMd = fetched.skillMd;
     } catch (error) {
       if (input.source === "github" && isGitHubSkillCandidatesError(error)) {
@@ -210,7 +215,7 @@ export async function installSkill(
         const message =
           `Source '${input.source}' does not fetch skill resources — only SKILL.md. ` +
           `The fetched skill declares ${hasBin ? "bin actions" : "resources"}, which require a complete bundle. ` +
-          `Install via 'github' source (which fetches all declared resources at the pinned SHA) or inline ` +
+          `Install via 'github' source (which fetches the complete selected skill directory at the pinned SHA) or inline ` +
           `(provide skill_md and resources[] directly).`;
         log.warn("install_skill.source_lacks_resources", {
           source: input.source,
@@ -384,6 +389,7 @@ export async function installSkill(
     name,
     validation,
     warnings: [...validation.warnings, ...postInstallWarnings],
+    ...(inferredResources.length > 0 ? { inferred_resources: inferredResources } : {}),
     source: sourceMeta,
     sync
   };

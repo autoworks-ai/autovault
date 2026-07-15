@@ -1,6 +1,7 @@
 import path from "node:path";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { canonicalRelPath } from "../util/path.js";
+import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import {
   MAX_RESOURCE_BYTES,
   MAX_RESOURCES,
@@ -634,7 +635,7 @@ async function fetchExactSkillOnce(
   // buffering past the cap before validation runs.
   const skillMd = await readBoundedText(response, MAX_SKILL_MD_BYTES, skillUrl);
 
-  const resources = await fetchDeclaredResources({
+  const resources = await fetchExactBundleResources({
     fetcher,
     headers,
     owner: ident.owner,
@@ -707,7 +708,13 @@ function declaredResourcePaths(skillMd: string): string[] {
   return Array.from(paths);
 }
 
-async function fetchDeclaredResources(args: {
+function isExcludedBundlePath(relativePath: string): boolean {
+  return relativePath.split("/").some(
+    (segment) => segment.startsWith(".autovault-") || isIgnoredArtifactPath(segment)
+  );
+}
+
+async function fetchExactBundleResources(args: {
   fetcher: typeof fetch;
   headers: Record<string, string>;
   owner: string;
@@ -716,17 +723,98 @@ async function fetchDeclaredResources(args: {
   skillFilePath: string;
   skillMd: string;
 }): Promise<FetchedSkillResource[]> {
-  const declared = declaredResourcePaths(args.skillMd);
-  if (declared.length === 0) return [];
-  if (declared.length > MAX_RESOURCES) {
+  const declared = declaredResourcePaths(args.skillMd).filter(
+    (relativePath) => !isExcludedBundlePath(relativePath)
+  );
+  const skillDirInRepo = path.posix.dirname(args.skillFilePath.replace(/\\/g, "/"));
+  const treeUrl = `https://api.github.com/repos/${args.owner}/${args.repo}/git/trees/${encodeURIComponent(
+    args.ref
+  )}?recursive=1`;
+  const treeHeaders = { ...args.headers, Accept: "application/vnd.github+json" };
+  const treeResponse = await fetchWithDeadline(
+    args.fetcher,
+    treeUrl,
+    { headers: treeHeaders },
+    treeUrl
+  );
+  if (!treeResponse.ok) {
     throw new Error(
-      `Declared resources exceed limit: ${declared.length} > ${MAX_RESOURCES}`
+      `GitHub tree fetch failed: ${treeResponse.status} ${treeResponse.statusText} (${treeUrl})`
     );
   }
-  const skillDirInRepo = path.posix.dirname(args.skillFilePath.replace(/\\/g, "/"));
+  assertContentLength(
+    treeUrl,
+    treeResponse.headers.get("content-length"),
+    MAX_GITHUB_TREE_API_BYTES
+  );
+  const treeBody = await readBoundedText(treeResponse, MAX_GITHUB_TREE_API_BYTES, treeUrl);
+  let treeData: {
+    tree?: Array<{ path?: string; type?: string; mode?: string }>;
+    truncated?: boolean;
+  };
+  try {
+    treeData = JSON.parse(treeBody) as typeof treeData;
+  } catch {
+    throw new Error(`GitHub tree fetch returned invalid JSON (${treeUrl})`);
+  }
+  if (treeData.truncated) {
+    throw new Error(
+      `GitHub tree listing for ${args.owner}/${args.repo} was truncated; refusing to install an incomplete skill bundle.`
+    );
+  }
+  if (!Array.isArray(treeData.tree)) {
+    throw new Error(`GitHub tree listing is missing a tree array (${treeUrl})`);
+  }
+  const skillPrefix = skillDirInRepo === "." ? "" : `${skillDirInRepo}/`;
+  const resourcePaths = new Set<string>(declared);
+  let selectedSkillFound = false;
+  for (const entry of treeData.tree) {
+    if (typeof entry.path !== "string") continue;
+    const repoPath = canonicalGithubFilePath("tree entry", entry.path);
+    const insideSkillDir = skillPrefix
+      ? repoPath === skillDirInRepo || repoPath.startsWith(skillPrefix)
+      : true;
+    if (!insideSkillDir) continue;
+    const rel = skillPrefix
+      ? repoPath === skillDirInRepo
+        ? ""
+        : repoPath.slice(skillPrefix.length)
+      : repoPath;
+    // Mirror local-bundle collection: ignored OS/editor artifacts and
+    // AutoVault metadata are excluded at any path segment, including whole
+    // directories and their descendants. Apply this before entry-type checks
+    // because the local collector skips those names before lstat/recursion.
+    if (rel && isExcludedBundlePath(rel)) continue;
+    if (entry.mode === "120000") {
+      throw new Error(`GitHub skill bundle contains a symlink: ${repoPath}`);
+    }
+    if (entry.type === "commit" || entry.mode === "160000") {
+      throw new Error(`GitHub skill bundle contains a submodule: ${repoPath}`);
+    }
+    if (entry.type === "tree") continue;
+    if (entry.type !== "blob") {
+      throw new Error(`GitHub skill bundle contains an unsupported tree entry: ${repoPath}`);
+    }
+    if (repoPath === args.skillFilePath) {
+      selectedSkillFound = true;
+      continue;
+    }
+    if (!rel) continue;
+    resourcePaths.add(canonicalGithubFilePath(`resource ${JSON.stringify(rel)}`, rel));
+  }
+  if (!selectedSkillFound) {
+    throw new Error(
+      `GitHub tree listing does not contain selected SKILL.md: ${args.skillFilePath}`
+    );
+  }
+
+  const ordered = Array.from(resourcePaths).sort((a, b) => a.localeCompare(b));
+  if (ordered.length > MAX_RESOURCES) {
+    throw new Error(`Skill resources exceed limit: ${ordered.length} > ${MAX_RESOURCES}`);
+  }
   const results: FetchedSkillResource[] = [];
-  let totalBytes = 0;
-  for (const rel of declared) {
+  let totalBytes = Buffer.byteLength(args.skillMd, "utf-8");
+  for (const rel of ordered) {
     // Canonicalize before joining with skillDirInRepo. A traversal segment
     // here is the same attack class as a traversal in the SKILL.md path —
     // path.posix.join would collapse `bin/setup` + `../../../etc/passwd`
@@ -753,7 +841,7 @@ async function fetchDeclaredResources(args: {
     totalBytes += Buffer.byteLength(content, "utf-8");
     if (totalBytes > MAX_TOTAL_BYTES) {
       throw new Error(
-        `Total declared resource bytes exceeded: ${totalBytes} > ${MAX_TOTAL_BYTES}`
+        `Total skill bundle bytes exceeded: ${totalBytes} > ${MAX_TOTAL_BYTES}`
       );
     }
     // Emit the canonical path so downstream validation/storage sees one

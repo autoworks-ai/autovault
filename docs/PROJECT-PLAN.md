@@ -304,7 +304,8 @@ V1 ships with two source adapters:
 
 - Accepts `owner/repo[@ref][:path/to/SKILL.md]`, GitHub blob URLs, and GitHub repo-root/tree URLs
 - Repo-root/tree URLs discover `SKILL.md` candidates; one candidate auto-selects, many candidates return a picker payload
-- Fetches `SKILL.md` and declared resources from a resolved commit SHA
+- Fetches `SKILL.md` plus all regular sibling files beneath the selected skill
+  directory from one resolved commit SHA, synthesizing missing declarations
 - Resolves current ref SHA for drift tracking
 - Supports `ref` (branch, tag, or commit SHA) for pinning
 
