@@ -36,3 +36,48 @@ function trimTrailingSpacesAndTabs(input: string): string {
   }
   return end === input.length ? input : input.slice(0, end);
 }
+
+/**
+ * Extract the metadata map (if present) from frontmatter data or raw SKILL.md.
+ * Avoids duplicating parse logic; callers can pass an already-parsed data record
+ * to skip re-parsing YAML.
+ */
+export function getMetadata(
+  input: string | Record<string, unknown>
+): Record<string, unknown> {
+  let data: Record<string, unknown>;
+  if (typeof input === "string") {
+    try {
+      const { data: parsed } = parseFrontmatter(input);
+      data = parsed;
+    } catch {
+      return Object.create(null);
+    }
+  } else {
+    data = input;
+  }
+  const rawMeta = (data as Record<string, unknown>).metadata;
+  if (typeof rawMeta !== "object" || rawMeta === null || Array.isArray(rawMeta)) {
+    return Object.create(null);
+  }
+  // Defend against prototype pollution (repo already forbids __proto__ etc in other paths).
+  // Copy only own enumerable properties into a null-prototype object.
+  const safe: Record<string, unknown> = Object.create(null);
+  for (const key of Object.keys(rawMeta)) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+    safe[key] = (rawMeta as Record<string, unknown>)[key];
+  }
+  return safe;
+}
+
+export function extractAuthor(input: string | Record<string, unknown>): string | undefined {
+  const meta = getMetadata(input);
+  const value = meta.author;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function extractSource(input: string | Record<string, unknown>): string | undefined {
+  const meta = getMetadata(input);
+  const value = meta.source;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}

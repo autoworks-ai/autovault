@@ -293,7 +293,7 @@ validation path:
 2. Parse YAML frontmatter with `gray-matter`.
 3. Validate schema with `zod`.
 4. Scan content against the denylist in `scripts/security/patterns.json`.
-5. Cross-check declared capabilities against observed behavior.
+5. Cross-check declared capabilities against observed behavior. Skills may include `metadata.author` and `metadata.source` (see the Agent Skills spec at agentskills.io). AutoVault-curated skills declare `metadata.author: "AutoVault"` (and `source`) so that hosts like Grok can group and attribute them (similar to how Resend skills appear under "Resend").
 6. Deduplicate exact, near-exact, and functionally similar proposals.
 7. Write the skill, source sidecar, signed manifest, and Ed25519 signature.
 

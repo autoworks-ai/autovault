@@ -12,7 +12,9 @@ agents:
   - autojack
 category: meta
 metadata:
+  author: AutoVault
   version: "1.0.0"
+  source: https://github.com/autoworks-ai/autovault
 capabilities:
   network: false
   filesystem: readonly
@@ -156,15 +158,20 @@ name: kebab-case-name
 description: At least 20 characters describing what the skill does and when to use it.
 agents: [claude-code, codex]
 metadata:
+  author: YourOrg
   version: "1.0.0"
+  source: https://github.com/yourorg/your-skill
 ---
 ```
 
 Optional but recommended fields: `tags`, `category`, `license`,
-`capabilities` (`network`, `filesystem`, `tools`), and
-`requires-secrets`. If the bundle ships files beyond `SKILL.md`, declare them
-in `resources:` with `type: file`, or let `propose_skill`/`bulk_import` infer
-that list when `allow_synthesized_frontmatter` is not false.
+`capabilities` (`network`, `filesystem`, `tools`), `requires-secrets`, and
+`metadata` (with `author`, `source`, `version`). Use `metadata.author` (and
+`metadata.source`) following the Agent Skills spec so host UIs (Grok, etc.)
+can group AutoVault skills and show provenance. If the bundle ships files
+beyond `SKILL.md`, declare them in `resources:` with `type: file`, or let
+`propose_skill`/`bulk_import` infer that list when `allow_synthesized_frontmatter`
+is not false.
 
 ## Security expectations
 

@@ -19,7 +19,9 @@ requires-secrets:
     description: Example token for test coverage
     required: false
 metadata:
+  author: TestAuthor
   version: "0.0.1"
+  source: https://example.com/test
 ---
 
 # Body
@@ -36,6 +38,8 @@ describe("list/search/get tools", () => {
       expect(skill.description).toMatch(/long enough/);
       expect(skill.tags).toEqual(["alpha"]);
       expect(skill.version).toBe("0.0.1");
+      expect(skill.author).toBe("TestAuthor");
+      expect(skill.frontmatter_source).toBe("https://example.com/test");
       expect(skill.requires_tools).toEqual(["Bash"]);
       expect(skill.requires_secrets[0]?.name).toBe("EXAMPLE_TOKEN");
       expect(skill.capabilities.filesystem).toBe("readonly");
@@ -56,7 +60,9 @@ risk_level: low
       category: "discovery",
       when_to_use: "Use when searching for skills by intent before loading full instructions.",
       when_not_to_use: "Do not use when exact skill names are already known.",
-      risk_level: "low"
+      risk_level: "low",
+      author: "TestAuthor",
+      frontmatter_source: "https://example.com/test"
     });
   });
 
@@ -108,7 +114,26 @@ metadata:
   });
 
   it("getSkill returns the full record plus source metadata when available", async () => {
-    await writeSkill("alpha-skill", md("alpha-skill"), [], {
+    await writeSkill("alpha-skill", `---
+name: alpha-skill
+description: A description that is intentionally long enough to satisfy the schema length checks for alpha-skill.
+tags:
+  - alpha
+metadata:
+  author: TestAuthor
+  version: "0.0.0"
+  source: https://example.com/test
+capabilities:
+  network: false
+  filesystem: readonly
+  tools: [Bash]
+requires-secrets:
+  - name: EXAMPLE_TOKEN
+    description: Example token for test coverage
+    required: false
+---
+# Body
+`, [], {
       source: "github",
       identifier: "owner/repo",
       fetchedAt: new Date().toISOString(),
@@ -118,6 +143,8 @@ metadata:
     expect(skill.name).toBe("alpha-skill");
     expect(skill.skill_md).toMatch(/Body/);
     expect((skill.source as { source: string }).source).toBe("github");
+    expect(skill.author).toBe("TestAuthor");
+    expect(skill.frontmatter_source).toBe("https://example.com/test");
   });
 
   it("getSkill can inline packaged resources when requested", async () => {

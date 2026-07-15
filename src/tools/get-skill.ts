@@ -2,7 +2,7 @@ import { readSkill, readSkillSource } from "../storage/index.js";
 import { renderSkillForAgent } from "../transforms/index.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
 import { resourcePathsForSkill } from "../util/skill-resource-paths.js";
-import { parseFrontmatter } from "../validation/frontmatter.js";
+import { extractAuthor, extractSource, parseFrontmatter } from "../validation/frontmatter.js";
 import { readSkillResources } from "./read-skill-resource.js";
 
 export type GetSkillOptions = {
@@ -36,7 +36,9 @@ export async function getSkill(
       bin: skill.bin,
       requires_secrets: skill.requiresSecrets,
       capabilities: parseRenderedCapabilities(rendered.skill_md),
-      source,
+      author: skill.author ?? extractAuthor(rendered.skill_md),
+      source, // AutoVault provenance object (distinct from frontmatter metadata.source)
+      frontmatter_source: skill.frontmatter_source ?? extractSource(rendered.skill_md),
       agent,
       applied_transforms: rendered.applied_transforms,
       warnings: rendered.warnings,
@@ -54,7 +56,9 @@ export async function getSkill(
     bin: skill.bin,
     requires_secrets: skill.requiresSecrets,
     capabilities: skill.capabilities,
-    source,
+    author: skill.author,
+    source, // AutoVault provenance object
+    frontmatter_source: skill.frontmatter_source,
     ...(resourceContents ? { resource_contents: resourceContents } : {})
   };
 }

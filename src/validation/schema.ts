@@ -103,6 +103,7 @@ const schema = z.object({
     .object({
       version: z.string().default("1.0.0")
     })
+    .passthrough()
     .optional(),
   capabilities: capabilitiesSchema,
   resources: resourceSchema,
