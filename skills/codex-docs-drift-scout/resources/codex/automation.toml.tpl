@@ -23,9 +23,9 @@ Signals to inspect:
 - package.json scripts and documented command names
 - .github/workflows/*
 - docs/AUTOVAULT-TOOLING-MIGRATION.md and nearby AutoVault migration docs
-- npm run autovault:audit -- --format json
+- npm run --silent autovault:audit
 
-Treat `npm run autovault:audit -- --format json` as a capped signal only. Redirect it to a temporary file, extract docs-relevant findings, and cap any quoted findings to the smallest useful set. Do not paste raw audit output into commits, PR bodies, or final reports.
+Treat `npm run --silent autovault:audit` as a capped signal only. Redirect its Markdown output to a temporary file, extract docs-relevant findings, and cap any quoted findings to the smallest useful set. Do not paste raw audit output into commits, PR bodies, or final reports.
 
 If no docs drift exists, do not create an issue or PR. Return a concise no-op report with the checks and signals inspected.
 
@@ -35,7 +35,7 @@ If docs drift exists:
 3. Run `npm run lint:workflows` and `node --test test/autovault-shim.test.js`. Run additional focused checks only when your edits warrant them.
 4. Commit with a conventional docs commit.
 5. Open a ready-for-review GitHub PR. Do not create a draft PR and do not merge.
-6. Wait 4-5 minutes for Copilot review threads. If unresolved Copilot comments appear, use [$copilot-review]({{COPILOT_REVIEW_SKILL}}) to evaluate and address valid feedback, then push follow-up commits.
+6. Wait 4-5 minutes for Copilot review threads. If unresolved Copilot comments appear, use `$copilot-review` to evaluate and address valid feedback, then push follow-up commits.
 7. Report the PR URL, checks run, and any unresolved risks.
 
 Authority boundary:
@@ -49,6 +49,7 @@ model = "gpt-5.5"
 reasoning_effort = "xhigh"
 execution_environment = "worktree"
 local_environment_config_path = "{{RENDER_ROOT}}/environment.toml"
+target = { type = "project", project_id = "{{PROJECT_ROOT}}" }
 cwds = ["{{PROJECT_ROOT}}"]
-created_at = 1780965900000
-updated_at = 1780965900000
+created_at = {{RENDERED_AT_MS}}
+updated_at = {{RENDERED_AT_MS}}

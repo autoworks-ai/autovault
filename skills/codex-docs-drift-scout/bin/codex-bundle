@@ -13,15 +13,17 @@ set -euo pipefail
 usage() {
   cat >&2 <<'TEXT'
 Usage:
-  codex-bundle install --project-root PATH [--codex-home PATH] [--automation-id ID] [--render-root PATH] [--replace-existing]
+  codex-bundle install --project-root PATH [--automation-id ID] [--replace-existing]
 
 Required:
   --project-root  Absolute path to the target repository (no shipped default).
 
 Defaults:
-  --codex-home    ${CODEX_HOME:-$HOME/.codex}
   --automation-id docs-drift-scout
-  --render-root   ${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}/rendered/codex-automations/<automation-id>
+
+Environment:
+  CODEX_HOME                 ${CODEX_HOME:-$HOME/.codex}
+  AUTOVAULT_STORAGE_PATH     ${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}
 
 Audit the rendered state with:
   autovault doctor codex-docs-drift-scout --json
@@ -47,7 +49,6 @@ esac
 project_root=""
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 automation_id="docs-drift-scout"
-render_root=""
 replace_existing="false"
 
 expand_home() {
@@ -77,28 +78,12 @@ while [[ $# -gt 0 ]]; do
       project_root="${1#--project-root=}"
       shift
       ;;
-    --codex-home)
-      codex_home="${2:?--codex-home requires a path}"
-      shift 2
-      ;;
-    --codex-home=*)
-      codex_home="${1#--codex-home=}"
-      shift
-      ;;
     --automation-id)
       automation_id="${2:?--automation-id requires a value}"
       shift 2
       ;;
     --automation-id=*)
       automation_id="${1#--automation-id=}"
-      shift
-      ;;
-    --render-root)
-      render_root="${2:?--render-root requires a path}"
-      shift 2
-      ;;
-    --render-root=*)
-      render_root="${1#--render-root=}"
       shift
       ;;
     --replace-existing)
@@ -123,15 +108,9 @@ project_root="$(cd "$project_root" && pwd -P)"
 
 storage_path="$(absolute_path "${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}")"
 codex_home="$(absolute_path "$codex_home")"
-if [[ -z "$render_root" ]]; then
-  render_root="$storage_path/rendered/codex-automations/$automation_id"
-fi
-render_root="$(absolute_path "$render_root")"
+render_root="$storage_path/rendered/codex-automations/$automation_id"
 
-# Machine-local path to the copilot-review skill the automation prompt links to.
-# Derived (not baked) so no personal absolute path lives inside the signed
-# template bytes.
-copilot_review_skill="$storage_path/skills/copilot-review/SKILL.md"
+rendered_at_ms="$(date +%s)000"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 skill_root="$(cd "$script_dir/.." && pwd -P)"
@@ -159,7 +138,7 @@ render_template() {
   content="${content//\{\{CODEX_HOME\}\}/$codex_home}"
   content="${content//\{\{AUTOMATION_ID\}\}/$automation_id}"
   content="${content//\{\{RENDER_ROOT\}\}/$render_root}"
-  content="${content//\{\{COPILOT_REVIEW_SKILL\}\}/$copilot_review_skill}"
+  content="${content//\{\{RENDERED_AT_MS\}\}/$rendered_at_ms}"
   printf '%s\n' "$content"
 }
 
@@ -173,14 +152,17 @@ write_rendered() {
   chmod 600 "$target" 2>/dev/null || true
 }
 
-# Validate rendered TOML (install-time gate) and write/refresh the render index
-# entry. One python3 invocation so a parse failure aborts the install BEFORE the
-# Codex symlink is published. The index records, per bundle: the owning skill,
-# the render root, the managed link root, the symlink path, the vault-template
-# content hashes (the same bytes `autovault doctor` re-verifies), and the
-# rendered-file hashes.
+# Validate an existing render index before rendering, then validate the rendered
+# TOML and atomically write/refresh the index entry. The index records, per
+# bundle: the owning skill, the render root, the managed link root, the symlink
+# path, the vault-template content hashes (the same bytes `autovault doctor`
+# re-verifies), and the rendered-file hashes.
 record_render_index() {
+  local mode="${1:-write}"
+  local rendered_automation="${2:-$automation_path}"
+  local rendered_environment="${3:-$environment_path}"
   python3 - \
+    "$mode" \
     "$render_index_path" \
     "$skill_name" \
     "$render_root" \
@@ -188,8 +170,8 @@ record_render_index() {
     "$codex_link" \
     "$automation_template_rel" "$automation_template" \
     "$environment_template_rel" "$environment_template" \
-    "$automation_path" \
-    "$environment_path" <<'PY'
+    "$rendered_automation" \
+    "$rendered_environment" <<'PY'
 import hashlib
 import json
 import os
@@ -198,6 +180,7 @@ import tempfile
 import tomllib
 
 (
+    mode,
     index_path,
     skill,
     render_root,
@@ -211,6 +194,106 @@ import tomllib
     environment_rendered,
 ) = sys.argv[1:]
 
+HASH_LENGTH = 64
+
+
+def corrupt(reason):
+    sys.stderr.write(f"codex-bundle: render index is corrupt: {reason}\n")
+    sys.exit(4)
+
+
+def safe_relative(value):
+    if not isinstance(value, str) or not value:
+        return False
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("/") or (
+        len(normalized) >= 2
+        and normalized[0].isalpha()
+        and normalized[1] == ":"
+    ):
+        return False
+    return all(part not in ("", ".", "..") for part in normalized.split("/"))
+
+
+def contained(child, parent):
+    try:
+        return os.path.commonpath(
+            (os.path.abspath(child), os.path.abspath(parent))
+        ) == os.path.abspath(parent)
+    except (OSError, ValueError):
+        return False
+
+
+def validate_hashes(value, label):
+    if not isinstance(value, list) or not value:
+        corrupt(f"{label} must be a non-empty array")
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            corrupt(f"{label} contains a non-object entry")
+        item_path = item.get("path")
+        item_hash = item.get("hash")
+        if not safe_relative(item_path):
+            corrupt(f"{label} contains an unsafe path")
+        if (
+            not isinstance(item_hash, str)
+            or len(item_hash) != HASH_LENGTH
+            or any(character not in "0123456789abcdef" for character in item_hash)
+        ):
+            corrupt(f"{label} contains an invalid hash")
+        if item_path in seen:
+            corrupt(f"{label} contains a duplicate path")
+        seen.add(item_path)
+
+
+def validate_index(value):
+    if not isinstance(value, dict):
+        corrupt("root must be an object")
+    version = value.get("version")
+    if isinstance(version, bool) or version != 1:
+        corrupt("unsupported version")
+    entries = value.get("entries")
+    if not isinstance(entries, list):
+        corrupt("entries must be an array")
+
+    render_boundary = os.path.join(os.path.dirname(index_path), "rendered")
+    seen_symlinks = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            corrupt("entries contains a non-object value")
+        entry_skill = entry.get("skill")
+        entry_render_root = entry.get("renderRoot")
+        entry_link_root = entry.get("linkRoot")
+        entry_symlink = entry.get("symlink")
+        if (
+            not isinstance(entry_skill, str)
+            or not entry_skill
+            or not entry_skill[0].isalnum()
+            or any(
+                character
+                not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+                for character in entry_skill
+            )
+        ):
+            corrupt("entry has an invalid skill name")
+        if not all(
+            isinstance(candidate, str) and candidate and os.path.isabs(candidate)
+            for candidate in (entry_render_root, entry_link_root, entry_symlink)
+        ):
+            corrupt("entry paths must be absolute")
+        if not contained(entry_render_root, render_boundary):
+            corrupt("entry renderRoot escapes the rendered boundary")
+        if os.path.dirname(os.path.abspath(entry_symlink)) != os.path.abspath(entry_link_root):
+            corrupt("entry symlink escapes its linkRoot")
+        resolved_symlink = os.path.abspath(entry_symlink)
+        if resolved_symlink in seen_symlinks:
+            corrupt("entries contain a duplicate symlink")
+        seen_symlinks.add(resolved_symlink)
+        validate_hashes(entry.get("templates"), "templates")
+        validate_hashes(entry.get("rendered"), "rendered")
+
+    return entries
+
 
 def sha256_file(path):
     h = hashlib.sha256()
@@ -219,6 +302,21 @@ def sha256_file(path):
             h.update(chunk)
     return h.hexdigest()
 
+
+index = {"version": 1, "entries": []}
+try:
+    with open(index_path, "r", encoding="utf-8") as handle:
+        index = json.load(handle)
+except FileNotFoundError:
+    pass
+except (OSError, json.JSONDecodeError) as error:
+    corrupt(str(error))
+
+entries = validate_index(index)
+if mode == "validate":
+    sys.exit(0)
+if mode not in ("check", "write"):
+    corrupt(f"unknown validation mode: {mode}")
 
 # Install-time TOML validity gate. A buggy template or substitution that yields
 # invalid TOML fails the install here, before anything is symlinked. Post-install
@@ -231,6 +329,9 @@ for rendered in (automation_rendered, environment_rendered):
         sys.stderr.write(f"codex-bundle: rendered TOML did not parse ({rendered}): {error}\n")
         sys.exit(3)
 
+if mode == "check":
+    sys.exit(0)
+
 entry = {
     "skill": skill,
     "renderRoot": render_root,
@@ -241,31 +342,25 @@ entry = {
         {"path": environment_tpl_rel, "hash": sha256_file(environment_tpl_abs)},
     ],
     "rendered": [
-        {"path": os.path.basename(automation_rendered), "hash": sha256_file(automation_rendered)},
-        {"path": os.path.basename(environment_rendered), "hash": sha256_file(environment_rendered)},
+        {
+            "path": os.path.basename(automation_rendered),
+            "hash": sha256_file(automation_rendered),
+        },
+        {
+            "path": os.path.basename(environment_rendered),
+            "hash": sha256_file(environment_rendered),
+        },
     ],
 }
-
-index = {"version": 1, "entries": []}
-try:
-    with open(index_path, "r", encoding="utf-8") as handle:
-        loaded = json.load(handle)
-    if isinstance(loaded, dict) and isinstance(loaded.get("entries"), list):
-        index = {"version": 1, "entries": list(loaded["entries"])}
-except FileNotFoundError:
-    pass
-except (OSError, json.JSONDecodeError):
-    # A corrupt index is already flagged by doctor; start clean rather than
-    # refuse the install. Other entries in a corrupt file cannot be trusted.
-    index = {"version": 1, "entries": []}
 
 # Replace any prior entry that published the same Codex symlink (re-install).
 index["entries"] = [
     existing
-    for existing in index["entries"]
-    if not (isinstance(existing, dict) and existing.get("symlink") == symlink)
+    for existing in entries
+    if existing.get("symlink") != symlink
 ]
 index["entries"].append(entry)
+validate_index(index)
 
 directory = os.path.dirname(index_path) or "."
 os.makedirs(directory, exist_ok=True)
@@ -288,30 +383,65 @@ except BaseException:
 PY
 }
 
+publish_symlink() {
+  python3 - "$render_root" "$codex_link" <<'PY'
+import os
+import sys
+
+target, link = sys.argv[1:]
+temporary = f"{link}.tmp.{os.getpid()}"
+try:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+    os.symlink(target, temporary)
+    os.replace(temporary, link)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
+PY
+}
+
 install_bundle() {
+  if [[ ! -L "$codex_link" && -e "$codex_link" && "$replace_existing" != "true" ]]; then
+    die "Codex automation path exists and is not a symlink: $codex_link (rerun with --replace-existing to move it aside)"
+  fi
+
+  # Refuse a corrupt or unsupported index before writing any rendered state.
+  record_render_index validate
+
+  mkdir -p "$storage_path"
+  local stage_root stage_automation stage_environment
+  stage_root="$(mktemp -d "$storage_path/.codex-bundle.$automation_id.XXXXXX")"
+  stage_automation="$stage_root/automation.toml"
+  stage_environment="$stage_root/environment.toml"
+  trap 'rm -rf "$stage_root"' EXIT
+
+  write_rendered "$automation_template" "$stage_automation"
+  write_rendered "$environment_template" "$stage_environment"
+  record_render_index check "$stage_automation" "$stage_environment"
+
   mkdir -p "$render_root" "$codex_automation_dir"
   chmod 700 "$render_root" 2>/dev/null || true
-
-  write_rendered "$automation_template" "$automation_path"
-  write_rendered "$environment_template" "$environment_path"
+  mv -f "$stage_automation" "$automation_path"
+  mv -f "$stage_environment" "$environment_path"
+  rm -rf "$stage_root"
+  stage_root=""
+  trap - EXIT
 
   # Gate + record before publishing the symlink, so an invalid render never
   # results in a live Codex automation pointing at it.
-  record_render_index
+  record_render_index write
 
-  if [[ -L "$codex_link" ]]; then
-    ln -sfn "$render_root" "$codex_link"
-  elif [[ -e "$codex_link" ]]; then
-    if [[ "$replace_existing" != "true" ]]; then
-      die "Codex automation path exists and is not a symlink: $codex_link (rerun with --replace-existing to move it aside)"
-    fi
+  if [[ ! -L "$codex_link" && -e "$codex_link" ]]; then
     backup="${codex_link}.backup.$(date +%Y%m%d%H%M%S)"
     mv "$codex_link" "$backup"
     printf 'moved existing Codex automation path to %s\n' "$backup"
-    ln -s "$render_root" "$codex_link"
-  else
-    ln -s "$render_root" "$codex_link"
   fi
+  publish_symlink
 
   printf 'rendered automation: %s\n' "$automation_path"
   printf 'rendered environment: %s\n' "$environment_path"

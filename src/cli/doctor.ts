@@ -460,11 +460,11 @@ export async function runDoctorReport(options: DoctorOptions) {
     );
   }
 
-  // The orphan/unverifiable sweep is a closed-set walk over every recorded link
-  // root, so it only makes sense on a full (unscoped) run. A scoped run still
-  // surfaces a corrupt index, but skips the global sweep.
+  // Full runs scan the active Codex automation root plus every recorded link
+  // root. Scanning the active root even when the index is absent catches a
+  // live AutoVault symlink whose sole index entry was deleted.
   const sweep =
-    !options.skill && indexLoad.kind === "ok"
+    !options.skill
       ? await sweepRenderOrphans(renderEntries, new Set(names))
       : { orphans: [], unverifiable: [] };
 

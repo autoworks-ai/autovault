@@ -6,7 +6,9 @@ tags: [codex, automation, docs, autohub, drift]
 agents: [codex, autojack]
 category: automation
 metadata:
+  author: AutoVault
   version: "0.1.0"
+  source: https://github.com/autoworks-ai/autovault
 risk_level: elevated
 capabilities:
   network: true
@@ -50,14 +52,20 @@ to the target repository:
 autovault skill install-codex codex-docs-drift-scout --project-root /ABSOLUTE/PATH/TO/autohub
 ```
 
-By default, the helper renders:
+The complete install surface is:
+
+```text
+autovault skill install-codex codex-docs-drift-scout --project-root PATH [--automation-id ID] [--replace-existing]
+```
+
+By default, the helper renders beneath `${AUTOVAULT_STORAGE_PATH:-~/.autovault}`:
 
 ```text
 ~/.autovault/rendered/codex-automations/docs-drift-scout/automation.toml
 ~/.autovault/rendered/codex-automations/docs-drift-scout/environment.toml
 ```
 
-and exposes the rendered directory to Codex as:
+and exposes the rendered directory beneath `${CODEX_HOME:-~/.codex}` as:
 
 ```text
 ~/.codex/automations/docs-drift-scout
@@ -67,10 +75,12 @@ The helper refuses to replace an existing non-symlink Codex automation path
 unless `--replace-existing` is passed. Replacement moves the existing path aside
 with a timestamped `.backup.<timestamp>` suffix.
 
-At install the helper also parses the rendered TOML with `python3` + `tomllib`
-(install fails on invalid TOML) and records a machine-local render index at
-`~/.autovault/render-index.json` — the per-bundle record `autovault doctor`
-hash-compares against. `python3` is required.
+Before writing, the helper refuses a corrupt or unsupported existing render
+index. It renders to temporary files, parses the TOML with `python3` +
+`tomllib`, then atomically publishes the index and Codex symlink. The
+machine-local index is `${AUTOVAULT_STORAGE_PATH:-~/.autovault}/render-index.json`
+— the per-bundle record `autovault doctor` hash-compares against. `python3` is
+required.
 
 ### Substitution variables
 
@@ -79,12 +89,10 @@ these placeholders at render time, so no personal absolute path is ever baked
 into the signed bytes:
 
 - `{{PROJECT_ROOT}}` — the `--project-root` you pass.
-- `{{CODEX_HOME}}` — `--codex-home` (default `~/.codex`).
+- `{{CODEX_HOME}}` — `${CODEX_HOME:-~/.codex}`.
 - `{{RENDER_ROOT}}` — where the rendered files are written.
 - `{{AUTOMATION_ID}}` — the Codex automation id (default `docs-drift-scout`).
-- `{{COPILOT_REVIEW_SKILL}}` — derived as
-  `$AUTOVAULT_STORAGE_PATH/skills/copilot-review/SKILL.md`; the automation prompt
-  links to it when handling Copilot review threads.
+- `{{RENDERED_AT_MS}}` — the current install time in Unix milliseconds.
 
 ## Audit
 
@@ -119,10 +127,10 @@ The check verifies, per recorded bundle:
 - the `~/.codex` automation path is a symlink pointing at the render root
   (catches a missing, replaced, or repointed symlink).
 
-A full `autovault doctor` run additionally sweeps for **orphan** symlinks under
-`~/.codex/automations` that point into the AutoVault render tree but have no
-backing index entry — the "render state deleted, dangling symlink survives"
-case.
+A full `autovault doctor` run additionally sweeps the active
+`${CODEX_HOME:-~/.codex}/automations` root for **orphan** symlinks that point
+into the AutoVault render tree but have no backing index entry — including when
+the index itself was deleted.
 
 ## Boundary
 

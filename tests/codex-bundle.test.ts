@@ -74,14 +74,13 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const vaultBin = await installVaultSkill();
     const { projectRoot, codexHome } = await makeScratch();
     const resolvedProjectRoot = await fs.realpath(projectRoot);
+    const beforeInstall = Date.now();
 
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     const renderRoot = path.join(
@@ -95,9 +94,22 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const automation = await fs.readFile(automationPath, "utf8");
     const environment = await fs.readFile(environmentPath, "utf8");
     expect(automation).toContain(`cwds = ["${resolvedProjectRoot}"]`);
+    expect(automation).toContain(
+      `target = { type = "project", project_id = "${resolvedProjectRoot}" }`
+    );
     expect(automation).toContain(`local_environment_config_path = "${environmentPath}"`);
+    expect(automation).toContain("npm run --silent autovault:audit");
+    expect(automation).toContain("$copilot-review");
+    expect(automation).not.toContain("COPILOT_REVIEW_SKILL");
+    const createdAt = Number(automation.match(/^created_at = (\d+)$/m)?.[1]);
+    const updatedAt = Number(automation.match(/^updated_at = (\d+)$/m)?.[1]);
+    expect(createdAt).toBeGreaterThanOrEqual(beforeInstall - 999);
+    expect(createdAt).toBeLessThanOrEqual(Date.now());
+    expect(updatedAt).toBe(createdAt);
     expect(automation).not.toContain("{{");
     expect(environment).toContain('name = "autohub"');
+    expect(environment).toContain('cd "${CODEX_WORKTREE_PATH:?CODEX_WORKTREE_PATH is required}"');
+    expect(environment).toContain("set -uo pipefail");
     expect(environment).not.toContain("{{");
 
     // The render index lives OUTSIDE rendered/, a sibling under the storage root.
@@ -132,10 +144,8 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     const automationPath = path.join(
@@ -159,10 +169,8 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     const renderRoot = path.join(
@@ -188,21 +196,17 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const installA = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(installA, installA.stderr).toMatchObject({ code: 0 });
 
     const installB = await runBundle(vaultBin, [
       "install",
       "--project-root",
       projectRoot,
-      "--codex-home",
-      codexHome,
       "--automation-id",
       "docs-drift-scout-extra"
-    ]);
+    ], { CODEX_HOME: codexHome });
     expect(installB, installB.stderr).toMatchObject({ code: 0 });
 
     // Delete entry B from the index but leave its ~/.codex symlink live. Entry A
@@ -227,16 +231,40 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     expect(report.summary.errors).toBeGreaterThan(0);
   });
 
+  it("flags the sole live Codex symlink when the render index is deleted", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const install = await runBundle(vaultBin, [
+      "install",
+      "--project-root",
+      projectRoot
+    ], { CODEX_HOME: codexHome });
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    await fs.rm(path.join(currentStorageRoot(), "render-index.json"));
+    const previousCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+    try {
+      const report = await runDoctorReport({});
+      expect(report.render.index).toBe("absent");
+      expect(report.render.orphans).toEqual([
+        path.join(codexHome, "automations", "docs-drift-scout")
+      ]);
+      expect(report.summary.errors).toBeGreaterThan(0);
+    } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
+    }
+  });
+
   it("errors when a template was edited after signing (step 1: template integrity)", async () => {
     const vaultBin = await installVaultSkill();
     const { projectRoot, codexHome } = await makeScratch();
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     // Edit the vaulted template after signing, WITHOUT repair. The signature no
@@ -266,10 +294,8 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     // Change the vaulted template (records were taken against the v1 bytes).
@@ -304,10 +330,8 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     const linkPath = path.join(codexHome, "automations", "docs-drift-scout");
@@ -327,10 +351,8 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     const install = await runBundle(vaultBin, [
       "install",
       "--project-root",
-      projectRoot,
-      "--codex-home",
-      codexHome
-    ]);
+      projectRoot
+    ], { CODEX_HOME: codexHome });
     expect(install, install.stderr).toMatchObject({ code: 0 });
 
     const indexPath = path.join(currentStorageRoot(), "render-index.json");
@@ -341,9 +363,164 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     expect(report.summary.errors).toBeGreaterThan(0);
   });
 
+  it("rejects an existing non-symlink before writing rendered state", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const linkPath = path.join(codexHome, "automations", "docs-drift-scout");
+    await fs.mkdir(linkPath);
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      { CODEX_HOME: codexHome }
+    );
+    expect(install.code).not.toBe(0);
+    expect(install.stderr).toContain("exists and is not a symlink");
+    await expect(
+      fs.lstat(
+        path.join(
+          currentStorageRoot(),
+          "rendered",
+          "codex-automations",
+          "docs-drift-scout"
+        )
+      )
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(path.join(currentStorageRoot(), "render-index.json"))).rejects.toMatchObject(
+      { code: "ENOENT" }
+    );
+  });
+
+  it("moves an existing non-symlink aside only with --replace-existing", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const automationRoot = path.join(codexHome, "automations");
+    const linkPath = path.join(automationRoot, "docs-drift-scout");
+    await fs.mkdir(linkPath);
+    await fs.writeFile(path.join(linkPath, "keep.txt"), "existing automation\n", "utf8");
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot, "--replace-existing"],
+      { CODEX_HOME: codexHome }
+    );
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+    expect((await fs.lstat(linkPath)).isSymbolicLink()).toBe(true);
+
+    const backups = (await fs.readdir(automationRoot)).filter((name) =>
+      name.startsWith("docs-drift-scout.backup.")
+    );
+    expect(backups).toHaveLength(1);
+    await expect(
+      fs.readFile(path.join(automationRoot, backups[0], "keep.txt"), "utf8")
+    ).resolves.toBe("existing automation\n");
+  });
+
+  it("refuses to replace a corrupt render index", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const indexPath = path.join(currentStorageRoot(), "render-index.json");
+    const corruptBytes = "{ definitely not valid json\n";
+    await fs.writeFile(indexPath, corruptBytes, "utf8");
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      { CODEX_HOME: codexHome }
+    );
+    expect(install.code).not.toBe(0);
+    expect(install.stderr).toContain("render index is corrupt");
+    await expect(fs.readFile(indexPath, "utf8")).resolves.toBe(corruptBytes);
+    await expect(
+      fs.lstat(
+        path.join(
+          currentStorageRoot(),
+          "rendered",
+          "codex-automations",
+          "docs-drift-scout"
+        )
+      )
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      fs.lstat(path.join(codexHome, "automations", "docs-drift-scout"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses to replace an unsupported render index", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const indexPath = path.join(currentStorageRoot(), "render-index.json");
+    const unsupportedBytes = `${JSON.stringify({ version: 2, entries: [] }, null, 2)}\n`;
+    await fs.writeFile(indexPath, unsupportedBytes, "utf8");
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      { CODEX_HOME: codexHome }
+    );
+    expect(install.code).not.toBe(0);
+    expect(install.stderr).toContain("render index is corrupt");
+    await expect(fs.readFile(indexPath, "utf8")).resolves.toBe(unsupportedBytes);
+  });
+
+  it("does not publish rendered state when a rendered template is invalid TOML", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    await fs.writeFile(
+      path.join(
+        currentStorageRoot(),
+        "skills",
+        skillName,
+        "resources",
+        "codex",
+        "automation.toml.tpl"
+      ),
+      "invalid = [\n",
+      "utf8"
+    );
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      { CODEX_HOME: codexHome }
+    );
+    expect(install.code).not.toBe(0);
+    expect(install.stderr).toContain("rendered TOML did not parse");
+    await expect(
+      fs.lstat(
+        path.join(
+          currentStorageRoot(),
+          "rendered",
+          "codex-automations",
+          "docs-drift-scout"
+        )
+      )
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.lstat(path.join(currentStorageRoot(), "render-index.json"))).rejects.toMatchObject(
+      { code: "ENOENT" }
+    );
+    await expect(
+      fs.lstat(path.join(codexHome, "automations", "docs-drift-scout"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fails the install when --project-root is omitted (no shipped default)", async () => {
     const result = await runBundle(repoBin, ["install"]);
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("--project-root is required");
+  });
+
+  it.each(["--codex-home", "--render-root"])("rejects the removed %s option", async (flag) => {
+    const { projectRoot, codexHome } = await makeScratch();
+    const result = await runBundle(repoBin, [
+      "install",
+      "--project-root",
+      projectRoot,
+      flag,
+      codexHome
+    ]);
+
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain(`unknown argument: ${flag}`);
   });
 });

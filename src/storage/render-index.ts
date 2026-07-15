@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { loadConfig } from "../config.js";
 import { sha256 } from "../util/hash.js";
@@ -67,6 +68,18 @@ function renderRootBoundary(): string {
   return path.resolve(path.join(loadConfig().storagePath, "rendered"));
 }
 
+function activeCodexLinkRoot(): string {
+  const configured = process.env.CODEX_HOME?.trim();
+  const home = process.env.HOME ?? os.homedir();
+  const codexHome =
+    configured === "~"
+      ? home
+      : configured?.startsWith("~/")
+        ? path.join(home, configured.slice(2))
+        : configured || path.join(home, ".codex");
+  return path.resolve(codexHome, "automations");
+}
+
 // Resolve-based (NOT realpath-based) prefix check. The bash helper records
 // absolute paths derived from the same literal AUTOVAULT_STORAGE_PATH the config
 // reads, so `path.resolve` on both sides agrees without touching the filesystem
@@ -81,7 +94,11 @@ function resolvedWithin(target: string, root: string): boolean {
 function isShapeSafeRelative(candidate: string): boolean {
   if (typeof candidate !== "string" || candidate.length === 0) return false;
   if (path.isAbsolute(candidate)) return false;
-  return !candidate.split(/[\\/]+/).some((segment) => segment === "..");
+  const normalized = candidate.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || /^[a-zA-Z]:/.test(normalized)) return false;
+  return normalized
+    .split("/")
+    .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 function isStringField(value: unknown): value is string {
@@ -89,12 +106,17 @@ function isStringField(value: unknown): value is string {
 }
 
 function parseHashList(value: unknown): Array<{ path: string; hash: string }> | null {
-  if (!Array.isArray(value)) return null;
+  if (!Array.isArray(value) || value.length === 0) return null;
   const out: Array<{ path: string; hash: string }> = [];
+  const seen = new Set<string>();
   for (const item of value) {
     if (item === null || typeof item !== "object") return null;
     const record = item as Record<string, unknown>;
     if (!isStringField(record.path) || !isStringField(record.hash)) return null;
+    if (!isShapeSafeRelative(record.path)) return null;
+    if (!/^[a-f0-9]{64}$/.test(record.hash)) return null;
+    if (seen.has(record.path)) return null;
+    seen.add(record.path);
     out.push({ path: record.path, hash: record.hash });
   }
   return out;
@@ -111,6 +133,16 @@ function parseEntry(value: unknown): RenderIndexEntry | null {
   ) {
     return null;
   }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-_]*$/.test(record.skill)) return null;
+  if (
+    !path.isAbsolute(record.renderRoot) ||
+    !path.isAbsolute(record.linkRoot) ||
+    !path.isAbsolute(record.symlink)
+  ) {
+    return null;
+  }
+  if (!resolvedWithin(record.renderRoot, renderRootBoundary())) return null;
+  if (path.dirname(path.resolve(record.symlink)) !== path.resolve(record.linkRoot)) return null;
   const templates = parseHashList(record.templates);
   const rendered = parseHashList(record.rendered);
   if (!templates || !rendered) return null;
@@ -141,16 +173,26 @@ export async function loadRenderIndex(): Promise<RenderIndexLoad> {
   if (parsed === null || typeof parsed !== "object") {
     return { kind: "corrupt", reason: "render index is not an object" };
   }
-  const list = (parsed as Record<string, unknown>).entries;
+  const record = parsed as Record<string, unknown>;
+  if (record.version !== 1) {
+    return { kind: "corrupt", reason: "render index has an unsupported version" };
+  }
+  const list = record.entries;
   if (!Array.isArray(list)) {
     return { kind: "corrupt", reason: "render index has no entries array" };
   }
   const entries: RenderIndexEntry[] = [];
+  const symlinks = new Set<string>();
   for (const candidate of list) {
     const entry = parseEntry(candidate);
     if (!entry) {
       return { kind: "corrupt", reason: "render index has a structurally invalid entry" };
     }
+    const resolvedSymlink = path.resolve(entry.symlink);
+    if (symlinks.has(resolvedSymlink)) {
+      return { kind: "corrupt", reason: `render index has duplicate symlink: ${entry.symlink}` };
+    }
+    symlinks.add(resolvedSymlink);
     entries.push(entry);
   }
   return { kind: "ok", entries };
@@ -286,7 +328,10 @@ export async function sweepRenderOrphans(
 ): Promise<RenderOrphanSweep> {
   const boundary = renderRootBoundary();
   const knownSymlinks = new Set(entries.map((entry) => path.resolve(entry.symlink)));
-  const linkRoots = new Set(entries.map((entry) => entry.linkRoot));
+  const linkRoots = new Set([
+    activeCodexLinkRoot(),
+    ...entries.map((entry) => path.resolve(entry.linkRoot))
+  ]);
 
   const orphans: string[] = [];
   for (const linkRoot of linkRoots) {

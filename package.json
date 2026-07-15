@@ -17,6 +17,7 @@
   "files": [
     "dist",
     "skills/autovault-skill",
+    "skills/codex-docs-drift-scout",
     "skills/skill-author",
     "scripts/security/patterns.json",
     "server.json",

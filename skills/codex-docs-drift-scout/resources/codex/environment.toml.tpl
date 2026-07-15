@@ -6,7 +6,7 @@ name = "autohub"
 [setup]
 script = '''
 set -euo pipefail
-cd "$CODEX_WORKTREE_PATH"
+cd "${CODEX_WORKTREE_PATH:?CODEX_WORKTREE_PATH is required}"
 
 npm_config_prefer_offline=true \
 npm_config_audit=false \
@@ -17,6 +17,7 @@ bash scripts/with-node-version.sh node scripts/setup-worktree.js
 # Cleanup is intentionally scoped to the disposable Codex worktree.
 [cleanup]
 script = '''
-cd "$CODEX_WORKTREE_PATH"
+set -uo pipefail
+cd "${CODEX_WORKTREE_PATH:?CODEX_WORKTREE_PATH is required}"
 bash scripts/reset-all.sh || true
 '''
