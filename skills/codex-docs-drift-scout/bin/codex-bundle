@@ -106,15 +106,23 @@ project_root="$(expand_home "$project_root")"
 [[ -d "$project_root" ]] || die "project root does not exist: $project_root"
 project_root="$(cd "$project_root" && pwd -P)"
 
-storage_path="$(absolute_path "${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}")"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+skill_root="$(cd "$script_dir/.." && pwd -P)"
+skill_name="$(basename "$skill_root")"
+
+storage_value="$(expand_home "${AUTOVAULT_STORAGE_PATH:-$HOME/.autovault}")"
+case "$storage_value" in
+  /*) storage_path="$storage_value" ;;
+  # AutoVault executes bin actions from the installed skill directory. Resolve
+  # a relative configured root from that signed install location, not from the
+  # action cwd, which would otherwise create a nested phantom vault.
+  *) storage_path="$(cd "$skill_root/../.." && pwd -P)" ;;
+esac
 codex_home="$(absolute_path "$codex_home")"
 render_root="$storage_path/rendered/codex-automations/$automation_id"
 
 rendered_at_ms="$(date +%s)000"
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-skill_root="$(cd "$script_dir/.." && pwd -P)"
-skill_name="$(basename "$skill_root")"
 automation_template="$skill_root/resources/codex/automation.toml.tpl"
 environment_template="$skill_root/resources/codex/environment.toml.tpl"
 automation_template_rel="resources/codex/automation.toml.tpl"
@@ -132,6 +140,7 @@ index_backup=""
 held_prior=""
 held_prior_original=""
 replacement_backup=""
+replacement_collision="false"
 render_published="false"
 index_published="false"
 transaction_committed="false"
@@ -139,7 +148,8 @@ transaction_committed="false"
 [[ -f "$automation_template" ]] || die "missing template: $automation_template"
 [[ -f "$environment_template" ]] || die "missing template: $environment_template"
 
-command -v python3 >/dev/null 2>&1 || die "python3 is required to validate rendered TOML and record the render index"
+command -v python3 >/dev/null 2>&1 || die "python3 3.11 or newer with tomllib is required to validate rendered TOML and record the render index"
+python3 -c 'import tomllib' >/dev/null 2>&1 || die "python3 3.11 or newer with tomllib is required to validate rendered TOML and record the render index"
 
 cleanup_install() {
   local exit_status=$?
@@ -158,7 +168,7 @@ cleanup_install() {
     if [[ -n "$render_backup" && ( -e "$render_backup" || -L "$render_backup" ) ]]; then
       mv "$render_backup" "$render_root"
     fi
-    if [[ -n "$replacement_backup" && -e "$replacement_backup" ]]; then
+    if [[ -n "$replacement_backup" && ( -e "$replacement_backup" || -L "$replacement_backup" ) ]]; then
       if [[ ! -e "$codex_link" && ! -L "$codex_link" ]]; then
         mv "$replacement_backup" "$codex_link"
       fi
@@ -407,6 +417,15 @@ if mode == "prior":
             sys.stdout.write(existing["symlink"])
             break
     sys.exit(0)
+if mode == "managed":
+    for existing in entries:
+        if (
+            os.path.abspath(existing["renderRoot"]) == os.path.abspath(render_root)
+            and os.path.abspath(existing["symlink"]) == os.path.abspath(symlink)
+        ):
+            sys.stdout.write("true")
+            break
+    sys.exit(0)
 if mode not in ("check", "stage", "write"):
     corrupt(f"unknown validation mode: {mode}")
 
@@ -521,14 +540,24 @@ PY
 }
 
 install_bundle() {
-  local prior_symlink stage_automation stage_environment backup
-  if [[ ! -L "$codex_link" && -e "$codex_link" && "$replace_existing" != "true" ]]; then
-    die "Codex automation path exists and is not a symlink: $codex_link (rerun with --replace-existing to move it aside)"
-  fi
-
+  local prior_symlink managed_current stage_automation stage_environment backup
   # Refuse a corrupt or unsupported index before writing any rendered state.
   record_render_index validate
   prior_symlink="$(record_render_index prior)"
+  managed_current="$(record_render_index managed)"
+
+  if [[ ! -L "$codex_link" && -e "$codex_link" ]]; then
+    if [[ "$replace_existing" != "true" ]]; then
+      die "Codex automation path exists and is not a symlink: $codex_link (rerun with --replace-existing to move it aside)"
+    fi
+    replacement_collision="true"
+  elif [[ -L "$codex_link" && "$managed_current" != "true" ]]; then
+    if [[ "$replace_existing" != "true" ]]; then
+      die "Codex automation path exists and is not managed by AutoVault: $codex_link (rerun with --replace-existing to move it aside)"
+    fi
+    replacement_collision="true"
+  fi
+
   manage_prior_symlink check "$prior_symlink"
 
   mkdir -p "$storage_path" "$codex_automation_dir" "$(dirname "$render_root")"
@@ -553,7 +582,7 @@ install_bundle() {
     mv "$prior_symlink" "$held_prior"
   fi
 
-  if [[ ! -L "$codex_link" && -e "$codex_link" ]]; then
+  if [[ "$replacement_collision" == "true" && ( -e "$codex_link" || -L "$codex_link" ) ]]; then
     backup="${codex_link}.backup.$(date +%Y%m%d%H%M%S)"
     if [[ -e "$backup" || -L "$backup" ]]; then
       backup="${backup}.$$.$RANDOM"

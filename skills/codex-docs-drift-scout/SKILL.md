@@ -71,16 +71,17 @@ and exposes the rendered directory beneath `${CODEX_HOME:-~/.codex}` as:
 ~/.codex/automations/docs-drift-scout
 ```
 
-The helper refuses to replace an existing non-symlink Codex automation path
-unless `--replace-existing` is passed. Replacement moves the existing path aside
-with a timestamped `.backup.<timestamp>` suffix.
+The helper refuses to replace an existing Codex automation path unless the
+render index proves the symlink is already managed by AutoVault or
+`--replace-existing` is passed. Replacement moves the existing path aside with a
+timestamped `.backup.<timestamp>` suffix.
 
 Before writing, the helper refuses a corrupt or unsupported existing render
 index. It renders to temporary files, parses the TOML with `python3` +
 `tomllib`, then atomically publishes the index and Codex symlink. The
 machine-local index is `${AUTOVAULT_STORAGE_PATH:-~/.autovault}/render-index.json`
-— the per-bundle record `autovault doctor` hash-compares against. `python3` is
-required.
+— the per-bundle record `autovault doctor` hash-compares against. Python 3.11 or
+newer is required for the standard-library `tomllib` parser.
 
 ### Substitution variables
 

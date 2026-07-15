@@ -17,11 +17,12 @@ const repoBin = path.join(repoSkillDir, "bin", "codex-bundle");
 function runBundle(
   scriptPath: string,
   args: string[],
-  env: Record<string, string> = {}
+  env: Record<string, string> = {},
+  cwd = repoRoot
 ): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn("bash", [scriptPath, ...args], {
-      cwd: repoRoot,
+      cwd,
       env: { ...process.env, HOME: os.homedir(), ...env },
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -416,6 +417,64 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     ).resolves.toBe("existing automation\n");
   });
 
+  it("refuses an unmanaged symlink unless --replace-existing preserves it", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const automationRoot = path.join(codexHome, "automations");
+    const linkPath = path.join(automationRoot, "docs-drift-scout");
+    const unmanagedTarget = path.join(path.dirname(projectRoot), "unmanaged-automation");
+    await fs.mkdir(unmanagedTarget);
+    await fs.symlink(unmanagedTarget, linkPath);
+
+    const refused = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      { CODEX_HOME: codexHome }
+    );
+    expect(refused.code).not.toBe(0);
+    expect(refused.stderr).toContain("exists and is not managed by AutoVault");
+    await expect(fs.readlink(linkPath)).resolves.toBe(unmanagedTarget);
+    await expect(fs.lstat(path.join(currentStorageRoot(), "render-index.json"))).rejects.toMatchObject(
+      { code: "ENOENT" }
+    );
+
+    const replaced = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot, "--replace-existing"],
+      { CODEX_HOME: codexHome }
+    );
+    expect(replaced, replaced.stderr).toMatchObject({ code: 0 });
+    const backups = (await fs.readdir(automationRoot)).filter((name) =>
+      name.startsWith("docs-drift-scout.backup.")
+    );
+    expect(backups).toHaveLength(1);
+    await expect(fs.readlink(path.join(automationRoot, backups[0]))).resolves.toBe(
+      unmanagedTarget
+    );
+  });
+
+  it("derives a relative AUTOVAULT_STORAGE_PATH from the installed skill", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const installedSkillRoot = path.dirname(path.dirname(vaultBin));
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      {
+        AUTOVAULT_STORAGE_PATH: path.basename(currentStorageRoot()),
+        CODEX_HOME: codexHome
+      },
+      installedSkillRoot
+    );
+
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+    await expect(fs.lstat(path.join(currentStorageRoot(), "render-index.json"))).resolves.toBeDefined();
+    await expect(
+      fs.lstat(path.join(installedSkillRoot, path.basename(currentStorageRoot())))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rehomes an automation without leaving a duplicate render entry or old link", async () => {
     const vaultBin = await installVaultSkill();
     const first = await makeScratch();
@@ -668,6 +727,29 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
           name.startsWith(".render-index.docs-drift-scout.")
       )
     ).toEqual([]);
+  });
+
+  it("preflights Python tomllib support before writing state", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const fakeBin = await fs.mkdtemp(path.join(os.tmpdir(), "autovault-python-preflight-"));
+    const fakePython = path.join(fakeBin, "python3");
+    await fs.writeFile(fakePython, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      {
+        CODEX_HOME: codexHome,
+        PATH: `${fakeBin}:${process.env.PATH ?? ""}`
+      }
+    );
+
+    expect(install.code).not.toBe(0);
+    expect(install.stderr).toContain("python3 3.11 or newer with tomllib is required");
+    await expect(fs.lstat(path.join(currentStorageRoot(), "render-index.json"))).rejects.toMatchObject(
+      { code: "ENOENT" }
+    );
   });
 
   it("fails the install when --project-root is omitted (no shipped default)", async () => {
