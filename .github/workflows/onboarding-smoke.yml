@@ -33,6 +33,9 @@ jobs:
         run: |
           npm install -g "$RUNNER_TEMP"/autoworks-ai-autovault-*.tgz --prefix "$RUNNER_TEMP/npm-global"
           echo "$RUNNER_TEMP/npm-global/bin" >> "$GITHUB_PATH"
+          package_root="$RUNNER_TEMP/npm-global/lib/node_modules/@autoworks-ai/autovault"
+          test -f "$package_root/skills/codex-docs-drift-scout/SKILL.md"
+          test -x "$package_root/skills/codex-docs-drift-scout/bin/codex-bundle"
           "$RUNNER_TEMP/npm-global/bin/autovault" setup --json
           "$RUNNER_TEMP/npm-global/bin/autovault" doctor --json
           "$RUNNER_TEMP/npm-global/bin/autovault" serve --help
@@ -72,3 +75,10 @@ jobs:
           "$AUTOVAULT_HOME/bin/autovault" setup --json
           "$AUTOVAULT_HOME/bin/autovault" doctor --json
           "$AUTOVAULT_HOME/bin/autovault" serve --help
+          skills_json="$("$AUTOVAULT_HOME/bin/autovault" skill list --json)"
+          SKILLS_JSON="$skills_json" node -e '
+            const installed = new Set(JSON.parse(process.env.SKILLS_JSON).skills.map((skill) => skill.name));
+            for (const expected of ["autovault-skill", "codex-docs-drift-scout", "skill-author"]) {
+              if (!installed.has(expected)) throw new Error(`missing bundled skill: ${expected}`);
+            }
+          '

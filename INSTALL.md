@@ -103,9 +103,10 @@ variables.
 
 ## 3. Seed the skill library
 
-AutoVault ships two bundled meta-skills in `skills/` (`autovault-skill` and
-`skill-author`). Seed every `skills/*/SKILL.md` bundle into your storage path
-and refresh host-visible profiles:
+AutoVault ships three bundled skills in `skills/`: the `autovault-skill` and
+`skill-author` meta-skills plus `codex-docs-drift-scout`, a public Codex
+render-fidelity example. Seed every `skills/*/SKILL.md` bundle into your
+storage path and refresh host-visible profiles:
 
 ```bash
 npm run build            # if you haven't already
@@ -115,9 +116,11 @@ node scripts/bootstrap-skills.mjs
 Expected output (abbreviated):
 
 ```text
-Bootstrapping 2 skill(s) into /Users/you/.autovault and syncing profiles
+Bootstrapping 3 skill(s) into /Users/you/.autovault and syncing profiles
 --- installing autovault-skill ---
 { "success": true, "name": "autovault-skill", ... }
+--- installing codex-docs-drift-scout ---
+{ "success": true, "name": "codex-docs-drift-scout", ... }
 --- installing skill-author ---
 { "success": true, "name": "skill-author", ... }
 --- get_skill query ---
@@ -497,13 +500,14 @@ From your MCP host, run:
 get_skill({ "query": "skill", "top_k": 10 })
 ```
 
-You should see the two seeded skills. Then try:
+You should see all three seeded skills. Then try:
 
 ```
 get_skill({ "query": "what is autovault" })
 get_skill({ "name": "autovault-skill" })
 get_skill({ "query": "author a new skill" })
 get_skill({ "name": "skill-author" })
+get_skill({ "name": "codex-docs-drift-scout" })
 ```
 
 ## 6a. Make the agent reach for the vault (recommended)

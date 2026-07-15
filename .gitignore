@@ -11,11 +11,12 @@ assistant/
 .wrangler/
 
 # Personal/local skills are not tracked in the public template.
-# Only autovault-skill and skill-author ship as bundled demos; everything
-# else under skills/ stays on the maintainer's disk and bootstraps into
+# Only the three allow-listed demos ship as bundled skills; everything else
+# under skills/ stays on the maintainer's disk and bootstraps into
 # ~/.autovault/ via scripts/bootstrap-skills.mjs.
 skills/*
 !skills/.gitkeep
 !skills/autovault-skill/
 !skills/skill-author/
-
+!skills/codex-docs-drift-scout/
+!skills/codex-docs-drift-scout/**

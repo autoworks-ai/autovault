@@ -14,6 +14,13 @@ import {
   type SkillSource,
   type SkillSourceStatus
 } from "../storage/index.js";
+import {
+  loadRenderIndex,
+  sweepRenderOrphans,
+  verifyRenderForSkill,
+  type RenderFidelityStatus,
+  type RenderIndexEntry
+} from "../storage/render-index.js";
 import { bundleHash } from "../util/hash.js";
 import { ignoredArtifactNamesDescription } from "../util/ignored-artifacts.js";
 import { assertSafeSkillName } from "../util/skill-name.js";
@@ -50,6 +57,7 @@ type DoctorSkillReport = {
   repair_reason: string;
   integrity: SkillIntegrityStatus;
   source: SkillSourceStatus;
+  render: RenderFidelityStatus;
   actions: string[];
 };
 
@@ -159,9 +167,11 @@ function overallStatus(
   integrity: SkillIntegrityStatus,
   source: SkillSourceStatus,
   ignoredArtifacts: string[],
-  repair: DoctorRepairReport
+  repair: DoctorRepairReport,
+  render: RenderFidelityStatus
 ): "ok" | "warning" | "error" {
   if (repair.repair_status === "failed" || repair.repair_status === "refused") return "error";
+  if (render.kind === "error") return "error";
   if (integrity.kind === "tampered" || integrity.kind === "manifest_corrupt") return "error";
   if (source.kind === "tampered" || source.kind === "unparseable") return "error";
   if (integrity.kind === "no_manifest" || source.kind === "legacy" || source.kind === "absent") {
@@ -264,7 +274,12 @@ async function repairSkillInstall(
   };
 }
 
-async function inspectSkill(name: string, clean: boolean, repair: boolean): Promise<DoctorSkillReport> {
+async function inspectSkill(
+  name: string,
+  clean: boolean,
+  repair: boolean,
+  renderEntries: RenderIndexEntry[]
+): Promise<DoctorSkillReport> {
   const before = await listIgnoredSkillArtifacts(name);
   const cleaned = clean && before.length > 0 ? await cleanIgnoredSkillArtifacts(name) : [];
   let integrity = await verifyInstalledIntegrity(name);
@@ -276,10 +291,14 @@ async function inspectSkill(name: string, clean: boolean, repair: boolean): Prom
     integrity = await verifyInstalledIntegrity(name);
     source = await readSkillSourceStatus(name);
   }
+  // Render fidelity is verified AFTER any repair so a re-signed bundle is
+  // re-checked against the recorded render hashes, not the pre-repair state.
+  const render = await verifyRenderForSkill(name, renderEntries);
   const ignoredArtifacts = clean ? await listIgnoredSkillArtifacts(name) : before;
   const actions = [
     ...integrityActions(integrity, source, name),
     ...sourceActions(source),
+    ...(render.kind === "error" ? render.problems : []),
     ...(repairReport.repair_status === "refused" || repairReport.repair_status === "failed"
       ? [repairReport.repair_reason]
       : []),
@@ -289,12 +308,13 @@ async function inspectSkill(name: string, clean: boolean, repair: boolean): Prom
   ];
   return {
     name,
-    status: overallStatus(integrity, source, ignoredArtifacts, repairReport),
+    status: overallStatus(integrity, source, ignoredArtifacts, repairReport, render),
     ignored_artifacts: ignoredArtifacts,
     cleaned,
     ...repairReport,
     integrity,
     source,
+    render,
     actions
   };
 }
@@ -334,6 +354,35 @@ function formatReport(report: Awaited<ReturnType<typeof runDoctorReport>>): stri
     )
   );
   lines.push("");
+
+  // Report-level render state: a corrupt index, dangling orphan symlinks, or
+  // render entries owned by an uninstalled skill. Rendered ABOVE the skill list
+  // and the no-skills bailout so an orphan survives even after every skill is
+  // gone.
+  if (
+    report.render.index === "corrupt" ||
+    report.render.orphans.length > 0 ||
+    report.render.unverifiable.length > 0
+  ) {
+    lines.push(sectionTitle("Render state", theme));
+    if (report.render.index === "corrupt") {
+      lines.push(
+        `  ${theme.style.red("index")} corrupt: ${report.render.corruptReason ?? "unparseable render index"}`
+      );
+    }
+    if (report.render.orphans.length > 0) {
+      lines.push(
+        `  ${theme.style.red("orphan symlinks")} ${report.render.orphans.join(", ")}`
+      );
+    }
+    if (report.render.unverifiable.length > 0) {
+      lines.push(
+        `  ${theme.style.red("unverifiable")} render entries for uninstalled skill(s): ${report.render.unverifiable.join(", ")}`
+      );
+    }
+    lines.push("");
+  }
+
   if (report.skills.length === 0) {
     lines.push(`${theme.style.dim("No installed skills found.")}`);
     return `${lines.join("\n")}\n`;
@@ -374,6 +423,18 @@ function formatReport(report: Awaited<ReturnType<typeof runDoctorReport>>): stri
       lines.push(`  ${theme.style.dim("integrity")} ${skill.integrity.kind}`);
     }
     lines.push(`  ${theme.style.dim("source")} ${skill.source.kind}`);
+    // Render fidelity: only surface when the skill has rendered state on this
+    // machine. `skipped` (never rendered here — the default for the bundled
+    // demos) prints nothing, keeping the dashboard clean.
+    if (skill.render.kind === "error") {
+      lines.push(`  ${theme.style.red("render")} failed: ${skill.render.problems.join("; ")}`);
+    } else if (skill.render.kind === "ok") {
+      lines.push(
+        `  ${theme.style.dim("render")} ok (${skill.render.entries} bundle${
+          skill.render.entries === 1 ? "" : "s"
+        })`
+      );
+    }
     if (statusTone !== "ok" && skill.actions.length > 0) {
       lines.push(bulletList(skill.actions.map((action) => `next: ${action}`), theme));
     }
@@ -382,18 +443,48 @@ function formatReport(report: Awaited<ReturnType<typeof runDoctorReport>>): stri
   return `${lines.join("\n")}\n`;
 }
 
-async function runDoctorReport(options: DoctorOptions) {
+export async function runDoctorReport(options: DoctorOptions) {
   await ensureStorage();
   await recoverOrphanBackups();
+
+  // Load the machine-local render index once. A corrupt index is a report-level
+  // error surfaced regardless of scope; entries drive the per-skill render check.
+  const indexLoad = await loadRenderIndex();
+  const renderEntries = indexLoad.kind === "ok" ? indexLoad.entries : [];
+
   const names = options.skill ? [options.skill] : await listInstalledSkillNames();
   const skills = [];
   for (const name of names) {
-    skills.push(await inspectSkill(name, Boolean(options.clean), Boolean(options.repair)));
+    skills.push(
+      await inspectSkill(name, Boolean(options.clean), Boolean(options.repair), renderEntries)
+    );
   }
+
+  // Full runs scan the active Codex automation root plus every recorded link
+  // root. Scanning the active root even when the index is absent catches a
+  // live AutoVault symlink whose sole index entry was deleted.
+  const sweep =
+    !options.skill
+      ? await sweepRenderOrphans(renderEntries, new Set(names))
+      : { orphans: [], unverifiable: [] };
+
+  const render = {
+    index: indexLoad.kind,
+    corruptReason: indexLoad.kind === "corrupt" ? indexLoad.reason : undefined,
+    orphans: sweep.orphans,
+    unverifiable: sweep.unverifiable
+  };
+
+  // Report-level render errors live outside any single skill's status, so fold
+  // them into the error count that drives the exit code.
+  const reportLevelRenderErrors =
+    (indexLoad.kind === "corrupt" ? 1 : 0) + sweep.orphans.length + sweep.unverifiable.length;
+
   const summary = {
     ok: skills.filter((skill) => skill.status === "ok").length,
     warnings: skills.filter((skill) => skill.status === "warning").length,
-    errors: skills.filter((skill) => skill.status === "error").length,
+    errors:
+      skills.filter((skill) => skill.status === "error").length + reportLevelRenderErrors,
     ignored_artifacts: skills.reduce((sum, skill) => sum + skill.ignored_artifacts.length, 0),
     cleaned: skills.reduce((sum, skill) => sum + skill.cleaned.length, 0)
   };
@@ -402,6 +493,7 @@ async function runDoctorReport(options: DoctorOptions) {
     checked: names,
     cleaned: Boolean(options.clean),
     summary,
+    render,
     skills
   };
 }

@@ -86,9 +86,9 @@ $AUTOVAULT_STORAGE_PATH/
 
 ## Bundled skills
 
-The repo ships two meta-skills under `skills/` (`autovault-skill`, `skill-author`) as bundled demos. These are source-of-truth content, not installed state. `scripts/bootstrap-skills.mjs` spawns the built server and installs every directory under `skills/` into `$AUTOVAULT_STORAGE_PATH` via the real `install_skill` tool — meaning they go through the same validation gate as any other install. If a bundled skill fails validation after you edit it, the bootstrap will reject it; fix the content, don't bypass.
+The repo ships three bundled demos under `skills/`: two meta-skills (`autovault-skill`, `skill-author`) and `codex-docs-drift-scout` (the Codex render-fidelity example that exercises the `autovault doctor` render check). These are source-of-truth content, not installed state. `scripts/bootstrap-skills.mjs` spawns the built server and installs every directory under `skills/` into `$AUTOVAULT_STORAGE_PATH` via the real `install_skill` tool — meaning they go through the same validation gate as any other install. If a bundled skill fails validation after you edit it, the bootstrap will reject it; fix the content, don't bypass. Because `codex-docs-drift-scout` is shipped/shared, its signed bytes (templates + bin) must carry **zero** personal absolute paths — machine-specific values are substituted at render time, not baked in.
 
-`.gitignore` excludes everything under `skills/` except the two demos and `skills/.gitkeep`. Personal/local skills can live under `skills/<name>/` on disk — they are not tracked in git but still bootstrap into `~/.autovault/skills/` via the same script. Caveat: the allow-list only stops `git add -A` from sweeping them in; an explicit `git add skills/foo/` will still stage a personal skill, so keep an eye on commits.
+`.gitignore` excludes everything under `skills/` except the three demos and `skills/.gitkeep`. Personal/local skills can live under `skills/<name>/` on disk — they are not tracked in git but still bootstrap into `~/.autovault/skills/` via the same script. Caveat: the allow-list only stops `git add -A` from sweeping them in; an explicit `git add skills/foo/` will still stage a personal skill, so keep an eye on commits.
 
 ## Docs worth knowing
 

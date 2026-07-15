@@ -221,6 +221,22 @@ If a remote skill omits AutoVault-specific `agents` frontmatter, pass
 `--agent codex` (repeatable) for profile sync, or `--no-sync-profiles` for a
 vault-only install.
 
+### Doctor JSON and rendered state
+
+`autovault doctor --json` includes report-level render state alongside the
+ordinary skill integrity results:
+
+- `render.index` is `absent`, `ok`, or `corrupt`.
+- `render.orphans` lists live managed symlinks with no backing index entry.
+- `render.unverifiable` lists render entries owned by skills that are no longer
+  installed.
+- Every skill has `render.kind`: `ok`, `skipped`, or `error`.
+
+`skipped` means that skill has no machine-local render entry; it is not an
+ordinary doctor error. Automation consumers that require an installed and
+verified rendered bundle must positively assert `render.kind == "ok"` rather
+than relying on the process exit code.
+
 `autovault setup` is the first-run adoption wizard. It scans the vault, bundled
 skills, and discovered native roots such as `~/.claude/skills`,
 `~/.codex/skills`, and `~/.cursor/skills`, then asks how to adopt each skill.
