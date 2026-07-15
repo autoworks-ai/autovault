@@ -109,8 +109,10 @@ type ReplaceSymlinkResult =
 // human may have placed their own symlinks — round-41 finding was that we
 // blindly unlinked anything not pointing at our target, including a manually
 // installed native skill that happened to share a name. With managedPrefix
-// set, an existing symlink that resolves outside the prefix is left alone and
-// the caller surfaces a warning so the user can investigate.
+// set, a live existing symlink that resolves outside the prefix is left alone
+// and the caller surfaces a warning so the user can investigate. A dangling
+// outside-prefix link is safe to reclaim when AutoVault now wants that name:
+// there is no live user-managed target to preserve.
 async function replaceSymlink(
   linkPath: string,
   targetPath: string,
@@ -126,7 +128,15 @@ async function replaceSymlink(
         resolvedCurrent === managedPrefix ||
         resolvedCurrent.startsWith(managedPrefix + path.sep);
       if (!isManaged) {
-        return { replaced: false, reason: "user-managed", current: resolvedCurrent };
+        try {
+          await fs.stat(resolvedCurrent);
+          return { replaced: false, reason: "user-managed", current: resolvedCurrent };
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT" && code !== "ENOTDIR") {
+            return { replaced: false, reason: "user-managed", current: resolvedCurrent };
+          }
+        }
       }
     }
     await fs.unlink(linkPath);

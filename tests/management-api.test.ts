@@ -3,7 +3,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import express from "express";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openCapabilityDb } from "../src/capabilities/db.js";
 import { listConfiguredProfiles } from "../src/profiles/sync.js";
 import { readSkill, writeSkill } from "../src/storage/index.js";
@@ -76,6 +76,7 @@ describe("management API", () => {
   afterEach(async () => {
     await Promise.all(handles.map((handle) => handle.close()));
     handles = [];
+    vi.unstubAllEnvs();
   });
 
   async function start(): Promise<LocalUiServerHandle> {
@@ -312,6 +313,14 @@ describe("management API", () => {
   });
 
   it("saves named profiles and previews membership", async () => {
+    // The management endpoint intentionally discovers native host roots.
+    // Point HOME at this test's temp tree so a full suite cannot write
+    // profile fixtures into the developer's real ~/.codex/skills directory.
+    const fakeHome = path.join(currentStorageRoot(), "home");
+    const discoveredCodexRoot = path.join(fakeHome, ".codex", "skills");
+    await fs.mkdir(discoveredCodexRoot, { recursive: true });
+    vi.stubEnv("HOME", fakeHome);
+
     await writeSkill("profile-visible", skillMd("profile-visible", {
       agents: ["codex"],
       tags: ["ui", "managed"]
@@ -369,6 +378,8 @@ describe("management API", () => {
     const linkedSkill = path.join(target, "profile-visible");
     const stat = await fs.lstat(linkedSkill);
     expect(stat.isSymbolicLink()).toBe(true);
+    await expect(fs.lstat(path.join(discoveredCodexRoot, "profile-visible"))).resolves.toBeTruthy();
+    await expect(fs.lstat(path.join(discoveredCodexRoot, "profile-hidden"))).resolves.toBeTruthy();
   });
 
   it("returns 400 for invalid named profile config writes", async () => {

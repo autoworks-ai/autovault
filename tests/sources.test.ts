@@ -116,6 +116,11 @@ describe("github source", () => {
   it("fetches raw content using a resolved sha", async () => {
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          tree: [{ path: "SKILL.md", type: "blob", mode: "100644" }]
+        }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1234567890abcdef1234567890abcdef12345678" }));
       }
@@ -134,6 +139,11 @@ describe("github source", () => {
       requested.push(u);
       if (u.endsWith("/commits/main")) {
         return makeResponse(JSON.stringify({ sha: "1234567890abcdef1234567890abcdef12345678" }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          tree: [{ path: "skills/foo/SKILL.md", type: "blob", mode: "100644" }]
+        }));
       }
       if (u.includes("api.github.com")) {
         return makeResponse("not found", { ok: false, status: 404 });
@@ -158,6 +168,11 @@ describe("github source", () => {
       requested.push(u);
       if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          tree: [{ path: "skills/foo/SKILL.md", type: "blob", mode: "100644" }]
+        }));
       }
       if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
         return makeResponse("---\nname: x\n---\n");
@@ -184,6 +199,11 @@ describe("github source", () => {
       requested.push(u);
       if (isGitHubApiExactPath(url, "/repos/owner/repo/commits/feature%2Fskill-import")) {
         return makeResponse(JSON.stringify({ sha: "3".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          tree: [{ path: "skills/foo/SKILL.md", type: "blob", mode: "100644" }]
+        }));
       }
       if (isGitHubApiPath(url, "/repos/owner/repo/")) {
         return makeResponse("not found", { ok: false, status: 404 });
@@ -431,6 +451,13 @@ bin:
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+          { path: "skills/foo/bin/setup", type: "blob", mode: "100755" },
+          { path: "skills/foo/references/notes.md", type: "blob", mode: "100644" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
@@ -460,6 +487,321 @@ bin:
     }
   });
 
+  it("collects undeclared nested sibling resources in stable order and ignores artifacts", async () => {
+    const bundleSkillMd = `---
+name: complete-bundle
+description: This description is intentionally long enough to satisfy schema length checks.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`;
+    const sha = "5".repeat(40);
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: "skills/other/README.md", type: "blob", mode: "100644" },
+            { path: "skills/foo/z-last.txt", type: "blob", mode: "100644" },
+            { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+            { path: "skills/foo/nested/a-first.md", type: "blob", mode: "100644" },
+            { path: "skills/foo/.DS_Store", type: "blob", mode: "100644" },
+            { path: "skills/foo/nested/._a-first.md", type: "blob", mode: "100644" },
+            { path: "skills/foo/.autovault-source.json", type: "blob", mode: "100644" }
+          ]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) return makeResponse(bundleSkillMd);
+      if (isRawGitHubPath(url, "/skills/foo/nested/a-first.md")) return makeResponse("a\n");
+      if (isRawGitHubPath(url, "/skills/foo/z-last.txt")) return makeResponse("z\n");
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", {
+      fetch: fetcher
+    });
+
+    expect(result.resources).toEqual([
+      { path: "nested/a-first.md", content: "a\n" },
+      { path: "z-last.txt", content: "z\n" }
+    ]);
+    expect(requested.filter((u) => u.includes("raw.githubusercontent"))).toHaveLength(3);
+    expect(requested.every((u) => !u.includes(".DS_Store") && !u.includes("._a-first"))).toBe(true);
+  });
+
+  it("does not fetch an ignored artifact even when upstream declares it", async () => {
+    const bundleSkillMd = `---
+name: ignored-declared-resource
+description: This description is intentionally long enough to satisfy schema length checks.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+resources:
+  - path: .DS_Store
+    type: file
+---
+
+# Body
+`;
+    const sha = "a".repeat(40);
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+            { path: "skills/foo/.DS_Store", type: "blob", mode: "100644" }
+          ]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) return makeResponse(bundleSkillMd);
+      if (isRawGitHubPath(url, "/skills/foo/.DS_Store")) return makeResponse("finder\n");
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", {
+      fetch: fetcher
+    });
+
+    expect(result.resources).toEqual([]);
+    expect(requested.some((u) => isRawGitHubPath(u, "/skills/foo/.DS_Store"))).toBe(false);
+  });
+
+  it("does not collect descendants of ignored or AutoVault metadata directories", async () => {
+    const bundleSkillMd = `---
+name: ignored-directory-descendants
+description: This description is intentionally long enough to satisfy schema length checks.
+agents: [codex]
+metadata:
+  version: "1.0.0"
+---
+
+# Body
+`;
+    const sha = "b".repeat(40);
+    const requested: string[] = [];
+    const fetcher = vi.fn(async (url: string | URL) => {
+      const u = url.toString();
+      requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+            { path: "skills/foo/.autovault-cache", type: "tree", mode: "040000" },
+            { path: "skills/foo/.autovault-cache/state.json", type: "blob", mode: "100644" },
+            { path: "skills/foo/nested/.DS_Store", type: "tree", mode: "040000" },
+            { path: "skills/foo/nested/.DS_Store/state.json", type: "blob", mode: "100644" },
+            { path: "skills/foo/references/keep.md", type: "blob", mode: "100644" }
+          ]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) return makeResponse(bundleSkillMd);
+      if (isRawGitHubPath(url, "/skills/foo/references/keep.md")) return makeResponse("keep\n");
+      if (u.includes("state.json")) return makeResponse("{}\n");
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    const result = await fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", {
+      fetch: fetcher
+    });
+
+    expect(result.resources).toEqual([
+      { path: "references/keep.md", content: "keep\n" }
+    ]);
+    expect(requested.some((u) => u.includes("state.json"))).toBe(false);
+  });
+
+  it("fails closed when the exact bundle tree is truncated", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "6".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: true,
+          tree: [{ path: "skills/foo/SKILL.md", type: "blob", mode: "100644" }]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/truncated.*incomplete skill bundle/i);
+  });
+
+  it("refuses an exact bundle tree response that exceeds the API body cap", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "6".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse("{}", {
+          headers: { "content-length": String(6 * 1024 * 1024) }
+        });
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/declares 6291456 bytes.*5242880/);
+  });
+
+  it("fails closed when the exact bundle tree response has no tree entries", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "6".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ sha: "not-a-tree-listing" }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/missing a tree array/i);
+  });
+
+  it("fails closed when the exact tree does not contain the selected SKILL.md", async () => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "6".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          tree: [{ path: "skills/other/SKILL.md", type: "blob", mode: "100644" }]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse("not found", { ok: false, status: 404 });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/does not contain selected SKILL\.md/i);
+  });
+
+  it.each([
+    ["symlink", { path: "skills/foo/link", type: "blob", mode: "120000" }],
+    ["submodule", { path: "skills/foo/vendor", type: "commit", mode: "160000" }]
+  ])("fails closed on a %s inside the selected skill directory", async (_kind, unsafeEntry) => {
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "7".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+            unsafeEntry
+          ]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse("linked content\n");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/symlink|submodule/i);
+  });
+
+  it("rejects an exact bundle with more than the resource-count limit", async () => {
+    const resources = Array.from({ length: 51 }, (_, index) => ({
+      path: `skills/foo/docs/${String(index).padStart(2, "0")}.md`,
+      type: "blob",
+      mode: "100644"
+    }));
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "8".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+            ...resources
+          ]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse("resource\n");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/resources exceed limit: 51 > 50/i);
+  });
+
+  it("rejects an exact bundle whose cumulative bytes exceed the total limit", async () => {
+    const resources = Array.from({ length: 6 }, (_, index) => ({
+      path: `skills/foo/docs/${index}.txt`,
+      type: "blob",
+      mode: "100644"
+    }));
+    const resourceBody = "x".repeat(900 * 1024);
+    const fetcher = vi.fn(async (url: string | URL) => {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
+        return makeResponse(JSON.stringify({ sha: "9".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          truncated: false,
+          tree: [
+            { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+            ...resources
+          ]
+        }));
+      }
+      if (isRawGitHubPath(url, "/skills/foo/SKILL.md")) {
+        return makeResponse("---\nname: exact-skill\n---\n\n# Body\n");
+      }
+      return makeResponse(resourceBody);
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchSkillFromGitHub("owner/repo:skills/foo/SKILL.md", { fetch: fetcher })
+    ).rejects.toThrow(/Total skill bundle bytes exceeded/);
+  });
+
   it("dedups declared resource paths by canonical form (round-46)", async () => {
     // Before the fix, raw-string dedup let `./bin/setup` and `bin/setup`
     // (or the same file referenced from both `resources[].path` and
@@ -483,6 +825,12 @@ bin:
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+          { path: "skills/foo/bin/setup", type: "blob", mode: "100755" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
@@ -545,6 +893,13 @@ bin:
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+          { path: "skills/foo/bin/setup", type: "blob", mode: "100755" },
+          { path: "skills/foo/references/notes.md", type: "blob", mode: "100644" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
@@ -583,6 +938,11 @@ bin:
 `;
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
@@ -642,6 +1002,11 @@ ${lines.join("\n")}
 `;
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
@@ -758,9 +1123,14 @@ ${lines.join("\n")}
     let commitsUrl: string | undefined;
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
-      if (u.includes("api.github.com")) {
+      if (isGitHubApiPath(url, "/repos/owner/repo/commits/")) {
         commitsUrl = u;
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
+      }
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({
+          tree: [{ path: "SKILL.md", type: "blob", mode: "100644" }]
+        }));
       }
       return makeResponse("---\nname: x\n---\n");
     }) as unknown as typeof fetch;
@@ -843,6 +1213,11 @@ resources:
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
       requested.push(u);
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "dir%20with%20spaces/SKILL.md", type: "blob", mode: "100644" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }
@@ -873,6 +1248,12 @@ resources:
     const oversize = "y".repeat(1 * 1024 * 1024 + 1);
     const fetcher = vi.fn(async (url: string | URL) => {
       const u = url.toString();
+      if (isGitHubApiPath(url, "/repos/owner/repo/git/trees/")) {
+        return makeResponse(JSON.stringify({ tree: [
+          { path: "skills/foo/SKILL.md", type: "blob", mode: "100644" },
+          { path: "skills/foo/big.bin", type: "blob", mode: "100644" }
+        ] }));
+      }
       if (u.includes("api.github.com")) {
         return makeResponse(JSON.stringify({ sha: "1".repeat(40) }));
       }

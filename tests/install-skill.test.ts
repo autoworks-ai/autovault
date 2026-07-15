@@ -62,6 +62,28 @@ describe("installSkill", () => {
     expect(source?.upstreamSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it("synthesizes and reports undeclared resources fetched from a remote bundle", async () => {
+    const githubFetcher = vi.fn().mockResolvedValue({
+      skillMd,
+      sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/SKILL.md",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567",
+      resources: [{ path: "references/guide.md", content: "# Guide\n" }]
+    });
+
+    const result = await installSkill(
+      { source: "github", identifier: "owner/repo" },
+      { fetchers: { github: githubFetcher } }
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.inferred_resources).toEqual([
+      { path: "references/guide.md", type: "file" }
+    ]);
+    const stored = await readSkill("fetched-skill");
+    expect(stored?.skillMd).toContain("resources:");
+    expect(stored?.skillMd).toContain("path: references/guide.md");
+  });
+
   it("stores a resolved GitHub identifier when the adapter canonicalizes a candidate", async () => {
     const githubFetcher = vi.fn().mockResolvedValue({
       skillMd,
