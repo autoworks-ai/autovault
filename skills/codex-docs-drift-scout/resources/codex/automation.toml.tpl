@@ -1,14 +1,11 @@
 # THIS IS AUTOVAULT-MANAGED RENDERED STATE. DO NOT EDIT THE RENDERED FILE.
 # Source template: codex-docs-drift-scout/resources/codex/automation.toml.tpl
-# Codex home: {{CODEX_HOME}}
 version = 1
 id = "{{AUTOMATION_ID}}"
 kind = "cron"
 name = "AutoHub Docs Drift Scout"
 prompt = '''
 You are running the AutoHub Docs Drift Scout from an AutoVault-managed Codex automation bundle.
-
-Target repository: {{PROJECT_ROOT}}
 
 Follow the repository AGENTS.md before making changes. Start with `git status --short` and preserve unrelated dirty work. Do not modify user-local Codex state, `.codex/environments/environment.toml`, secrets, browser state, thread state, or app-private cache data.
 
@@ -48,8 +45,8 @@ rrule = "RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=5;BYMINUTE=15"
 model = "gpt-5.5"
 reasoning_effort = "xhigh"
 execution_environment = "worktree"
-local_environment_config_path = "{{RENDER_ROOT}}/environment.toml"
-target = { type = "project", project_id = "{{PROJECT_ROOT}}" }
-cwds = ["{{PROJECT_ROOT}}"]
+local_environment_config_path = {{ENVIRONMENT_PATH_TOML}}
+target = { type = "project", project_id = {{PROJECT_ROOT_TOML}} }
+cwds = [{{PROJECT_ROOT_TOML}}]
 created_at = {{RENDERED_AT_MS}}
 updated_at = {{RENDERED_AT_MS}}

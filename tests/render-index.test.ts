@@ -101,4 +101,25 @@ describe("render index", () => {
       reason: expect.stringMatching(/duplicate/i)
     });
   });
+
+  it("rejects duplicate render roots even when symlinks differ", async () => {
+    const entry = validEntry();
+    const otherLinkRoot = path.join(currentStorageRoot(), "other-codex", "automations");
+    await writeIndex({
+      version: 1,
+      entries: [
+        entry,
+        {
+          ...entry,
+          linkRoot: otherLinkRoot,
+          symlink: path.join(otherLinkRoot, "render-demo")
+        }
+      ]
+    });
+
+    await expect(loadRenderIndex()).resolves.toMatchObject({
+      kind: "corrupt",
+      reason: expect.stringMatching(/duplicate.*render root/i)
+    });
+  });
 });

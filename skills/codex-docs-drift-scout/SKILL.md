@@ -88,9 +88,8 @@ The signed templates carry no machine-specific paths. The helper substitutes
 these placeholders at render time, so no personal absolute path is ever baked
 into the signed bytes:
 
-- `{{PROJECT_ROOT}}` — the `--project-root` you pass.
-- `{{CODEX_HOME}}` — `${CODEX_HOME:-~/.codex}`.
-- `{{RENDER_ROOT}}` — where the rendered files are written.
+- `{{PROJECT_ROOT_TOML}}` — the TOML-escaped `--project-root` you pass.
+- `{{ENVIRONMENT_PATH_TOML}}` — the TOML-escaped rendered environment path.
 - `{{AUTOMATION_ID}}` — the Codex automation id (default `docs-drift-scout`).
 - `{{RENDERED_AT_MS}}` — the current install time in Unix milliseconds.
 

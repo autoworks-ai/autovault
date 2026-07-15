@@ -183,6 +183,7 @@ export async function loadRenderIndex(): Promise<RenderIndexLoad> {
   }
   const entries: RenderIndexEntry[] = [];
   const symlinks = new Set<string>();
+  const renderRoots = new Set<string>();
   for (const candidate of list) {
     const entry = parseEntry(candidate);
     if (!entry) {
@@ -192,7 +193,15 @@ export async function loadRenderIndex(): Promise<RenderIndexLoad> {
     if (symlinks.has(resolvedSymlink)) {
       return { kind: "corrupt", reason: `render index has duplicate symlink: ${entry.symlink}` };
     }
+    const resolvedRenderRoot = path.resolve(entry.renderRoot);
+    if (renderRoots.has(resolvedRenderRoot)) {
+      return {
+        kind: "corrupt",
+        reason: `render index has duplicate render root: ${entry.renderRoot}`
+      };
+    }
     symlinks.add(resolvedSymlink);
+    renderRoots.add(resolvedRenderRoot);
     entries.push(entry);
   }
   return { kind: "ok", entries };

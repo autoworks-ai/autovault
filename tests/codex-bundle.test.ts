@@ -416,6 +416,129 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     ).resolves.toBe("existing automation\n");
   });
 
+  it("rehomes an automation without leaving a duplicate render entry or old link", async () => {
+    const vaultBin = await installVaultSkill();
+    const first = await makeScratch();
+    const second = await makeScratch();
+
+    const installA = await runBundle(
+      vaultBin,
+      ["install", "--project-root", first.projectRoot],
+      { CODEX_HOME: first.codexHome }
+    );
+    expect(installA, installA.stderr).toMatchObject({ code: 0 });
+
+    const installB = await runBundle(
+      vaultBin,
+      ["install", "--project-root", second.projectRoot],
+      { CODEX_HOME: second.codexHome }
+    );
+    expect(installB, installB.stderr).toMatchObject({ code: 0 });
+
+    const index = JSON.parse(
+      await fs.readFile(path.join(currentStorageRoot(), "render-index.json"), "utf8")
+    );
+    expect(index.entries).toHaveLength(1);
+    expect(index.entries[0].symlink).toBe(
+      path.join(second.codexHome, "automations", "docs-drift-scout")
+    );
+    await expect(
+      fs.lstat(path.join(first.codexHome, "automations", "docs-drift-scout"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      fs.readlink(path.join(second.codexHome, "automations", "docs-drift-scout"))
+    ).resolves.toBe(index.entries[0].renderRoot);
+  });
+
+  it("preserves a healthy install when the replacement link cannot be staged", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const automationRoot = path.join(codexHome, "automations");
+    const linkPath = path.join(automationRoot, "docs-drift-scout");
+    const firstInstall = await runBundle(
+      vaultBin,
+      ["install", "--project-root", projectRoot],
+      { CODEX_HOME: codexHome }
+    );
+    expect(firstInstall, firstInstall.stderr).toMatchObject({ code: 0 });
+
+    const indexPath = path.join(currentStorageRoot(), "render-index.json");
+    const automationPath = path.join(
+      currentStorageRoot(),
+      "rendered",
+      "codex-automations",
+      "docs-drift-scout",
+      "automation.toml"
+    );
+    const originalIndex = await fs.readFile(indexPath, "utf8");
+    const originalAutomation = await fs.readFile(automationPath, "utf8");
+    const originalTarget = await fs.readlink(linkPath);
+    const replacementProject = path.join(path.dirname(projectRoot), "replacement-project");
+    await fs.mkdir(replacementProject);
+
+    await fs.chmod(automationRoot, 0o500);
+    let replacement;
+    try {
+      replacement = await runBundle(
+        vaultBin,
+        ["install", "--project-root", replacementProject],
+        { CODEX_HOME: codexHome }
+      );
+    } finally {
+      await fs.chmod(automationRoot, 0o700);
+    }
+
+    expect(replacement.code).not.toBe(0);
+    await expect(fs.readFile(indexPath, "utf8")).resolves.toBe(originalIndex);
+    await expect(fs.readFile(automationPath, "utf8")).resolves.toBe(originalAutomation);
+    await expect(fs.readlink(linkPath)).resolves.toBe(originalTarget);
+  });
+
+  it("rolls back a rehome when the old managed link cannot be retired", async () => {
+    const vaultBin = await installVaultSkill();
+    const first = await makeScratch();
+    const second = await makeScratch();
+    const firstAutomationRoot = path.join(first.codexHome, "automations");
+    const firstLink = path.join(firstAutomationRoot, "docs-drift-scout");
+    const secondLink = path.join(second.codexHome, "automations", "docs-drift-scout");
+    const firstInstall = await runBundle(
+      vaultBin,
+      ["install", "--project-root", first.projectRoot],
+      { CODEX_HOME: first.codexHome }
+    );
+    expect(firstInstall, firstInstall.stderr).toMatchObject({ code: 0 });
+
+    const indexPath = path.join(currentStorageRoot(), "render-index.json");
+    const automationPath = path.join(
+      currentStorageRoot(),
+      "rendered",
+      "codex-automations",
+      "docs-drift-scout",
+      "automation.toml"
+    );
+    const originalIndex = await fs.readFile(indexPath, "utf8");
+    const originalAutomation = await fs.readFile(automationPath, "utf8");
+    const originalTarget = await fs.readlink(firstLink);
+
+    await fs.chmod(firstAutomationRoot, 0o500);
+    let rehome;
+    try {
+      rehome = await runBundle(
+        vaultBin,
+        ["install", "--project-root", second.projectRoot],
+        { CODEX_HOME: second.codexHome }
+      );
+    } finally {
+      await fs.chmod(firstAutomationRoot, 0o700);
+    }
+
+    expect(rehome.code).not.toBe(0);
+    await expect(fs.readFile(indexPath, "utf8")).resolves.toBe(originalIndex);
+    await expect(fs.readFile(automationPath, "utf8")).resolves.toBe(originalAutomation);
+    await expect(fs.readlink(firstLink)).resolves.toBe(originalTarget);
+    await expect(fs.lstat(secondLink)).rejects.toMatchObject({ code: "ENOENT" });
+  }, 10_000);
+
   it("refuses to replace a corrupt render index", async () => {
     const vaultBin = await installVaultSkill();
     const { projectRoot, codexHome } = await makeScratch();
@@ -444,6 +567,42 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     await expect(
       fs.lstat(path.join(codexHome, "automations", "docs-drift-scout"))
     ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      (await fs.readdir(currentStorageRoot())).filter((name) =>
+        name.startsWith(".codex-bundle.docs-drift-scout.")
+      )
+    ).toEqual([]);
+  });
+
+  it("TOML-escapes project paths without recursively substituting their contents", async () => {
+    const vaultBin = await installVaultSkill();
+    const { projectRoot, codexHome } = await makeScratch();
+    const quotedProject = path.join(
+      projectRoot,
+      'project-"quoted"-{{AUTOMATION_ID}}-{{FOO}}'
+    );
+    await fs.mkdir(quotedProject);
+
+    const install = await runBundle(
+      vaultBin,
+      ["install", "--project-root", quotedProject],
+      { CODEX_HOME: codexHome }
+    );
+    expect(install, install.stderr).toMatchObject({ code: 0 });
+
+    const resolvedProject = await fs.realpath(quotedProject);
+    const automation = await fs.readFile(
+      path.join(
+        currentStorageRoot(),
+        "rendered",
+        "codex-automations",
+        "docs-drift-scout",
+        "automation.toml"
+      ),
+      "utf8"
+    );
+    expect(automation).toContain(`project_id = ${JSON.stringify(resolvedProject)}`);
+    expect(automation).toContain(`cwds = [${JSON.stringify(resolvedProject)}]`);
   });
 
   it("refuses to replace an unsupported render index", async () => {
@@ -502,6 +661,13 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     await expect(
       fs.lstat(path.join(codexHome, "automations", "docs-drift-scout"))
     ).rejects.toMatchObject({ code: "ENOENT" });
+    expect(
+      (await fs.readdir(currentStorageRoot())).filter(
+        (name) =>
+          name.startsWith(".codex-bundle.docs-drift-scout.") ||
+          name.startsWith(".render-index.docs-drift-scout.")
+      )
+    ).toEqual([]);
   });
 
   it("fails the install when --project-root is omitted (no shipped default)", async () => {

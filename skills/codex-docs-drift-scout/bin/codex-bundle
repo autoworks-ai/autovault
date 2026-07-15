@@ -124,22 +124,97 @@ environment_path="$render_root/environment.toml"
 codex_automation_dir="$codex_home/automations"
 codex_link="$codex_automation_dir/$automation_id"
 render_index_path="$storage_path/render-index.json"
+stage_root=""
+pending_symlink=""
+staged_index=""
+render_backup=""
+index_backup=""
+held_prior=""
+held_prior_original=""
+replacement_backup=""
+render_published="false"
+index_published="false"
+transaction_committed="false"
 
 [[ -f "$automation_template" ]] || die "missing template: $automation_template"
 [[ -f "$environment_template" ]] || die "missing template: $environment_template"
 
 command -v python3 >/dev/null 2>&1 || die "python3 is required to validate rendered TOML and record the render index"
 
+cleanup_install() {
+  local exit_status=$?
+  set +e
+
+  if [[ "$transaction_committed" != "true" ]]; then
+    if [[ "$index_published" == "true" ]]; then
+      rm -f "$render_index_path"
+    fi
+    if [[ -n "$index_backup" && ( -e "$index_backup" || -L "$index_backup" ) ]]; then
+      mv "$index_backup" "$render_index_path"
+    fi
+    if [[ "$render_published" == "true" ]]; then
+      rm -rf "$render_root"
+    fi
+    if [[ -n "$render_backup" && ( -e "$render_backup" || -L "$render_backup" ) ]]; then
+      mv "$render_backup" "$render_root"
+    fi
+    if [[ -n "$replacement_backup" && -e "$replacement_backup" ]]; then
+      if [[ ! -e "$codex_link" && ! -L "$codex_link" ]]; then
+        mv "$replacement_backup" "$codex_link"
+      fi
+    fi
+    if [[ -n "$held_prior" && -L "$held_prior" ]]; then
+      if [[ ! -e "$held_prior_original" && ! -L "$held_prior_original" ]]; then
+        mv "$held_prior" "$held_prior_original"
+      fi
+    fi
+  fi
+
+  if [[ -n "$staged_index" ]]; then
+    rm -f "$staged_index"
+  fi
+  if [[ -n "$pending_symlink" ]]; then
+    rm -f "$pending_symlink"
+  fi
+  if [[ -n "$stage_root" ]]; then
+    rm -rf "$stage_root"
+  fi
+
+  return "$exit_status"
+}
+
 render_template() {
   local template="$1"
-  local content
-  content="$(<"$template")"
-  content="${content//\{\{PROJECT_ROOT\}\}/$project_root}"
-  content="${content//\{\{CODEX_HOME\}\}/$codex_home}"
-  content="${content//\{\{AUTOMATION_ID\}\}/$automation_id}"
-  content="${content//\{\{RENDER_ROOT\}\}/$render_root}"
-  content="${content//\{\{RENDERED_AT_MS\}\}/$rendered_at_ms}"
-  printf '%s\n' "$content"
+  python3 - \
+    "$template" \
+    "$project_root" \
+    "$automation_id" \
+    "$environment_path" \
+    "$rendered_at_ms" <<'PY'
+import json
+import re
+import sys
+
+template, project_root, automation_id, environment_path, rendered_at_ms = sys.argv[1:]
+with open(template, "r", encoding="utf-8") as handle:
+    content = handle.read()
+
+replacements = {
+    "{{PROJECT_ROOT_TOML}}": json.dumps(project_root, ensure_ascii=False),
+    "{{AUTOMATION_ID}}": automation_id,
+    "{{ENVIRONMENT_PATH_TOML}}": json.dumps(environment_path, ensure_ascii=False),
+    "{{RENDERED_AT_MS}}": rendered_at_ms,
+}
+pattern = re.compile(r"\{\{[A-Z0-9_]+\}\}")
+unknown = sorted(set(pattern.findall(content)) - replacements.keys())
+if unknown:
+    sys.stderr.write(f"codex-bundle: unresolved template placeholders: {', '.join(unknown)}\n")
+    sys.exit(2)
+content = pattern.sub(lambda match: replacements[match.group(0)], content)
+sys.stdout.write(content)
+if not content.endswith("\n"):
+    sys.stdout.write("\n")
+PY
 }
 
 write_rendered() {
@@ -161,6 +236,7 @@ record_render_index() {
   local mode="${1:-write}"
   local rendered_automation="${2:-$automation_path}"
   local rendered_environment="${3:-$environment_path}"
+  local output_index="${4:-$render_index_path}"
   python3 - \
     "$mode" \
     "$render_index_path" \
@@ -171,7 +247,8 @@ record_render_index() {
     "$automation_template_rel" "$automation_template" \
     "$environment_template_rel" "$environment_template" \
     "$rendered_automation" \
-    "$rendered_environment" <<'PY'
+    "$rendered_environment" \
+    "$output_index" <<'PY'
 import hashlib
 import json
 import os
@@ -192,6 +269,7 @@ import tomllib
     environment_tpl_abs,
     automation_rendered,
     environment_rendered,
+    output_index,
 ) = sys.argv[1:]
 
 HASH_LENGTH = 64
@@ -258,6 +336,7 @@ def validate_index(value):
 
     render_boundary = os.path.join(os.path.dirname(index_path), "rendered")
     seen_symlinks = set()
+    seen_render_roots = set()
     for entry in entries:
         if not isinstance(entry, dict):
             corrupt("entries contains a non-object value")
@@ -288,7 +367,11 @@ def validate_index(value):
         resolved_symlink = os.path.abspath(entry_symlink)
         if resolved_symlink in seen_symlinks:
             corrupt("entries contain a duplicate symlink")
+        resolved_render_root = os.path.abspath(entry_render_root)
+        if resolved_render_root in seen_render_roots:
+            corrupt("entries contain a duplicate render root")
         seen_symlinks.add(resolved_symlink)
+        seen_render_roots.add(resolved_render_root)
         validate_hashes(entry.get("templates"), "templates")
         validate_hashes(entry.get("rendered"), "rendered")
 
@@ -315,7 +398,16 @@ except (OSError, json.JSONDecodeError) as error:
 entries = validate_index(index)
 if mode == "validate":
     sys.exit(0)
-if mode not in ("check", "write"):
+if mode == "prior":
+    for existing in entries:
+        if (
+            os.path.abspath(existing["renderRoot"]) == os.path.abspath(render_root)
+            and os.path.abspath(existing["symlink"]) != os.path.abspath(symlink)
+        ):
+            sys.stdout.write(existing["symlink"])
+            break
+    sys.exit(0)
+if mode not in ("check", "stage", "write"):
     corrupt(f"unknown validation mode: {mode}")
 
 # Install-time TOML validity gate. A buggy template or substitution that yields
@@ -357,21 +449,23 @@ entry = {
 index["entries"] = [
     existing
     for existing in entries
-    if existing.get("symlink") != symlink
+    if os.path.abspath(existing["symlink"]) != os.path.abspath(symlink)
+    and os.path.abspath(existing["renderRoot"]) != os.path.abspath(render_root)
 ]
 index["entries"].append(entry)
 validate_index(index)
 
-directory = os.path.dirname(index_path) or "."
+destination = output_index if mode == "stage" else index_path
+directory = os.path.dirname(destination) or "."
 os.makedirs(directory, exist_ok=True)
 fd, tmp_path = tempfile.mkstemp(prefix=".render-index.", dir=directory)
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(index, handle, indent=2, sort_keys=True)
         handle.write("\n")
-    os.replace(tmp_path, index_path)
+    os.replace(tmp_path, destination)
     try:
-        os.chmod(index_path, 0o600)
+        os.chmod(destination, 0o600)
     except OSError:
         pass
 except BaseException:
@@ -383,65 +477,132 @@ except BaseException:
 PY
 }
 
-publish_symlink() {
-  python3 - "$render_root" "$codex_link" <<'PY'
+manage_prior_symlink() {
+  local mode="$1"
+  local prior="$2"
+  [[ -n "$prior" && "$prior" != "$codex_link" ]] || return 0
+  python3 - "$mode" "$prior" "$render_root" <<'PY'
 import os
 import sys
 
-target, link = sys.argv[1:]
-temporary = f"{link}.tmp.{os.getpid()}"
+mode, link, expected = sys.argv[1:]
 try:
-    try:
-        os.unlink(temporary)
-    except FileNotFoundError:
-        pass
-    os.symlink(target, temporary)
-    os.replace(temporary, link)
-finally:
-    try:
-        os.unlink(temporary)
-    except FileNotFoundError:
-        pass
+    target = os.readlink(link)
+except FileNotFoundError:
+    sys.exit(0)
+except OSError as error:
+    sys.stderr.write(f"codex-bundle: prior automation path is not a symlink: {link}: {error}\n")
+    sys.exit(5)
+
+resolved = os.path.abspath(
+    target if os.path.isabs(target) else os.path.join(os.path.dirname(link), target)
+)
+if resolved != os.path.abspath(expected):
+    sys.stderr.write(
+        f"codex-bundle: prior automation symlink points at {resolved}, expected {expected}\n"
+    )
+    sys.exit(5)
+if mode == "remove":
+    os.unlink(link)
+elif mode != "check":
+    raise ValueError(f"unknown prior-symlink mode: {mode}")
+PY
+}
+
+publish_symlink() {
+  local prepared="$1"
+  python3 - "$prepared" "$codex_link" <<'PY'
+import os
+import sys
+
+prepared, link = sys.argv[1:]
+os.replace(prepared, link)
 PY
 }
 
 install_bundle() {
+  local prior_symlink stage_automation stage_environment backup
   if [[ ! -L "$codex_link" && -e "$codex_link" && "$replace_existing" != "true" ]]; then
     die "Codex automation path exists and is not a symlink: $codex_link (rerun with --replace-existing to move it aside)"
   fi
 
   # Refuse a corrupt or unsupported index before writing any rendered state.
   record_render_index validate
+  prior_symlink="$(record_render_index prior)"
+  manage_prior_symlink check "$prior_symlink"
 
-  mkdir -p "$storage_path"
-  local stage_root stage_automation stage_environment
+  mkdir -p "$storage_path" "$codex_automation_dir" "$(dirname "$render_root")"
+  pending_symlink="$codex_automation_dir/.codex-bundle.$automation_id.$$.$RANDOM"
+  trap cleanup_install EXIT
+  ln -s "$render_root" "$pending_symlink"
+
   stage_root="$(mktemp -d "$storage_path/.codex-bundle.$automation_id.XXXXXX")"
+  staged_index="$(mktemp "$storage_path/.render-index.$automation_id.XXXXXX")"
   stage_automation="$stage_root/automation.toml"
   stage_environment="$stage_root/environment.toml"
-  trap 'rm -rf "$stage_root"' EXIT
 
   write_rendered "$automation_template" "$stage_automation"
   write_rendered "$environment_template" "$stage_environment"
-  record_render_index check "$stage_automation" "$stage_environment"
+  record_render_index stage "$stage_automation" "$stage_environment" "$staged_index"
 
-  mkdir -p "$render_root" "$codex_automation_dir"
-  chmod 700 "$render_root" 2>/dev/null || true
-  mv -f "$stage_automation" "$automation_path"
-  mv -f "$stage_environment" "$environment_path"
-  rm -rf "$stage_root"
-  stage_root=""
-  trap - EXIT
-
-  # Gate + record before publishing the symlink, so an invalid render never
-  # results in a live Codex automation pointing at it.
-  record_render_index write
+  # Move every old destination aside before publishing either live artifact.
+  # The EXIT trap restores these paths if any later transaction step fails.
+  if [[ -n "$prior_symlink" && ( -e "$prior_symlink" || -L "$prior_symlink" ) ]]; then
+    held_prior="${prior_symlink}.autovault-hold.$$.$RANDOM"
+    held_prior_original="$prior_symlink"
+    mv "$prior_symlink" "$held_prior"
+  fi
 
   if [[ ! -L "$codex_link" && -e "$codex_link" ]]; then
     backup="${codex_link}.backup.$(date +%Y%m%d%H%M%S)"
+    if [[ -e "$backup" || -L "$backup" ]]; then
+      backup="${backup}.$$.$RANDOM"
+    fi
     mv "$codex_link" "$backup"
-    printf 'moved existing Codex automation path to %s\n' "$backup"
+    replacement_backup="$backup"
   fi
-  publish_symlink
+
+  if [[ -e "$render_root" || -L "$render_root" ]]; then
+    render_backup="${render_root}.autovault-backup.$$.$RANDOM"
+    mv "$render_root" "$render_backup"
+  fi
+  chmod 700 "$stage_root" 2>/dev/null || true
+  mv "$stage_root" "$render_root"
+  render_published="true"
+  stage_root=""
+
+  if [[ -e "$render_index_path" || -L "$render_index_path" ]]; then
+    index_backup="${render_index_path}.autovault-backup.$$.$RANDOM"
+    mv "$render_index_path" "$index_backup"
+  fi
+  mv "$staged_index" "$render_index_path"
+  index_published="true"
+  staged_index=""
+
+  publish_symlink "$pending_symlink"
+  transaction_committed="true"
+  pending_symlink=""
+
+  # From here the new render, index, and link are committed. Internal backups
+  # are best-effort cleanup; the user-requested replacement backup is retained.
+  if [[ -n "$held_prior" ]]; then
+    rm -f "$held_prior" || printf 'codex-bundle: warning: could not remove transaction link %s\n' "$held_prior" >&2
+    held_prior=""
+    held_prior_original=""
+  fi
+  if [[ -n "$render_backup" ]]; then
+    rm -rf "$render_backup" || printf 'codex-bundle: warning: could not remove render backup %s\n' "$render_backup" >&2
+    render_backup=""
+  fi
+  if [[ -n "$index_backup" ]]; then
+    rm -f "$index_backup" || printf 'codex-bundle: warning: could not remove index backup %s\n' "$index_backup" >&2
+    index_backup=""
+  fi
+  trap - EXIT
+
+  if [[ -n "$replacement_backup" ]]; then
+    printf 'moved existing Codex automation path to %s\n' "$replacement_backup"
+  fi
 
   printf 'rendered automation: %s\n' "$automation_path"
   printf 'rendered environment: %s\n' "$environment_path"
