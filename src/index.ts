@@ -3,6 +3,7 @@ import { createServer } from "./mcp/server.js";
 import { ensureStorage, recoverOrphanBackups } from "./storage/index.js";
 import { loadConfig } from "./config.js";
 import { log } from "./util/log.js";
+import { installStdioLifecycle } from "./lifecycle.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -21,6 +22,11 @@ async function main(): Promise<void> {
   });
   const server = createServer();
   const transport = new StdioServerTransport();
+  installStdioLifecycle({
+    transport,
+    onCloseAssignable: server.server,
+    envName: "AUTOVAULT_PARENT_WATCHDOG_MS",
+  });
   await server.connect(transport);
   log.info("autovault.ready");
 }
