@@ -743,6 +743,79 @@ export type ReadVerifiedResourcesResult =
   | { kind: "ok"; resources: Array<{ path: string; content: string }> }
   | Exclude<ReadVerifiedResourceResult, { kind: "ok" }>;
 
+export type ReadVerifiedSkillBundleResult =
+  | { kind: "ok"; skillMd: string; resources: Array<{ path: string; content: string }> }
+  | Exclude<ReadVerifiedResourceResult, { kind: "ok" }>;
+
+// A publication caller must derive frontmatter, resource paths, and bytes from
+// one locked install. Reading a summary first and resources later can otherwise
+// combine two different signed installs during writeSkill's directory swap.
+export type ReadVerifiedInstalledSkillBundleResult =
+  | {
+      kind: "ok";
+      skill: SkillRecord;
+      resources: Array<{ path: string; content: string }>;
+    }
+  | { kind: "not_installed" }
+  | Exclude<ReadVerifiedResourceResult, { kind: "ok" }>;
+
+export async function readVerifiedInstalledSkillBundle(
+  name: string
+): Promise<ReadVerifiedInstalledSkillBundleResult> {
+  return withStorageLock(async () => {
+    try {
+      const stat = await fs.lstat(skillDir(name));
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return { kind: "not_installed" };
+    } catch {
+      return { kind: "not_installed" };
+    }
+
+    const integrity = await verifyIntegrityLocked(name);
+    if (integrity.kind !== "ok") return integrity;
+    const skill = await readSkillUnlocked(name);
+    if (!skill) return { kind: "signature_invalid", resource: "SKILL.md" };
+
+    const resources: Array<{ path: string; content: string }> = [];
+    const resourcePaths = new Set([
+      ...skill.resources.map((resource) => canonicalRelPath(resource.path)),
+      ...declaredBinPaths(skill.bin)
+    ]);
+    for (const key of resourcePaths) {
+      const fullPath = validateResourcePath(name, key);
+      try {
+        resources.push({ path: key, content: await fs.readFile(fullPath, "utf-8") });
+      } catch {
+        return { kind: "missing_on_disk", resource: key };
+      }
+    }
+    return { kind: "ok", skill, resources };
+  });
+}
+
+export async function readVerifiedSkillBundle(
+  name: string,
+  resourcePaths: string[]
+): Promise<ReadVerifiedSkillBundleResult> {
+  const requests = resourcePaths.map((resourcePath) => ({
+    key: canonicalRelPath(resourcePath),
+    fullPath: validateResourcePath(name, resourcePath)
+  }));
+  return withStorageLock(async () => {
+    const integrity = await verifyIntegrityLocked(name);
+    if (integrity.kind !== "ok") return integrity;
+    const skillMd = await fs.readFile(path.join(skillDir(name), "SKILL.md"), "utf-8");
+    const resources: Array<{ path: string; content: string }> = [];
+    for (const request of requests) {
+      try {
+        resources.push({ path: request.key, content: await fs.readFile(request.fullPath, "utf-8") });
+      } catch {
+        return { kind: "missing_on_disk", resource: request.key };
+      }
+    }
+    return { kind: "ok", skillMd, resources };
+  });
+}
+
 export async function readVerifiedSkillResource(
   name: string,
   resourcePath: string

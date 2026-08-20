@@ -77,3 +77,15 @@ export {
   type AuditRepoResult,
   type AuditRisk
 } from "./audit/repo.js";
+export {
+  applyPublishSync,
+  inspectPublishTarget,
+  planPublishSync,
+  type PublishBlockReason,
+  type PublishRegistry,
+  type PublishRegistryEntry,
+  type PublishStatusEntry,
+  type PublishSyncPlan,
+  type PublishSyncResult,
+  type PublishTargetStatus
+} from "./publish/index.js";

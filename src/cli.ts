@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runDoctorCommand } from "./cli/doctor.js";
+import { runPublishCommand } from "./cli/publish.js";
 import { runSkillCommand } from "./cli/skill.js";
 import { printVersion, runUpdateCommand, writeOptionalUpdateNotice } from "./cli/update.js";
 import { renderSuccessOutro } from "./cli/ui/brand.js";
@@ -33,6 +34,8 @@ function usageText(): string {
   autovault profiles list [--json]
   autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--repair] [--json]
+  autovault publish status --repo /path/to/catalog [--json]
+  autovault publish sync --repo /path/to/catalog [--apply] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
   autovault init <upstream-catalog-or-directory> [--json]
@@ -205,6 +208,7 @@ const TOP_LEVEL_COMMANDS = [
   "import-autohub",
   "init",
   "profiles",
+  "publish",
   "remove",
   "resolve",
   "serve",
@@ -610,6 +614,12 @@ async function main(): Promise<void> {
 
   if (command === "doctor") {
     await withSuppressedLogs(() => runDoctorCommand(args));
+    if (!hasFlag(args, "--json")) writeOptionalUpdateNotice();
+    return;
+  }
+
+  if (command === "publish") {
+    await withSuppressedLogs(() => runPublishCommand(args));
     if (!hasFlag(args, "--json")) writeOptionalUpdateNotice();
     return;
   }

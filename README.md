@@ -159,6 +159,8 @@ autovault profiles list [--json]
 autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
 autovault audit-repo --repo /path/to/repo [--format json|markdown]
+autovault publish status --repo /path/to/catalog [--json]
+autovault publish sync --repo /path/to/catalog [--apply] [--json]
 autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
 autovault init <upstream-catalog-or-directory> [--json]
 autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
@@ -209,7 +211,19 @@ autovault ui
 
 # Remove a vaulted skill and refresh managed profile links.
 autovault remove skill-author
+
+# Inspect a publication target, then sync verified public bundles into it.
+autovault publish status --repo ../skillissue
+autovault publish sync --repo ../skillissue       # dry-run
+autovault publish sync --repo ../skillissue --apply
 ```
+
+Publication intent lives in the target repository at
+`catalog/autovault-publication.json`, outside signed skill bundles. A public
+entry is eligible only when its installed bundle passes integrity checks and
+declares a redistributable license and explicit version. Sync preserves each
+target-owned `story.md`, writes `catalog/autovault-sync.json`, and never builds,
+commits, or pushes the target repository.
 
 `autovault add` is the canonical terminal path for known skills from local
 bundles, GitHub repositories, agentskills slugs, or HTTPS URLs. Existing
