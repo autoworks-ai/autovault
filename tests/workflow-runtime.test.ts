@@ -38,6 +38,7 @@ describe("workflow runtime policy", () => {
   it("pins GitHub Actions to Node 24-compatible major versions", () => {
     const workflowText = [
       ".github/workflows/ci.yml",
+      ".github/workflows/homebrew-bump.yml",
       ".github/workflows/release-please.yml",
       ".github/workflows/dependabot-auto-merge.yml",
       ".github/workflows/security.yml",
@@ -47,8 +48,9 @@ describe("workflow runtime policy", () => {
       .join("\n");
 
     const expectedPins = [
-      "actions/checkout@v6",
-      "actions/setup-node@v6",
+      "actions/checkout@v7",
+      "actions/setup-node@v7",
+      "dawidd6/action-homebrew-bump-formula@v8",
       "googleapis/release-please-action@v5",
       "dependabot/fetch-metadata@v3",
       "actions/github-script@v9",
@@ -60,6 +62,9 @@ describe("workflow runtime policy", () => {
     ];
 
     const forbiddenPins = [
+      "actions/checkout@v6",
+      "actions/setup-node@v6",
+      "dawidd6/action-homebrew-bump-formula@v7",
       "googleapis/release-please-action@v4",
       "dependabot/fetch-metadata@v2",
       "docker/setup-qemu-action@v3",
