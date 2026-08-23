@@ -11,7 +11,7 @@ import {
   type SyncRelease,
   type SyncSkillBundle,
 } from "../src/sync/contract.js";
-import { createSyncSigningKeypair } from "../src/sync/testing.js";
+import { createSyncSigningKeypair, writeFakeUpstreamCatalog } from "../src/sync/testing.js";
 import { resetConfigCache } from "../src/config.js";
 import {
   completeEnrollment,
@@ -531,7 +531,7 @@ describe("cloud sync HTTPS upstream", () => {
 
     const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
     expect(enrollment).toMatchObject({
-      id: "newuser",
+      id: "cloud:newuser",
       name: "newuser",
       type: "https",
       catalog_url: vault.catalogUrl,
@@ -545,7 +545,7 @@ describe("cloud sync HTTPS upstream", () => {
     expect(unpublished.resources).toEqual([]);
     expect(unpublished.errors).toEqual([
       expect.objectContaining({
-        upstream_id: "newuser",
+        upstream_id: "cloud:newuser",
         error: "This vault has no published catalog yet.",
       }),
     ]);
@@ -651,6 +651,52 @@ describe("cloud sync HTTPS upstream", () => {
     await completeEnrollmentFromTarget(vault.vaultUrl);
     await completeEnrollmentFromTarget(vault.vaultUrl);
     expect((await listEnrolledUpstreams()).upstreams).toHaveLength(1);
+  });
+
+  it("does not drop a local catalog whose id matches an unpublished Cloud slug", async () => {
+    const signer = createSyncSigningKeypair();
+    const catalogPath = await writeFakeUpstreamCatalog(
+      path.join(currentStorageRoot(), "local-twin"),
+      {
+        id: "twin",
+        name: "Local Twin",
+        publicKey: signer.publicKey,
+        releases: [],
+      },
+    );
+    await completeEnrollment({
+      upstream: {
+        id: "twin",
+        name: "Local Twin",
+        type: "file",
+        catalog_path: catalogPath,
+        public_key: signer.publicKey,
+      },
+    });
+
+    const vault = await publishHttpsVault({
+      slug: "twin",
+      id: "vault-twin",
+      name: "Cloud Twin",
+      skillName: "twin-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    await completeEnrollmentFromTarget(vault.vaultUrl);
+    const ids = (await listEnrolledUpstreams()).upstreams.map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+    }));
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        { id: "twin", type: "file" },
+        { id: "cloud:twin", type: "https" },
+      ]),
+    );
+    expect(ids).toHaveLength(2);
   });
 
   it("renders a human empty-catalog link instead of crashing", async () => {

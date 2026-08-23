@@ -526,7 +526,7 @@ function httpsIdentityFromCatalog(
   }
   const slug = slugFromCatalogUrl(catalogUrl);
   return {
-    id: expected?.id ?? slug ?? "cloud",
+    id: expected?.id ?? (slug ? `cloud:${slug}` : catalogUrl.href),
     name: expected?.name || slug || "cloud",
     ...(expected?.public_key ? { public_key: expected.public_key } : {}),
   };
@@ -538,10 +538,16 @@ function replaceStoredUpstream(
 ): z.infer<typeof upstreamStateSchema> {
   const rest = state.upstreams.filter((entry) => {
     if (entry.type === "https" && upstream.type === "https") {
-      return (
-        entry.catalog_url !== upstream.catalog_url && entry.id !== upstream.id
-      );
+      if (entry.catalog_url === upstream.catalog_url) return false;
+      if (entry.public_key && upstream.public_key && entry.id === upstream.id) {
+        return false;
+      }
+      return true;
     }
+    // Unpublished Cloud enrollments use the vault slug as a provisional id.
+    // That value is not a global identity until the catalog pins a key.
+    if (upstream.type === "https" && !upstream.public_key) return true;
+    if (entry.type === "https" && !entry.public_key) return true;
     return entry.id !== upstream.id;
   });
   return { schema_version: 1, upstreams: [...rest, upstream] };
