@@ -21,9 +21,9 @@ import {
   fetchHttpsBundle,
   fetchHttpsCatalog,
   fetchHttpsDeviceStatus,
-  isHttpSyncTarget,
   normalizeHttpsCatalogUrl
 } from "./https.js";
+import { resolveLinkTarget } from "./target.js";
 
 const enrollmentMetadataSchema = z.object({
   status: z.enum(["pending", "active", "revoked"]),
@@ -212,10 +212,11 @@ export async function completeEnrollment(
 export async function completeEnrollmentFromTarget(
   target: string
 ): Promise<EnrolledUpstream> {
-  if (isHttpSyncTarget(target)) {
-    return enrollHttpsFromCatalogUrl(normalizeHttpsCatalogUrl(target));
+  const resolved = resolveLinkTarget(target);
+  if (resolved.kind === "https") {
+    return enrollHttpsFromCatalogUrl(new URL(resolved.catalogUrl));
   }
-  const catalogPath = await resolveCatalogPath(target);
+  const catalogPath = await resolveCatalogPath(resolved.path);
   const catalog = await readCatalogFile(catalogPath);
   return completeEnrollment({
     upstream: {

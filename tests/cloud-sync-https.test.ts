@@ -391,12 +391,44 @@ describe("cloud sync HTTPS upstream", () => {
     ]);
   });
 
-  it("enrolls an HTTPS vault through autovault init against the live URL shape", async () => {
+  it("enrolls an HTTPS vault through autovault link using a Cloud slug", async () => {
+    const vault = await publishHttpsVault({
+      slug: "acme",
+      id: "acme",
+      name: "ACME Cloud",
+      skillName: "cli-https-helper",
+      version: "1.0.0",
+      body: "CLI body"
+    });
+    vaults.push(vault);
+
+    const started = Date.now();
+    const result = await runCli(["link", "acme", "--json"], {
+      AUTOVAULT_CLOUD_ORIGIN: vault.origin
+    });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      enrollment: {
+        type: "https",
+        catalog_url: vault.catalogUrl,
+        enrollment: expect.objectContaining({ status: "pending" })
+      }
+    });
+    expect(result.stdout).not.toContain("device_secret_key");
+    expect(vault.requests).toEqual(expect.arrayContaining([
+      { method: "POST", pathname: "/v/acme/devices" },
+      { method: "GET", pathname: "/v/acme/catalog.json" }
+    ]));
+  });
+
+  it("keeps autovault init as a compatibility alias", async () => {
     const vault = await publishHttpsVault({
       slug: "cli",
       id: "cli",
       name: "CLI Cloud",
-      skillName: "cli-https-helper",
+      skillName: "cli-init-helper",
       version: "1.0.0",
       body: "CLI body"
     });
