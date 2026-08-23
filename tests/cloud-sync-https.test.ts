@@ -9,7 +9,7 @@ import {
   signSyncRelease,
   syncBundleHash,
   type SyncRelease,
-  type SyncSkillBundle
+  type SyncSkillBundle,
 } from "../src/sync/contract.js";
 import { createSyncSigningKeypair } from "../src/sync/testing.js";
 import { resetConfigCache } from "../src/config.js";
@@ -18,12 +18,15 @@ import {
   installSyncResource,
   listEnrolledUpstreams,
   listSyncUpdates,
-  revokeEnrollment
+  revokeEnrollment,
 } from "../src/sync/local.js";
 import { readSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
-const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const REPO_ROOT = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  "..",
+);
 const CLI_PATH = path.join(REPO_ROOT, "src/cli.ts");
 const TSX_BIN = path.join(REPO_ROOT, "node_modules/.bin/tsx");
 
@@ -37,9 +40,11 @@ type PublishedVault = {
   catalogUrl: string;
   bundleUrl: string;
   release: SyncRelease;
+  signerPublicKey: string;
   close: () => Promise<void>;
   approve: (devicePublicKey: string) => void;
   replaceCatalog: (mutator: (catalog: Record<string, unknown>) => void) => void;
+  publishCatalog: () => void;
   requests: Array<{ method: string; pathname: string }>;
 };
 
@@ -78,59 +83,84 @@ async function publishHttpsVault(input: {
   version: string;
   body: string;
   bundlePath?: string;
+  unpublished?: boolean;
 }): Promise<PublishedVault> {
   const signer = createSyncSigningKeypair();
   const bundle: SyncSkillBundle = {
     skill_md: skillMd(input.skillName, input.version, input.body),
-    resources: [{ path: "references/notes.md", content: "published notes" }]
+    resources: [{ path: "references/notes.md", content: "published notes" }],
   };
   const bundleHash = syncBundleHash(bundle);
   const bundlePath = input.bundlePath ?? canonicalHttpsBundlePath(bundleHash);
-  const release = signSyncRelease({
-    id: `skill.${input.skillName}`,
-    kind: "skill",
-    name: input.skillName,
-    version: input.version,
-    channel: "stable",
-    changelog: "Published through the HTTPS catalog layout.",
-    policy: "auto_apply",
-    file_hashes: fileHashesForSkillBundle(bundle),
-    bundle_hash: bundleHash,
-    bundle_path: bundlePath
-  }, signer);
+  const release = signSyncRelease(
+    {
+      id: `skill.${input.skillName}`,
+      kind: "skill",
+      name: input.skillName,
+      version: input.version,
+      channel: "stable",
+      changelog: "Published through the HTTPS catalog layout.",
+      policy: "auto_apply",
+      file_hashes: fileHashesForSkillBundle(bundle),
+      bundle_hash: bundleHash,
+      bundle_path: bundlePath,
+    },
+    signer,
+  );
 
-  const objects = new Map<string, string>([
-    [`/v/${input.slug}/catalog.json`, `${JSON.stringify({
+  const catalogPath = `/v/${input.slug}/catalog.json`;
+  const catalogBody = `${JSON.stringify(
+    {
       schema_version: 1,
       id: input.id,
       name: input.name,
       public_key: signer.publicKey,
-      releases: [release]
-    }, null, 2)}\n`],
-    [`/v/${input.slug}/${bundlePath}`, `${JSON.stringify(bundle, null, 2)}\n`]
+      releases: [release],
+    },
+    null,
+    2,
+  )}\n`;
+  const objects = new Map<string, string>([
+    [`/v/${input.slug}/${bundlePath}`, `${JSON.stringify(bundle, null, 2)}\n`],
   ]);
-  const devices = new Map<string, { device_id: string; status: "pending" | "active" | "revoked" }>();
+  if (!input.unpublished) objects.set(catalogPath, catalogBody);
+  const devices = new Map<
+    string,
+    { device_id: string; status: "pending" | "active" | "revoked" }
+  >();
   const requests: PublishedVault["requests"] = [];
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res);
   });
 
-  async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  async function handleRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+  ): Promise<void> {
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const url = new URL(req.url ?? "/", origin);
     const method = (req.method ?? "GET").toUpperCase();
     requests.push({ method, pathname: url.pathname });
     try {
       const devicePublicKey = requireDeviceSignature(req, method, url.pathname);
+      const vaultPrefix = `/v/${input.slug}`;
+      if (
+        url.pathname !== vaultPrefix &&
+        !url.pathname.startsWith(`${vaultPrefix}/`)
+      ) {
+        throw httpError(404, "No such vault.");
+      }
       if (method === "POST" && url.pathname === `/v/${input.slug}/devices`) {
-        const body = JSON.parse(await readRequestBody(req)) as { public_key?: string };
+        const body = JSON.parse(await readRequestBody(req)) as {
+          public_key?: string;
+        };
         if (body.public_key !== devicePublicKey) {
           throw httpError(400, "device public key mismatch");
         }
         const existing = devices.get(devicePublicKey) ?? {
           device_id: `device-${devices.size + 1}`,
-          status: "pending" as const
+          status: "pending" as const,
         };
         devices.set(devicePublicKey, existing);
         writeJson(res, 200, existing);
@@ -138,8 +168,12 @@ async function publishHttpsVault(input: {
       }
       const device = devices.get(devicePublicKey);
       if (!device) throw httpError(401, "unknown device");
-      if (device.status === "revoked") throw httpError(403, "Enrollment revoked");
-      if (method === "GET" && url.pathname === `/v/${input.slug}/devices/current`) {
+      if (device.status === "revoked")
+        throw httpError(403, "Enrollment revoked");
+      if (
+        method === "GET" &&
+        url.pathname === `/v/${input.slug}/devices/current`
+      ) {
         writeJson(res, 200, device);
         return;
       }
@@ -152,10 +186,15 @@ async function publishHttpsVault(input: {
         res.end(objects.get(url.pathname));
         return;
       }
+      if (method === "GET" && url.pathname === catalogPath) {
+        throw httpError(404, "This vault has no published catalog yet.");
+      }
       throw httpError(404, `not found: ${url.pathname}`);
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500;
-      writeJson(res, status, { error: error instanceof Error ? error.message : String(error) });
+      writeJson(res, status, {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -171,6 +210,7 @@ async function publishHttpsVault(input: {
     catalogUrl: `${vaultUrl}/catalog.json`,
     bundleUrl: `${vaultUrl}/${bundlePath}`,
     release,
+    signerPublicKey: signer.publicKey,
     requests,
     approve(devicePublicKey: string) {
       const device = devices.get(devicePublicKey);
@@ -178,19 +218,28 @@ async function publishHttpsVault(input: {
       device.status = "active";
     },
     replaceCatalog(mutator) {
-      const catalogPath = `/v/${input.slug}/catalog.json`;
-      const catalog = JSON.parse(objects.get(catalogPath) ?? "null") as Record<string, unknown>;
+      const catalog = JSON.parse(objects.get(catalogPath) ?? "null") as Record<
+        string,
+        unknown
+      >;
       mutator(catalog);
       objects.set(catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
     },
-    close: () => new Promise<void>((resolve, reject) => {
-      server.close((error) => (error ? reject(error) : resolve()));
-    })
+    publishCatalog() {
+      objects.set(catalogPath, catalogBody);
+    },
+    close: () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
   };
 }
 
 class HttpError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -199,24 +248,34 @@ function httpError(status: number, message: string): HttpError {
   return new HttpError(status, message);
 }
 
-function writeJson(res: http.ServerResponse, status: number, body: unknown): void {
+function writeJson(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
   res.end(`${JSON.stringify(body)}\n`);
 }
 
-function requireDeviceSignature(req: http.IncomingMessage, method: string, pathname: string): string {
+function requireDeviceSignature(
+  req: http.IncomingMessage,
+  method: string,
+  pathname: string,
+): string {
   const device = header(req, DEVICE_HEADER);
   const timestamp = header(req, TIMESTAMP_HEADER);
   const signature = header(req, SIGNATURE_HEADER);
   if (!device || !timestamp || !signature) {
     throw httpError(401, "missing AutoVault device headers");
   }
-  const message = new TextEncoder().encode(`${method}\n${pathname}\n${timestamp}`);
+  const message = new TextEncoder().encode(
+    `${method}\n${pathname}\n${timestamp}`,
+  );
   const ok = nacl.sign.detached.verify(
     message,
     new Uint8Array(Buffer.from(signature, "base64url")),
-    new Uint8Array(Buffer.from(device, "base64url"))
+    new Uint8Array(Buffer.from(device, "base64url")),
   );
   if (!ok) throw httpError(401, "invalid device signature");
   return device;
@@ -238,7 +297,7 @@ function readRequestBody(req: http.IncomingMessage): Promise<string> {
 
 function runCli(
   args: string[],
-  extraEnv: Record<string, string> = {}
+  extraEnv: Record<string, string> = {},
 ): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(TSX_BIN, [CLI_PATH, ...args], {
@@ -249,8 +308,8 @@ function runCli(
         AUTOVAULT_SECURITY_STRICT: "true",
         AUTOVAULT_NO_UPDATE_CHECK: "1",
         NODE_NO_WARNINGS: "1",
-        ...extraEnv
-      }
+        ...extraEnv,
+      },
     });
     let stdout = "";
     let stderr = "";
@@ -279,19 +338,23 @@ describe("cloud sync HTTPS upstream", () => {
       name: "ACME Cloud",
       skillName: "https-helper",
       version: "1.2.0",
-      body: "HTTPS body"
+      body: "HTTPS body",
     });
     vaults.push(vault);
 
-    expect(vault.release.bundle_path).toBe(`bundles/${vault.release.bundle_hash}.json`);
-    expect(vault.bundleUrl).toBe(`${vault.vaultUrl}/bundles/${vault.release.bundle_hash}.json`);
+    expect(vault.release.bundle_path).toBe(
+      `bundles/${vault.release.bundle_hash}.json`,
+    );
+    expect(vault.bundleUrl).toBe(
+      `${vault.vaultUrl}/bundles/${vault.release.bundle_hash}.json`,
+    );
 
     const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
     expect(enrollment).toMatchObject({
       id: "acme",
       type: "https",
       catalog_url: vault.catalogUrl,
-      enrollment: expect.objectContaining({ status: "pending" })
+      enrollment: expect.objectContaining({ status: "pending" }),
     });
     expect(enrollment).not.toHaveProperty("device_secret_key");
     expect(JSON.stringify(enrollment)).not.toContain("device_secret_key");
@@ -301,8 +364,8 @@ describe("cloud sync HTTPS upstream", () => {
     expect(pending.errors).toEqual([
       expect.objectContaining({
         upstream_id: "acme",
-        error: expect.stringMatching(/pending/i)
-      })
+        error: expect.stringMatching(/pending/i),
+      }),
     ]);
 
     vault.approve(enrollment.enrollment.device_public_key);
@@ -313,56 +376,72 @@ describe("cloud sync HTTPS upstream", () => {
       expect.objectContaining({
         id: "skill.https-helper",
         available_version: "1.2.0",
-        policy: "auto_apply"
-      })
+        policy: "auto_apply",
+      }),
     ]);
 
     const result = await installSyncResource({
       resource_id: "skill.https-helper",
-      upstream_id: "acme"
+      upstream_id: "acme",
     });
     expect(result).toMatchObject({
       installed: true,
       version: "1.2.0",
-      verification: { manifest: "valid", bundle: "valid" }
+      verification: { manifest: "valid", bundle: "valid" },
     });
     expect((await readSkill("https-helper"))?.skillMd).toContain("HTTPS body");
 
-    expect(vault.requests).toEqual(expect.arrayContaining([
-      { method: "POST", pathname: "/v/acme/devices" },
-      { method: "GET", pathname: "/v/acme/catalog.json" },
-      { method: "GET", pathname: `/v/acme/bundles/${vault.release.bundle_hash}.json` }
-    ]));
-    expect(vault.requests.some((request) => request.pathname.includes("bundles/") && !request.pathname.endsWith(`/${vault.release.bundle_hash}.json`))).toBe(false);
+    expect(vault.requests).toEqual(
+      expect.arrayContaining([
+        { method: "POST", pathname: "/v/acme/devices" },
+        { method: "GET", pathname: "/v/acme/catalog.json" },
+        {
+          method: "GET",
+          pathname: `/v/acme/bundles/${vault.release.bundle_hash}.json`,
+        },
+      ]),
+    );
+    expect(
+      vault.requests.some(
+        (request) =>
+          request.pathname.includes("bundles/") &&
+          !request.pathname.endsWith(`/${vault.release.bundle_hash}.json`),
+      ),
+    ).toBe(false);
   });
 
   it.each([
     ["https://evil.example/bundles/not-from-this-catalog.json"],
-    ["../stolen.json"]
-  ])("refuses HTTPS bundle URLs that escape the catalog origin or path prefix (%s)", async (bundlePath) => {
-    const slug = bundlePath.startsWith("https:") ? "jail-origin" : "jail-prefix";
-    const vault = await publishHttpsVault({
-      slug,
-      id: slug,
-      name: "Jail Cloud",
-      skillName: `${slug}-helper`,
-      version: "1.0.0",
-      body: "Jail body",
-      bundlePath
-    });
-    vaults.push(vault);
+    ["../stolen.json"],
+  ])(
+    "refuses HTTPS bundle URLs that escape the catalog origin or path prefix (%s)",
+    async (bundlePath) => {
+      const slug = bundlePath.startsWith("https:")
+        ? "jail-origin"
+        : "jail-prefix";
+      const vault = await publishHttpsVault({
+        slug,
+        id: slug,
+        name: "Jail Cloud",
+        skillName: `${slug}-helper`,
+        version: "1.0.0",
+        body: "Jail body",
+        bundlePath,
+      });
+      vaults.push(vault);
 
-    const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
-    vault.approve(enrollment.enrollment.device_public_key);
-    await listSyncUpdates();
+      const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
+      vault.approve(enrollment.enrollment.device_public_key);
+      await listSyncUpdates();
 
-    await expect(
-      installSyncResource({
-        resource_id: `skill.${slug}-helper`,
-        upstream_id: slug
-      })
-    ).rejects.toThrow(/escapes upstream catalog/i);
-  });
+      await expect(
+        installSyncResource({
+          resource_id: `skill.${slug}-helper`,
+          upstream_id: slug,
+        }),
+      ).rejects.toThrow(/escapes upstream catalog/i);
+    },
+  );
 
   it("hard-fails when the live catalog public key drifts from the enrollment pin", async () => {
     const vault = await publishHttpsVault({
@@ -371,12 +450,14 @@ describe("cloud sync HTTPS upstream", () => {
       name: "Rotate Cloud",
       skillName: "rotate-helper",
       version: "1.0.0",
-      body: "Rotate body"
+      body: "Rotate body",
     });
     vaults.push(vault);
     const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
     vault.approve(enrollment.enrollment.device_public_key);
-    expect((await listEnrolledUpstreams()).upstreams[0]?.public_key).toBe(enrollment.public_key);
+    expect((await listEnrolledUpstreams()).upstreams[0]?.public_key).toBe(
+      enrollment.public_key,
+    );
 
     // Beta limitation: rotating the publishing key without re-enrollment is a hard fail.
     vault.replaceCatalog((catalog) => {
@@ -388,8 +469,8 @@ describe("cloud sync HTTPS upstream", () => {
     expect(updates.errors).toEqual([
       expect.objectContaining({
         upstream_id: "rotate",
-        error: expect.stringMatching(/public key mismatch/i)
-      })
+        error: expect.stringMatching(/public key mismatch/i),
+      }),
     ]);
   });
 
@@ -400,29 +481,140 @@ describe("cloud sync HTTPS upstream", () => {
       name: "ACME Cloud",
       skillName: "cli-https-helper",
       version: "1.0.0",
-      body: "CLI body"
+      body: "CLI body",
     });
     vaults.push(vault);
 
     const started = Date.now();
     const result = await runCli(["link", "acme", "--json"], {
-      AUTOVAULT_CLOUD_ORIGIN: vault.origin
+      AUTOVAULT_CLOUD_ORIGIN: vault.origin,
     });
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(JSON.parse(result.stdout)).toMatchObject({
+    const body = JSON.parse(result.stdout) as {
+      enrollment: {
+        type: string;
+        catalog_url: string;
+        enrollment: { status: string };
+      };
+    };
+    expect(body).toMatchObject({
       enrollment: {
         type: "https",
         catalog_url: vault.catalogUrl,
-        enrollment: expect.objectContaining({ status: "pending" })
-      }
+        enrollment: expect.objectContaining({ status: "pending" }),
+      },
     });
+    expect(body).not.toHaveProperty("admit");
     expect(result.stdout).not.toContain("device_secret_key");
-    expect(vault.requests).toEqual(expect.arrayContaining([
-      { method: "POST", pathname: "/v/acme/devices" },
-      { method: "GET", pathname: "/v/acme/catalog.json" }
-    ]));
+    expect(vault.requests).toEqual(
+      expect.arrayContaining([
+        { method: "POST", pathname: "/v/acme/devices" },
+        { method: "GET", pathname: "/v/acme/catalog.json" },
+      ]),
+    );
+  });
+
+  it("enrolls a Cloud vault that has no published catalog yet", async () => {
+    const vault = await publishHttpsVault({
+      slug: "newuser",
+      id: "vault-newuser",
+      name: "New User Vault",
+      skillName: "later-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
+    expect(enrollment).toMatchObject({
+      id: "newuser",
+      name: "newuser",
+      type: "https",
+      catalog_url: vault.catalogUrl,
+      catalog_status: "unpublished",
+      enrollment: expect.objectContaining({ status: "pending" }),
+    });
+    expect(enrollment.public_key).toBeUndefined();
+
+    vault.approve(enrollment.enrollment.device_public_key);
+    const unpublished = await listSyncUpdates();
+    expect(unpublished.resources).toEqual([]);
+    expect(unpublished.errors).toEqual([
+      expect.objectContaining({
+        upstream_id: "newuser",
+        error: "This vault has no published catalog yet.",
+      }),
+    ]);
+
+    vault.publishCatalog();
+    const updates = await listSyncUpdates();
+    expect(updates.errors).toEqual([]);
+    expect(updates.resources).toEqual([
+      expect.objectContaining({
+        id: "skill.later-helper",
+        available_version: "1.0.0",
+      }),
+    ]);
+    expect((await listEnrolledUpstreams()).upstreams[0]).toMatchObject({
+      id: "vault-newuser",
+      name: "New User Vault",
+      public_key: vault.signerPublicKey,
+      catalog_status: "ready",
+    });
+  });
+
+  it("renders a human empty-catalog link instead of crashing", async () => {
+    const vault = await publishHttpsVault({
+      slug: "newuser",
+      id: "vault-newuser",
+      name: "New User Vault",
+      skillName: "later-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const result = await runCli(["link", "newuser"], {
+      AUTOVAULT_CLOUD_ORIGIN: vault.origin,
+      CI: "1",
+      NO_COLOR: "1",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("autovault failed");
+    expect(result.stderr).not.toContain("HTTPS sync failed");
+    expect(result.stdout).toContain("Linked newuser");
+    expect(result.stdout).toContain("nothing published yet");
+    expect(result.stdout).toContain("Admit this machine");
+    expect(result.stdout).not.toContain("?admit=");
+    expect(result.stdout).toMatch(/publish/i);
+    expect(result.stdout).not.toContain("catalog.json");
+    expect(result.stdout).not.toContain('"error"');
+  });
+
+  it("renders Cloud HTTP failures as branded CLI errors", async () => {
+    const vault = await publishHttpsVault({
+      slug: "acme",
+      id: "acme",
+      name: "ACME Cloud",
+      skillName: "cli-https-helper",
+      version: "1.0.0",
+      body: "CLI body",
+    });
+    vaults.push(vault);
+
+    const result = await runCli(["link", "missing-vault"], {
+      AUTOVAULT_CLOUD_ORIGIN: vault.origin,
+      CI: "1",
+      NO_COLOR: "1",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).not.toContain("autovault failed");
+    expect(result.stderr).not.toMatch(/Error: HTTPS sync failed/);
+    expect(result.stderr).toMatch(/No vault uses that slug/i);
   });
 
   it("keeps autovault init as a compatibility alias", async () => {
@@ -432,7 +624,7 @@ describe("cloud sync HTTPS upstream", () => {
       name: "CLI Cloud",
       skillName: "cli-init-helper",
       version: "1.0.0",
-      body: "CLI body"
+      body: "CLI body",
     });
     vaults.push(vault);
 
@@ -443,14 +635,16 @@ describe("cloud sync HTTPS upstream", () => {
       enrollment: {
         type: "https",
         catalog_url: vault.catalogUrl,
-        enrollment: expect.objectContaining({ status: "pending" })
-      }
+        enrollment: expect.objectContaining({ status: "pending" }),
+      },
     });
     expect(result.stdout).not.toContain("device_secret_key");
-    expect(vault.requests).toEqual(expect.arrayContaining([
-      { method: "POST", pathname: "/v/cli/devices" },
-      { method: "GET", pathname: "/v/cli/catalog.json" }
-    ]));
+    expect(vault.requests).toEqual(
+      expect.arrayContaining([
+        { method: "POST", pathname: "/v/cli/devices" },
+        { method: "GET", pathname: "/v/cli/catalog.json" },
+      ]),
+    );
   });
 
   it("refuses loopback HTTP catalogs in remote mode", async () => {
@@ -458,7 +652,7 @@ describe("cloud sync HTTPS upstream", () => {
     process.env.AUTOVAULT_PUBLIC_URL = "https://example.test";
     resetConfigCache();
     await expect(
-      completeEnrollmentFromTarget("http://127.0.0.1:9/v/ssrf")
+      completeEnrollmentFromTarget("http://127.0.0.1:9/v/ssrf"),
     ).rejects.toThrow(/Only https catalog URLs are supported/);
   });
 
@@ -467,7 +661,7 @@ describe("cloud sync HTTPS upstream", () => {
     process.env.AUTOVAULT_PUBLIC_URL = "https://example.test";
     resetConfigCache();
     await expect(
-      completeEnrollmentFromTarget("https://127.0.0.1/v/ssrf")
+      completeEnrollmentFromTarget("https://127.0.0.1/v/ssrf"),
     ).rejects.toThrow(/private catalog host/);
   });
 
@@ -478,7 +672,7 @@ describe("cloud sync HTTPS upstream", () => {
       name: "Revoked Cloud",
       skillName: "revoked-helper",
       version: "1.0.0",
-      body: "Revoked body"
+      body: "Revoked body",
     });
     vaults.push(vault);
     const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
@@ -490,10 +684,11 @@ describe("cloud sync HTTPS upstream", () => {
     expect(updates.errors).toEqual([
       expect.objectContaining({
         upstream_id: "revoked",
-        error: expect.stringMatching(/revoked/i)
-      })
+        error: expect.stringMatching(/revoked/i),
+      }),
     ]);
-    expect((await listEnrolledUpstreams()).upstreams[0]?.enrollment.status).toBe("revoked");
+    expect(
+      (await listEnrolledUpstreams()).upstreams[0]?.enrollment.status,
+    ).toBe("revoked");
   });
 });
-

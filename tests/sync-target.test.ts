@@ -1,8 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_CLOUD_ORIGIN,
-  resolveLinkTarget
-} from "../src/sync/target.js";
+import { DEFAULT_CLOUD_ORIGIN, resolveLinkTarget } from "../src/sync/target.js";
 
 describe("resolveLinkTarget", () => {
   afterEach(() => {
@@ -13,7 +10,7 @@ describe("resolveLinkTarget", () => {
     expect(resolveLinkTarget("acme")).toEqual({
       kind: "https",
       catalogUrl: `${DEFAULT_CLOUD_ORIGIN}/v/acme/catalog.json`,
-      slug: "acme"
+      slug: "acme",
     });
   });
 
@@ -22,21 +19,30 @@ describe("resolveLinkTarget", () => {
     expect(resolveLinkTarget("acme")).toEqual({
       kind: "https",
       catalogUrl: "http://127.0.0.1:9999/v/acme/catalog.json",
-      slug: "acme"
+      slug: "acme",
     });
   });
 
   it("normalizes an explicit catalog URL", () => {
     expect(resolveLinkTarget("https://autovault.dev/v/acme")).toEqual({
       kind: "https",
-      catalogUrl: "https://autovault.dev/v/acme/catalog.json"
+      catalogUrl: "https://autovault.dev/v/acme/catalog.json",
     });
+  });
+
+  it("extracts a Cloud slug from a catalog URL", async () => {
+    const { slugFromCatalogUrl } = await import("../src/sync/target.js");
+    expect(
+      slugFromCatalogUrl(
+        "https://autovault.dev/v/johngarturo-6ff992/catalog.json",
+      ),
+    ).toBe("johngarturo-6ff992");
   });
 
   it("treats relative paths as file catalogs", () => {
     expect(resolveLinkTarget("./upstream")).toEqual({
       kind: "file",
-      path: "./upstream"
+      path: "./upstream",
     });
   });
 

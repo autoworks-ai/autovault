@@ -9,12 +9,21 @@ export type ResolvedLinkTarget =
   | { kind: "file"; path: string };
 
 export function cloudOrigin(): string {
-  const raw = process.env.AUTOVAULT_CLOUD_ORIGIN?.trim() || DEFAULT_CLOUD_ORIGIN;
+  const raw =
+    process.env.AUTOVAULT_CLOUD_ORIGIN?.trim() || DEFAULT_CLOUD_ORIGIN;
   return raw.replace(/\/+$/, "");
 }
 
 export function cloudAdmitUrl(): string {
   return `${cloudOrigin()}/cloud`;
+}
+
+export function slugFromCatalogUrl(
+  catalogUrl: URL | string,
+): string | undefined {
+  const url = typeof catalogUrl === "string" ? new URL(catalogUrl) : catalogUrl;
+  const match = url.pathname.match(/\/v\/([a-z0-9][a-z0-9-]{0,199})(?:\/|$)/i);
+  return match?.[1]?.toLowerCase();
 }
 
 export function resolveLinkTarget(target: string): ResolvedLinkTarget {
@@ -23,7 +32,10 @@ export function resolveLinkTarget(target: string): ResolvedLinkTarget {
     throw new Error("Missing vault slug, catalog URL, or catalog path");
   }
   if (isHttpSyncTarget(trimmed)) {
-    return { kind: "https", catalogUrl: normalizeHttpsCatalogUrl(trimmed).href };
+    return {
+      kind: "https",
+      catalogUrl: normalizeHttpsCatalogUrl(trimmed).href,
+    };
   }
   if (looksLikeFileTarget(trimmed)) {
     return { kind: "file", path: trimmed };
@@ -31,24 +43,27 @@ export function resolveLinkTarget(target: string): ResolvedLinkTarget {
   if (CLOUD_SLUG_PATTERN.test(trimmed)) {
     return {
       kind: "https",
-      catalogUrl: normalizeHttpsCatalogUrl(`${cloudOrigin()}/v/${trimmed}`).href,
-      slug: trimmed
+      catalogUrl: normalizeHttpsCatalogUrl(`${cloudOrigin()}/v/${trimmed}`)
+        .href,
+      slug: trimmed,
     };
   }
   if (/[A-Z]/.test(trimmed) && CLOUD_SLUG_PATTERN.test(trimmed.toLowerCase())) {
-    throw new Error(`Vault slugs are lowercase (try '${trimmed.toLowerCase()}')`);
+    throw new Error(
+      `Vault slugs are lowercase (try '${trimmed.toLowerCase()}')`,
+    );
   }
   throw new Error(`Not a vault slug, catalog URL, or catalog path: ${trimmed}`);
 }
 
 function looksLikeFileTarget(target: string): boolean {
   if (
-    target.startsWith(".")
-    || target.startsWith("~")
-    || target.startsWith("/")
-    || target.includes("/")
-    || target.includes("\\")
-    || target.endsWith(".json")
+    target.startsWith(".") ||
+    target.startsWith("~") ||
+    target.startsWith("/") ||
+    target.includes("/") ||
+    target.includes("\\") ||
+    target.endsWith(".json")
   ) {
     return true;
   }

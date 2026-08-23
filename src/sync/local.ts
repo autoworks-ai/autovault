@@ -14,16 +14,17 @@ import {
   verifySyncRelease,
   type SyncCatalog,
   type SyncRelease,
-  type SyncSigningKeypair
+  type SyncSigningKeypair,
 } from "./contract.js";
 import {
   enrollHttpsDevice,
   fetchHttpsBundle,
   fetchHttpsCatalog,
   fetchHttpsDeviceStatus,
-  normalizeHttpsCatalogUrl
+  isUnpublishedCatalogError,
+  normalizeHttpsCatalogUrl,
 } from "./https.js";
-import { resolveLinkTarget } from "./target.js";
+import { resolveLinkTarget, slugFromCatalogUrl } from "./target.js";
 
 const enrollmentMetadataSchema = z.object({
   status: z.enum(["pending", "active", "revoked"]),
@@ -31,11 +32,11 @@ const enrollmentMetadataSchema = z.object({
   device_public_key: z.string().min(1),
   enrolled_at: z.string().min(1),
   revoked_at: z.string().optional(),
-  last_check_in_at: z.string().optional()
+  last_check_in_at: z.string().optional(),
 });
 
 const storedEnrollmentMetadataSchema = enrollmentMetadataSchema.extend({
-  device_secret_key: z.string().min(1)
+  device_secret_key: z.string().min(1),
 });
 
 const fileUpstreamBaseSchema = z.object({
@@ -43,7 +44,7 @@ const fileUpstreamBaseSchema = z.object({
   name: z.string().min(1),
   type: z.literal("file"),
   catalog_path: z.string().min(1),
-  public_key: z.string().min(1)
+  public_key: z.string().min(1),
 });
 
 const httpsUpstreamBaseSchema = z.object({
@@ -51,22 +52,25 @@ const httpsUpstreamBaseSchema = z.object({
   name: z.string().min(1),
   type: z.literal("https"),
   catalog_url: z.string().min(1),
-  public_key: z.string().min(1)
+  public_key: z.string().min(1).optional(),
+  catalog_status: z.enum(["ready", "unpublished"]).optional(),
 });
 
 const enrolledUpstreamSchema = z.discriminatedUnion("type", [
   fileUpstreamBaseSchema.extend({ enrollment: enrollmentMetadataSchema }),
-  httpsUpstreamBaseSchema.extend({ enrollment: enrollmentMetadataSchema })
+  httpsUpstreamBaseSchema.extend({ enrollment: enrollmentMetadataSchema }),
 ]);
 
 const storedEnrolledUpstreamSchema = z.discriminatedUnion("type", [
   fileUpstreamBaseSchema.extend({ enrollment: storedEnrollmentMetadataSchema }),
-  httpsUpstreamBaseSchema.extend({ enrollment: storedEnrollmentMetadataSchema })
+  httpsUpstreamBaseSchema.extend({
+    enrollment: storedEnrollmentMetadataSchema,
+  }),
 ]);
 
 const upstreamStateSchema = z.object({
   schema_version: z.literal(1),
-  upstreams: z.array(storedEnrolledUpstreamSchema)
+  upstreams: z.array(storedEnrolledUpstreamSchema),
 });
 
 export type EnrolledUpstream = z.infer<typeof enrolledUpstreamSchema>;
@@ -85,7 +89,7 @@ export type HttpsUpstreamInput = {
   name: string;
   type: "https";
   catalog_url: string;
-  public_key: string;
+  public_key?: string;
 };
 
 export type CompleteEnrollmentInput = {
@@ -150,7 +154,9 @@ async function readState(): Promise<z.infer<typeof upstreamStateSchema>> {
     const raw = await fs.readFile(upstreamStatePath(), "utf-8");
     const parsed = upstreamStateSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) {
-      throw new Error(parsed.error.issues.map((issue) => issue.message).join("; "));
+      throw new Error(
+        parsed.error.issues.map((issue) => issue.message).join("; "),
+      );
     }
     return parsed.data;
   } catch (error) {
@@ -161,24 +167,28 @@ async function readState(): Promise<z.infer<typeof upstreamStateSchema>> {
   }
 }
 
-async function writeState(state: z.infer<typeof upstreamStateSchema>): Promise<void> {
+async function writeState(
+  state: z.infer<typeof upstreamStateSchema>,
+): Promise<void> {
   await fs.mkdir(syncDir(), { recursive: true });
   const tmp = `${upstreamStatePath()}.tmp.${process.pid}.${Date.now()}`;
   await fs.writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, {
     mode: 0o600,
-    encoding: "utf-8"
+    encoding: "utf-8",
   });
   await fs.rename(tmp, upstreamStatePath());
   await fs.chmod(upstreamStatePath(), 0o600).catch(() => {});
 }
 
-export async function initEnrollment(input: CompleteEnrollmentInput): Promise<EnrolledUpstream> {
+export async function initEnrollment(
+  input: CompleteEnrollmentInput,
+): Promise<EnrolledUpstream> {
   return completeEnrollment(input, "pending");
 }
 
 export async function completeEnrollment(
   input: CompleteEnrollmentInput,
-  status: "pending" | "active" = "active"
+  status: "pending" | "active" = "active",
 ): Promise<EnrolledUpstream> {
   if (input.upstream.type === "https") {
     return enrollHttpsUpstream(input.upstream);
@@ -201,16 +211,15 @@ export async function completeEnrollment(
       device_id: `device-${randomUUID()}`,
       device_public_key: device.publicKey,
       device_secret_key: device.secretKey,
-      enrolled_at: new Date().toISOString()
-    }
+      enrolled_at: new Date().toISOString(),
+    },
   };
-  const rest = state.upstreams.filter((entry) => entry.id !== upstream.id);
-  await writeState({ schema_version: 1, upstreams: [...rest, upstream] });
+  await writeState(replaceStoredUpstream(state, upstream));
   return publicUpstream(upstream);
 }
 
 export async function completeEnrollmentFromTarget(
-  target: string
+  target: string,
 ): Promise<EnrolledUpstream> {
   const resolved = resolveLinkTarget(target);
   if (resolved.kind === "https") {
@@ -224,12 +233,14 @@ export async function completeEnrollmentFromTarget(
       name: catalog.name,
       type: "file",
       catalog_path: catalogPath,
-      public_key: catalog.public_key
-    }
+      public_key: catalog.public_key,
+    },
   });
 }
 
-export async function refreshEnrollment(upstreamId: string): Promise<EnrolledUpstream> {
+export async function refreshEnrollment(
+  upstreamId: string,
+): Promise<EnrolledUpstream> {
   const state = await readState();
   const upstream = state.upstreams.find((entry) => entry.id === upstreamId);
   if (!upstream) throw new Error(`Upstream not enrolled: ${upstreamId}`);
@@ -240,13 +251,15 @@ export async function refreshEnrollment(upstreamId: string): Promise<EnrolledUps
   return publicUpstream(upstream);
 }
 
-export async function listEnrolledUpstreams(): Promise<{ upstreams: EnrolledUpstream[] }> {
+export async function listEnrolledUpstreams(): Promise<{
+  upstreams: EnrolledUpstream[];
+}> {
   const state = await readState();
   return {
     upstreams: state.upstreams
       .slice()
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map((upstream) => publicUpstream(upstream))
+      .map((upstream) => publicUpstream(upstream)),
   };
 }
 
@@ -254,16 +267,19 @@ export async function revokeEnrollment(input: {
   upstream_id: string;
 }): Promise<EnrolledUpstream> {
   const state = await readState();
-  const index = state.upstreams.findIndex((entry) => entry.id === input.upstream_id);
-  if (index === -1) throw new Error(`Upstream not enrolled: ${input.upstream_id}`);
+  const index = state.upstreams.findIndex(
+    (entry) => entry.id === input.upstream_id,
+  );
+  if (index === -1)
+    throw new Error(`Upstream not enrolled: ${input.upstream_id}`);
   const upstream = state.upstreams[index];
   const updated: StoredEnrolledUpstream = {
     ...upstream,
     enrollment: {
       ...upstream.enrollment,
       status: "revoked",
-      revoked_at: new Date().toISOString()
-    }
+      revoked_at: new Date().toISOString(),
+    },
   };
   state.upstreams[index] = updated;
   await writeState(state);
@@ -289,20 +305,34 @@ export async function listSyncUpdates(): Promise<SyncUpdatesResult> {
       continue;
     }
     if (upstream.enrollment.status !== "active") {
-      errors.push({ upstream_id: upstream.id, error: `Enrollment ${upstream.enrollment.status}` });
+      errors.push({
+        upstream_id: upstream.id,
+        error: `Enrollment ${upstream.enrollment.status}`,
+      });
       continue;
     }
     try {
       const catalog = await readCatalog(upstream);
       for (const release of catalog.releases) {
         if (!verifySyncRelease(release, upstream.public_key)) {
-          errors.push({ upstream_id: upstream.id, error: `Invalid release signature: ${release.id}` });
+          errors.push({
+            upstream_id: upstream.id,
+            error: `Invalid release signature: ${release.id}`,
+          });
           continue;
         }
         const installedVersion = await installedVersionFor(release);
-        const comparison = installedVersion ? compareVersions(installedVersion, release.version) : null;
-        if (installedVersion && comparison !== null && comparison >= 0) continue;
-        if (installedVersion && comparison === null && installedVersion === release.version) continue;
+        const comparison = installedVersion
+          ? compareVersions(installedVersion, release.version)
+          : null;
+        if (installedVersion && comparison !== null && comparison >= 0)
+          continue;
+        if (
+          installedVersion &&
+          comparison === null &&
+          installedVersion === release.version
+        )
+          continue;
         resources.push(updateResource(upstream, release, installedVersion));
       }
       upstream.enrollment.last_check_in_at = new Date().toISOString();
@@ -312,15 +342,21 @@ export async function listSyncUpdates(): Promise<SyncUpdatesResult> {
   }
 
   if (state.upstreams.length > 0) await writeState(state);
-  resources.sort((a, b) => `${a.upstream_name}:${a.name}`.localeCompare(`${b.upstream_name}:${b.name}`));
+  resources.sort((a, b) =>
+    `${a.upstream_name}:${a.name}`.localeCompare(
+      `${b.upstream_name}:${b.name}`,
+    ),
+  );
   return { resources, errors };
 }
 
 export async function installSyncResource(
-  input: InstallSyncResourceInput
+  input: InstallSyncResourceInput,
 ): Promise<InstallSyncResourceResult> {
   const state = await readState();
-  const upstream = state.upstreams.find((entry) => entry.id === input.upstream_id);
+  const upstream = state.upstreams.find(
+    (entry) => entry.id === input.upstream_id,
+  );
   if (!upstream) throw new Error(`Upstream not enrolled: ${input.upstream_id}`);
   if (upstream.type === "https") {
     await refreshHttpsEnrollment(upstream);
@@ -330,16 +366,23 @@ export async function installSyncResource(
     throw new Error(`Enrollment revoked for upstream: ${input.upstream_id}`);
   }
   if (upstream.enrollment.status !== "active") {
-    throw new Error(`Enrollment ${upstream.enrollment.status} for upstream: ${input.upstream_id}`);
+    throw new Error(
+      `Enrollment ${upstream.enrollment.status} for upstream: ${input.upstream_id}`,
+    );
   }
   const catalog = await readCatalog(upstream);
-  const release = catalog.releases.find((entry) => entry.id === input.resource_id);
-  if (!release) throw new Error(`Resource not found in upstream: ${input.resource_id}`);
+  const release = catalog.releases.find(
+    (entry) => entry.id === input.resource_id,
+  );
+  if (!release)
+    throw new Error(`Resource not found in upstream: ${input.resource_id}`);
   if (!verifySyncRelease(release, upstream.public_key)) {
     throw new Error(`Invalid release signature: ${release.id}`);
   }
   if (release.policy === "admin_hold") {
-    throw new Error(`Resource '${release.id}' is held for administrator review`);
+    throw new Error(
+      `Resource '${release.id}' is held for administrator review`,
+    );
   }
   if (release.policy === "user_approve" && input.accept !== true) {
     throw new Error(`User approval required for resource '${release.id}'`);
@@ -357,12 +400,13 @@ export async function installSyncResource(
     version: release.version,
     skill_md: bundle.skill_md,
     resources: bundle.resources,
-    expected_name: release.name
+    expected_name: release.name,
   });
   if (install.success !== true) {
-    const detail = Array.isArray(install.warnings) && install.warnings.length > 0
-      ? install.warnings
-      : (install.validation ?? install);
+    const detail =
+      Array.isArray(install.warnings) && install.warnings.length > 0
+        ? install.warnings
+        : (install.validation ?? install);
     throw new Error(`Install failed: ${JSON.stringify(detail)}`);
   }
   upstream.enrollment.last_check_in_at = new Date().toISOString();
@@ -376,13 +420,15 @@ export async function installSyncResource(
     kind: release.kind,
     verification: {
       manifest: "valid",
-      bundle: "valid"
+      bundle: "valid",
     },
-    install
+    install,
   };
 }
 
-async function installedVersionFor(release: SyncRelease): Promise<string | null> {
+async function installedVersionFor(
+  release: SyncRelease,
+): Promise<string | null> {
   if (release.kind !== "skill") return null;
   const skill = await readSkill(release.name);
   return skill?.version ?? null;
@@ -391,7 +437,7 @@ async function installedVersionFor(release: SyncRelease): Promise<string | null>
 function updateResource(
   upstream: StoredEnrolledUpstream,
   release: SyncRelease,
-  installedVersion: string | null
+  installedVersion: string | null,
 ): SyncUpdateResource {
   return {
     id: release.id,
@@ -410,53 +456,102 @@ function updateResource(
     breaking: release.breaking,
     capabilities: release.capabilities,
     bundle_hash: release.bundle_hash,
-    signature: release.signature
+    signature: release.signature,
   };
 }
 
-async function enrollHttpsUpstream(input: HttpsUpstreamInput): Promise<EnrolledUpstream> {
-  return enrollHttpsFromCatalogUrl(normalizeHttpsCatalogUrl(input.catalog_url), input);
+async function enrollHttpsUpstream(
+  input: HttpsUpstreamInput,
+): Promise<EnrolledUpstream> {
+  return enrollHttpsFromCatalogUrl(
+    normalizeHttpsCatalogUrl(input.catalog_url),
+    input,
+  );
 }
 
 async function enrollHttpsFromCatalogUrl(
   catalogUrl: URL,
-  expected?: { id?: string; name?: string; public_key?: string }
+  expected?: { id?: string; name?: string; public_key?: string },
 ): Promise<EnrolledUpstream> {
   const device = createSyncSigningKeypair();
   const posted = await enrollHttpsDevice(catalogUrl, device);
-  const catalog = await fetchHttpsCatalog(catalogUrl, device);
-  if (expected?.id && catalog.id !== expected.id) {
+  let catalog: SyncCatalog | null = null;
+  try {
+    catalog = await fetchHttpsCatalog(catalogUrl, device);
+  } catch (error) {
+    if (!isUnpublishedCatalogError(error)) throw error;
+  }
+  if (catalog && expected?.id && catalog.id !== expected.id) {
     throw new Error(`Upstream id mismatch: catalog has '${catalog.id}'`);
   }
-  if (expected?.public_key && catalog.public_key !== expected.public_key) {
+  if (
+    catalog &&
+    expected?.public_key &&
+    catalog.public_key !== expected.public_key
+  ) {
     throw new Error("Upstream public key mismatch");
   }
+  const identity = httpsIdentityFromCatalog(catalogUrl, catalog, expected);
   const state = await readState();
   const upstream: StoredEnrolledUpstream = {
-    id: catalog.id,
-    name: expected?.name || catalog.name,
+    id: identity.id,
+    name: identity.name,
     type: "https",
     catalog_url: catalogUrl.href,
-    public_key: catalog.public_key,
+    ...(identity.public_key ? { public_key: identity.public_key } : {}),
+    catalog_status: catalog ? "ready" : "unpublished",
     enrollment: {
       status: posted.status,
       device_id: posted.device_id,
       device_public_key: device.publicKey,
       device_secret_key: device.secretKey,
-      enrolled_at: new Date().toISOString()
-    }
+      enrolled_at: new Date().toISOString(),
+    },
   };
-  const rest = state.upstreams.filter((entry) => entry.id !== upstream.id);
-  await writeState({ schema_version: 1, upstreams: [...rest, upstream] });
+  await writeState(replaceStoredUpstream(state, upstream));
   return publicUpstream(upstream);
 }
 
-async function refreshHttpsEnrollment(upstream: StoredEnrolledUpstream): Promise<void> {
+function httpsIdentityFromCatalog(
+  catalogUrl: URL,
+  catalog: SyncCatalog | null,
+  expected?: { id?: string; name?: string; public_key?: string },
+): { id: string; name: string; public_key?: string } {
+  if (catalog) {
+    return {
+      id: expected?.id ?? catalog.id,
+      name: expected?.name || catalog.name,
+      public_key: catalog.public_key,
+    };
+  }
+  const slug = slugFromCatalogUrl(catalogUrl);
+  return {
+    id: expected?.id ?? slug ?? "cloud",
+    name: expected?.name || slug || "cloud",
+  };
+}
+
+function replaceStoredUpstream(
+  state: z.infer<typeof upstreamStateSchema>,
+  upstream: StoredEnrolledUpstream,
+): z.infer<typeof upstreamStateSchema> {
+  const rest = state.upstreams.filter((entry) => {
+    if (entry.type === "https" && upstream.type === "https") {
+      return entry.catalog_url !== upstream.catalog_url;
+    }
+    return entry.id !== upstream.id;
+  });
+  return { schema_version: 1, upstreams: [...rest, upstream] };
+}
+
+async function refreshHttpsEnrollment(
+  upstream: StoredEnrolledUpstream,
+): Promise<void> {
   if (upstream.type !== "https") return;
   if (upstream.enrollment.status === "revoked") return;
   const status = await fetchHttpsDeviceStatus(
     new URL(upstream.catalog_url),
-    deviceKeypair(upstream)
+    deviceKeypair(upstream),
   );
   upstream.enrollment.status = status.status;
   if (status.device_id) upstream.enrollment.device_id = status.device_id;
@@ -469,17 +564,33 @@ async function refreshHttpsEnrollment(upstream: StoredEnrolledUpstream): Promise
 function deviceKeypair(upstream: StoredEnrolledUpstream): SyncSigningKeypair {
   return {
     publicKey: upstream.enrollment.device_public_key,
-    secretKey: upstream.enrollment.device_secret_key
+    secretKey: upstream.enrollment.device_secret_key,
   };
 }
 
-async function readCatalog(upstream: StoredEnrolledUpstream): Promise<SyncCatalog> {
-  const catalog = upstream.type === "https"
-    ? await fetchHttpsCatalog(new URL(upstream.catalog_url), deviceKeypair(upstream))
-    : await readCatalogFile(upstream.catalog_path);
-  if (catalog.id !== upstream.id) throw new Error(`Upstream id mismatch: ${catalog.id}`);
+async function readCatalog(
+  upstream: StoredEnrolledUpstream,
+): Promise<SyncCatalog> {
+  const catalog =
+    upstream.type === "https"
+      ? await fetchHttpsCatalog(
+          new URL(upstream.catalog_url),
+          deviceKeypair(upstream),
+        )
+      : await readCatalogFile(upstream.catalog_path);
+  if (upstream.type === "https" && !upstream.public_key) {
+    upstream.id = catalog.id;
+    upstream.name = catalog.name;
+    upstream.public_key = catalog.public_key;
+    upstream.catalog_status = "ready";
+    return catalog;
+  }
+  if (catalog.id !== upstream.id)
+    throw new Error(`Upstream id mismatch: ${catalog.id}`);
   // Beta limitation: rotating the publishing key requires every device to re-enroll.
-  if (catalog.public_key !== upstream.public_key) throw new Error("Upstream public key mismatch");
+  if (catalog.public_key !== upstream.public_key)
+    throw new Error("Upstream public key mismatch");
+  if (upstream.type === "https") upstream.catalog_status = "ready";
   return catalog;
 }
 
@@ -488,49 +599,69 @@ async function readCatalogFile(catalogPath: string): Promise<SyncCatalog> {
   const parsedJson = JSON.parse(raw) as unknown;
   const parsed = syncCatalogSchema.safeParse(parsedJson);
   if (!parsed.success) {
-    throw new Error(`Invalid upstream catalog: ${parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ")}`);
+    throw new Error(
+      `Invalid upstream catalog: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
   }
   return parsed.data;
 }
 
-async function readBundle(upstream: StoredEnrolledUpstream, release: SyncRelease) {
+async function readBundle(
+  upstream: StoredEnrolledUpstream,
+  release: SyncRelease,
+) {
   if (upstream.type === "https") {
     return fetchHttpsBundle(
       new URL(upstream.catalog_url),
       release.bundle_path,
       release.bundle_hash,
-      deviceKeypair(upstream)
+      deviceKeypair(upstream),
     );
   }
   const catalogDir = path.dirname(path.resolve(upstream.catalog_path));
   const bundlePath = path.resolve(catalogDir, release.bundle_path);
-  if (bundlePath !== catalogDir && !bundlePath.startsWith(catalogDir + path.sep)) {
-    throw new Error(`Bundle path escapes upstream catalog: ${release.bundle_path}`);
+  if (
+    bundlePath !== catalogDir &&
+    !bundlePath.startsWith(catalogDir + path.sep)
+  ) {
+    throw new Error(
+      `Bundle path escapes upstream catalog: ${release.bundle_path}`,
+    );
   }
   const realCatalogDir = await fs.realpath(catalogDir);
   const realBundlePath = await fs.realpath(bundlePath);
   if (!isPathWithin(realCatalogDir, realBundlePath)) {
-    throw new Error(`Bundle path escapes upstream catalog: ${release.bundle_path}`);
+    throw new Error(
+      `Bundle path escapes upstream catalog: ${release.bundle_path}`,
+    );
   }
   const stat = await fs.stat(realBundlePath);
   if (!stat.isFile()) {
-    throw new Error(`Bundle path is not a regular file: ${release.bundle_path}`);
+    throw new Error(
+      `Bundle path is not a regular file: ${release.bundle_path}`,
+    );
   }
   const raw = await fs.readFile(realBundlePath, "utf-8");
   const parsed = syncSkillBundleSchema.safeParse(JSON.parse(raw) as unknown);
   if (!parsed.success) {
-    throw new Error(`Invalid sync bundle: ${parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ")}`);
+    throw new Error(
+      `Invalid sync bundle: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
   }
   return parsed.data;
 }
 
 function isPathWithin(parent: string, child: string): boolean {
   const relative = path.relative(parent, child);
-  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+  return (
+    relative.length > 0 &&
+    !relative.startsWith("..") &&
+    !path.isAbsolute(relative)
+  );
 }
 
 async function resolveCatalogPath(target: string): Promise<string> {
@@ -545,9 +676,10 @@ function errorMessage(error: unknown): string {
 }
 
 function publicUpstream(upstream: StoredEnrolledUpstream): EnrolledUpstream {
-  const { device_secret_key: _deviceSecretKey, ...enrollment } = upstream.enrollment;
+  const { device_secret_key: _deviceSecretKey, ...enrollment } =
+    upstream.enrollment;
   return {
     ...upstream,
-    enrollment
+    enrollment,
   };
 }

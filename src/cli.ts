@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 import { runDoctorCommand } from "./cli/doctor.js";
 import { runSkillCommand } from "./cli/skill.js";
-import { printVersion, runUpdateCommand, writeOptionalUpdateNotice } from "./cli/update.js";
+import {
+  printVersion,
+  runUpdateCommand,
+  writeOptionalUpdateNotice,
+} from "./cli/update.js";
+import { formatCliError } from "./cli/ui/errors.js";
 import { renderSuccessOutro } from "./cli/ui/brand.js";
 import { badge, sectionTitle } from "./cli/ui/messages.js";
 import { bulletList, keyValueRows } from "./cli/ui/table.js";
@@ -19,7 +24,7 @@ import {
   type AuditRepoResult,
   type ImportAutohubResult,
   type ResolveCapabilitiesResult,
-  type SyncProfilesResult
+  type SyncProfilesResult,
 } from "./library.js";
 import { compactSyncResult, formatResultSync } from "./util/sync-format.js";
 
@@ -163,10 +168,12 @@ async function runServeCommand(args: string[]): Promise<void> {
 
   const ownerExists = await remoteOwnerExists();
   const missingAdmin = [
-    !process.env.AUTOVAULT_ADMIN_EMAIL ? "AUTOVAULT_ADMIN_EMAIL=admin@example.com" : "",
+    !process.env.AUTOVAULT_ADMIN_EMAIL
+      ? "AUTOVAULT_ADMIN_EMAIL=admin@example.com"
+      : "",
     !process.env.AUTOVAULT_ADMIN_PASSWORD
       ? "AUTOVAULT_ADMIN_PASSWORD=<long random password, min 12 chars>"
-      : ""
+      : "",
   ].filter((value) => value.length > 0);
   if (!ownerExists && missingAdmin.length > 0) {
     process.stderr.write(missingAdminCredentialsMessage(missingAdmin));
@@ -174,7 +181,7 @@ async function runServeCommand(args: string[]): Promise<void> {
   }
 
   process.stderr.write(
-    "Starting AutoVault remote service (OAuth-protected Streamable HTTP MCP at /mcp). For local first-run setup, use `autovault setup`.\n"
+    "Starting AutoVault remote service (OAuth-protected Streamable HTTP MCP at /mcp). For local first-run setup, use `autovault setup`.\n",
   );
   const { startRemoteServer } = await import("./remote/server.js");
   await startRemoteServer();
@@ -214,7 +221,7 @@ const TOP_LEVEL_COMMANDS = [
   "sync-profiles",
   "ui",
   "update",
-  "version"
+  "version",
 ];
 
 function editDistance(a: string, b: string): number {
@@ -235,7 +242,7 @@ function unknownCommand(command: string): never {
   process.stderr.write(`Unknown command: ${command}\n`);
   const suggestion = TOP_LEVEL_COMMANDS.map((candidate) => ({
     candidate,
-    distance: editDistance(command, candidate)
+    distance: editDistance(command, candidate),
   })).sort((a, b) => a.distance - b.distance)[0];
   if (suggestion && suggestion.distance <= 2) {
     process.stderr.write(`Did you mean autovault ${suggestion.candidate}?\n`);
@@ -247,15 +254,19 @@ function unknownCommand(command: string): never {
 function hostRestartGuidance(): string[] {
   return [
     "restart Claude Code, Codex, or Cursor if they cache filesystem skills",
-    "verify from the host by loading the autovault-skill skill"
+    "verify from the host by loading the autovault-skill skill",
   ];
 }
 
-function formatProfilesList(result: Awaited<ReturnType<typeof listConfiguredProfiles>>): string {
+function formatProfilesList(
+  result: Awaited<ReturnType<typeof listConfiguredProfiles>>,
+): string {
   const theme = makeTheme(process.stdout);
   const lines: string[] = [];
   lines.push("");
-  lines.push(`${badge("profiles", theme)} ${theme.style.bold("Configured profiles")}`);
+  lines.push(
+    `${badge("profiles", theme)} ${theme.style.bold("Configured profiles")}`,
+  );
   lines.push(`${theme.style.dim("config")} ${result.configPath}`);
   if (result.profiles.length === 0) {
     lines.push(`  ${theme.style.dim("No named profiles configured.")}`);
@@ -265,15 +276,17 @@ function formatProfilesList(result: Awaited<ReturnType<typeof listConfiguredProf
     const include =
       profile.include_tags === "*" ? "*" : profile.include_tags.join(", ");
     const exclude =
-      profile.exclude_tags.length === 0 ? "none" : profile.exclude_tags.join(", ");
+      profile.exclude_tags.length === 0
+        ? "none"
+        : profile.exclude_tags.join(", ");
     lines.push(
-      `  ${theme.style.green(theme.symbol.check)} ${profile.name} ${theme.style.dim(profile.target)}`
+      `  ${theme.style.green(theme.symbol.check)} ${profile.name} ${theme.style.dim(profile.target)}`,
     );
     lines.push(`    agent ${profile.agent}`);
     lines.push(`    include ${include}`);
     lines.push(`    exclude ${exclude}`);
     lines.push(
-      `    skills ${profile.skills.length === 0 ? "none" : profile.skills.join(", ")}`
+      `    skills ${profile.skills.length === 0 ? "none" : profile.skills.join(", ")}`,
     );
   }
   return `${lines.join("\n")}\n`;
@@ -285,19 +298,27 @@ function formatRemoveResult(result: Record<string, unknown>): string {
   const name = typeof result.name === "string" ? result.name : "(unknown)";
   const deleted = result.deleted === true;
   const warnings = Array.isArray(result.warnings)
-    ? result.warnings.filter((warning): warning is string => typeof warning === "string")
+    ? result.warnings.filter(
+        (warning): warning is string => typeof warning === "string",
+      )
     : [];
   lines.push("");
-  lines.push(`${badge("vault", theme)} ${theme.style.bold("AutoVault remover")}`);
+  lines.push(
+    `${badge("vault", theme)} ${theme.style.bold("AutoVault remover")}`,
+  );
   lines.push(sectionTitle("Removal receipt", theme));
   lines.push(
     keyValueRows(
       [
         { label: "skill", value: name, status: deleted ? "ok" : "warn" },
-        { label: "vault", value: deleted ? "removed" : "not installed", status: deleted ? "ok" : "warn" }
+        {
+          label: "vault",
+          value: deleted ? "removed" : "not installed",
+          status: deleted ? "ok" : "warn",
+        },
       ],
-      theme
-    )
+      theme,
+    ),
   );
   if (warnings.length > 0) {
     lines.push("");
@@ -308,8 +329,8 @@ function formatRemoveResult(result: Record<string, unknown>): string {
     renderSuccessOutro(
       deleted ? "Skill removed" : "Skill was not installed",
       hostRestartGuidance().map((line) => `${theme.style.dim("next")} ${line}`),
-      process.stdout
-    ).trimEnd()
+      process.stdout,
+    ).trimEnd(),
   );
   return `${lines.join("\n")}\n`;
 }
@@ -318,29 +339,40 @@ function formatSyncProfilesResult(result: SyncProfilesResult): string {
   const theme = makeTheme(process.stdout);
   const compact = compactSyncResult(result);
   const profileEntries = Object.entries(compact.profiles).sort(([a], [b]) =>
-    a.localeCompare(b)
+    a.localeCompare(b),
   );
   const linkedEntries = Object.entries(compact.linkedRoots).sort(([a], [b]) =>
-    a.localeCompare(b)
+    a.localeCompare(b),
   );
   const lines: string[] = [];
-  const totalSkills = Object.values(compact.profiles).reduce((sum, count) => sum + count, 0);
+  const totalSkills = Object.values(compact.profiles).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
   lines.push("");
   lines.push(`${badge("sync", theme)} ${theme.style.bold("Profile sync")}`);
   lines.push(sectionTitle("Summary", theme));
   lines.push(
     keyValueRows(
       [
-        { label: "profiles", value: String(profileEntries.length), status: "ok" },
-        { label: "skills", value: String(totalSkills), status: totalSkills > 0 ? "ok" : "muted" },
+        {
+          label: "profiles",
+          value: String(profileEntries.length),
+          status: "ok",
+        },
+        {
+          label: "skills",
+          value: String(totalSkills),
+          status: totalSkills > 0 ? "ok" : "muted",
+        },
         {
           label: "warnings",
           value: String(compact.warningCount),
-          status: compact.warningCount > 0 ? "warn" : "muted"
-        }
+          status: compact.warningCount > 0 ? "warn" : "muted",
+        },
       ],
-      theme
-    )
+      theme,
+    ),
   );
   if (linkedEntries.length > 0) {
     lines.push("");
@@ -353,14 +385,19 @@ function formatSyncProfilesResult(result: SyncProfilesResult): string {
         .map(([status, countValue]) => `${status}:${countValue}`)
         .join(", ");
       lines.push(
-        `  ${theme.style.green(theme.symbol.check)} ${truncateCliText(profile, 48)} ${theme.style.dim(root)} (${count} skill${count === 1 ? "" : "s"}${statuses ? `; ${statuses}` : ""})`
+        `  ${theme.style.green(theme.symbol.check)} ${truncateCliText(profile, 48)} ${theme.style.dim(root)} (${count} skill${count === 1 ? "" : "s"}${statuses ? `; ${statuses}` : ""})`,
       );
     }
   }
   if (result.warnings.length > 0) {
     lines.push("");
     lines.push(`${badge("warn", theme, "warn")} warnings`);
-    lines.push(bulletList(result.warnings.map((warning) => truncateCliText(warning, 160)), theme));
+    lines.push(
+      bulletList(
+        result.warnings.map((warning) => truncateCliText(warning, 160)),
+        theme,
+      ),
+    );
   }
   lines.push("");
   lines.push(`${theme.style.dim("next")} ${hostRestartGuidance()[0]}`);
@@ -372,28 +409,47 @@ function formatImportAutohubResult(result: ImportAutohubResult): string {
   const theme = makeTheme(process.stdout);
   const lines: string[] = [];
   lines.push("");
-  lines.push(`${badge("capabilities", theme)} ${theme.style.bold("AutoHub capability import")}`);
+  lines.push(
+    `${badge("capabilities", theme)} ${theme.style.bold("AutoHub capability import")}`,
+  );
   lines.push(sectionTitle("Import receipt", theme));
   lines.push(
     keyValueRows(
       [
         { label: "profiles", value: String(result.profiles), status: "ok" },
-        { label: "tool groups", value: String(result.toolGroups), status: "ok" },
-        { label: "context rules", value: String(result.contextRules), status: "ok" },
-        { label: "mcp servers", value: String(result.mcpServers), status: "muted" },
+        {
+          label: "tool groups",
+          value: String(result.toolGroups),
+          status: "ok",
+        },
+        {
+          label: "context rules",
+          value: String(result.contextRules),
+          status: "ok",
+        },
+        {
+          label: "mcp servers",
+          value: String(result.mcpServers),
+          status: "muted",
+        },
         {
           label: "warnings",
           value: String(result.warnings.length),
-          status: result.warnings.length > 0 ? "warn" : "muted"
-        }
+          status: result.warnings.length > 0 ? "warn" : "muted",
+        },
       ],
-      theme
-    )
+      theme,
+    ),
   );
   if (result.warnings.length > 0) {
     lines.push("");
     lines.push(`${badge("warn", theme, "warn")} warnings`);
-    lines.push(bulletList(result.warnings.map((warning) => truncateCliText(warning, 160)), theme));
+    lines.push(
+      bulletList(
+        result.warnings.map((warning) => truncateCliText(warning, 160)),
+        theme,
+      ),
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -404,39 +460,51 @@ function formatResolveResult(result: ResolveCapabilitiesResult): string {
   const toolNames = result.tools.map((tool) => tool.pattern);
   const skillNames = result.skills.map((skill) => skill.name);
   const serverNames = result.mcp_servers.map((server) => {
-    const env = server.env_required.length > 0 ? ` env:${server.env_required.join(",")}` : "";
+    const env =
+      server.env_required.length > 0
+        ? ` env:${server.env_required.join(",")}`
+        : "";
     return `${server.name}${env}`;
   });
   lines.push("");
-  lines.push(`${badge("resolve", theme)} ${theme.style.bold("Capability resolution")}`);
+  lines.push(
+    `${badge("resolve", theme)} ${theme.style.bold("Capability resolution")}`,
+  );
   lines.push(sectionTitle("Matches", theme));
   lines.push(
     keyValueRows(
       [
         {
           label: "groups",
-          value: joinCliList(result.matched_groups, { maxItemLength: 48, maxItems: 10 }),
-          status: result.matched_groups.length > 0 ? "ok" : "muted"
+          value: joinCliList(result.matched_groups, {
+            maxItemLength: 48,
+            maxItems: 10,
+          }),
+          status: result.matched_groups.length > 0 ? "ok" : "muted",
         },
         {
           label: "tools",
           value: joinCliList(toolNames, { maxItemLength: 64, maxItems: 8 }),
-          status: toolNames.length > 0 ? "ok" : "muted"
+          status: toolNames.length > 0 ? "ok" : "muted",
         },
         {
           label: "skills",
           value: joinCliList(skillNames, { maxItemLength: 48, maxItems: 8 }),
-          status: skillNames.length > 0 ? "ok" : "muted"
+          status: skillNames.length > 0 ? "ok" : "muted",
         },
         {
           label: "servers",
           value: joinCliList(serverNames, { maxItemLength: 80, maxItems: 6 }),
-          status: serverNames.length > 0 ? "ok" : "muted"
+          status: serverNames.length > 0 ? "ok" : "muted",
         },
-        { label: "cache", value: result.cache_key.slice(0, 12), status: "muted" }
+        {
+          label: "cache",
+          value: result.cache_key.slice(0, 12),
+          status: "muted",
+        },
       ],
-      theme
-    )
+      theme,
+    ),
   );
   return `${lines.join("\n")}\n`;
 }
@@ -473,7 +541,7 @@ async function main(): Promise<void> {
       i += 1;
     }
     const result = await withSuppressedLogs(() =>
-      syncProfiles({ profileRoots, discover: hasFlag(args, "--discover") })
+      syncProfiles({ profileRoots, discover: hasFlag(args, "--discover") }),
     );
     if (hasFlag(args, "--json")) {
       writeJson(result);
@@ -542,8 +610,8 @@ async function main(): Promise<void> {
       deleteSkill({
         name,
         profile_roots: profileRoots,
-        discover_profile_roots: discoverProfileRoots
-      })
+        discover_profile_roots: discoverProfileRoots,
+      }),
     );
     const output = formatResultSync(result, false);
     if (hasFlag(args, "--json")) {
@@ -574,7 +642,7 @@ async function main(): Promise<void> {
     const result = await importAutohubCapabilities({
       toolFiltersPath,
       mcpServersPath: readFlag(args, "--mcp-servers"),
-      reset: hasFlag(args, "--reset")
+      reset: hasFlag(args, "--reset"),
     });
     if (hasFlag(args, "--json")) writeJson(result);
     else {
@@ -592,7 +660,10 @@ async function main(): Promise<void> {
 
   if (command === "skill") {
     await withSuppressedLogs(() => runSkillCommand(args));
-    if (["list", "search", "which"].includes(args[0] ?? "") && !hasFlag(args, "--json")) {
+    if (
+      ["list", "search", "which"].includes(args[0] ?? "") &&
+      !hasFlag(args, "--json")
+    ) {
       writeOptionalUpdateNotice();
     }
     return;
@@ -614,8 +685,8 @@ async function main(): Promise<void> {
         caller_id,
         platform,
         query,
-        channel: readFlag(args, "--channel")
-      })
+        channel: readFlag(args, "--channel"),
+      }),
     );
     if (hasFlag(args, "--json")) writeJson(result);
     else {
@@ -632,8 +703,8 @@ async function main(): Promise<void> {
         runSetup({
           json: hasFlag(args, "--json"),
           review: hasFlag(args, "--review"),
-          advanced: hasFlag(args, "--advanced")
-        })
+          advanced: hasFlag(args, "--advanced"),
+        }),
       );
     } catch (error) {
       const name = (error as { name?: string })?.name;
@@ -703,7 +774,12 @@ async function runUiCommand(args: string[]): Promise<void> {
     }
     if (arg === "--ui-channel") {
       const raw = args[i + 1];
-      if (!raw || raw.startsWith("-") || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(raw)) usage();
+      if (
+        !raw ||
+        raw.startsWith("-") ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(raw)
+      )
+        usage();
       uiChannel = raw;
       i += 1;
       continue;
@@ -712,7 +788,13 @@ async function runUiCommand(args: string[]): Promise<void> {
   }
 
   const { startLocalUiServer } = await import("./ui/local-server.js");
-  const handle = await startLocalUiServer({ port, open, offline, uiBundleManifestUrl, uiChannel });
+  const handle = await startLocalUiServer({
+    port,
+    open,
+    offline,
+    uiBundleManifestUrl,
+    uiChannel,
+  });
   process.stdout.write(`AutoVault UI ready: ${handle.browserUrl}\n`);
 
   const shutdown = (signal: NodeJS.Signals): void => {
@@ -725,6 +807,6 @@ async function runUiCommand(args: string[]): Promise<void> {
 }
 
 main().catch((error) => {
-  process.stderr.write(`autovault failed: ${String(error)}\n`);
+  process.stderr.write(formatCliError(error));
   process.exit(1);
 });
