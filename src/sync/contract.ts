@@ -4,7 +4,16 @@ import { bundleHash, sha256 } from "../util/hash.js";
 import type { SkillCapabilities } from "../types.js";
 
 const textEncoder = new TextEncoder();
+// Domain-separation prefix for signed catalog releases. This string is the
+// trust boundary; changing it invalidates every existing signature.
 const RELEASE_SIGNATURE_DOMAIN = "autovault-sync-release-v1";
+
+export const SYNC_HTTPS_CATALOG_FILENAME = "catalog.json";
+export const SYNC_DEVICE_HEADERS = {
+  device: "X-AutoVault-Device",
+  timestamp: "X-AutoVault-Timestamp",
+  signature: "X-AutoVault-Signature"
+} as const;
 
 export const syncResourceKindSchema = z.enum(["skill", "agent", "mcp_server", "collection"]);
 export const syncUpdatePolicySchema = z.enum(["auto_apply", "user_approve", "admin_hold"]);
@@ -114,6 +123,48 @@ export function fileHashesForSkillBundle(bundle: SyncSkillBundle): Array<{
 
 export function syncBundleHash(bundle: SyncSkillBundle): string {
   return bundleHash(bundle.skill_md, bundle.resources);
+}
+
+export function httpsBundlePath(bundleHash: string): string {
+  if (!/^[a-f0-9]{64}$/.test(bundleHash)) {
+    throw new Error(`Invalid bundle hash: ${bundleHash}`);
+  }
+  return `bundles/${bundleHash}.json`;
+}
+
+export function signDeviceRequest(
+  secretKey: string,
+  method: string,
+  path: string,
+  timestamp: string
+): string {
+  const signature = nacl.sign.detached(
+    deviceRequestMessage(method, path, timestamp),
+    fromBase64Url(secretKey)
+  );
+  return toBase64Url(signature);
+}
+
+export function verifyDeviceRequest(
+  publicKey: string,
+  method: string,
+  path: string,
+  timestamp: string,
+  signature: string
+): boolean {
+  try {
+    return nacl.sign.detached.verify(
+      deviceRequestMessage(method, path, timestamp),
+      fromBase64Url(signature),
+      fromBase64Url(publicKey)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function deviceRequestMessage(method: string, path: string, timestamp: string): Uint8Array {
+  return textEncoder.encode(`${method.toUpperCase()}\n${path}\n${timestamp}`);
 }
 
 export function signSyncRelease(

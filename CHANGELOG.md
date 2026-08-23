@@ -41,6 +41,13 @@ while it remains in pre-1.0 development.
 ## [Unreleased]
 
 ### Added
+- HTTPS catalog enrollment for AutoVault Cloud. `autovault init
+  https://autovault.dev/v/<slug>` POSTs a device public key, stores it pending
+  until the owner admits the device, then discovers and installs signed
+  releases from `catalog.json` and `bundles/<bundle_hash>.json`. Requests are
+  signed with the device key (`X-AutoVault-Device` / `-Timestamp` /
+  `-Signature`). Beta limitation: rotating the publishing key requires every
+  device to re-enroll.
 - Named profiles can opt in to emitting a Claude Code `skillOverrides` block
   alongside the project-local symlink farm. Without this, the per-project
   `<project>/.claude/skills/` symlinks are purely additive to
