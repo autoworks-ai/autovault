@@ -371,6 +371,7 @@ export async function installSyncResource(
     );
   }
   const catalog = await readCatalog(upstream);
+  await writeState(state);
   const release = catalog.releases.find(
     (entry) => entry.id === input.resource_id,
   );
@@ -553,6 +554,12 @@ function replaceStoredUpstream(
   return { schema_version: 1, upstreams: [...rest, upstream] };
 }
 
+function isProvisionalHttpsId(id: string, catalogUrl: string): boolean {
+  const slug = slugFromCatalogUrl(catalogUrl);
+  if (slug && id === `cloud:${slug}`) return true;
+  return id === catalogUrl;
+}
+
 async function refreshHttpsEnrollment(
   upstream: StoredEnrolledUpstream,
 ): Promise<void> {
@@ -588,6 +595,12 @@ async function readCatalog(
         )
       : await readCatalogFile(upstream.catalog_path);
   if (upstream.type === "https" && !upstream.public_key) {
+    if (
+      !isProvisionalHttpsId(upstream.id, upstream.catalog_url) &&
+      catalog.id !== upstream.id
+    ) {
+      throw new Error(`Upstream id mismatch: ${catalog.id}`);
+    }
     upstream.id = catalog.id;
     upstream.name = catalog.name;
     upstream.public_key = catalog.public_key;

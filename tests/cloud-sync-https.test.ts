@@ -642,6 +642,103 @@ describe("cloud sync HTTPS upstream", () => {
     ]);
   });
 
+  it("rejects the first catalog when a caller-supplied id does not match", async () => {
+    const vault = await publishHttpsVault({
+      slug: "wrong-id",
+      id: "vault-actual",
+      name: "Actual Vault",
+      skillName: "actual-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollment({
+      upstream: {
+        id: "expected-id",
+        name: "Expected Vault",
+        type: "https",
+        catalog_url: vault.catalogUrl,
+      },
+    });
+    expect(enrollment.id).toBe("expected-id");
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+
+    const updates = await listSyncUpdates();
+    expect(updates.resources).toEqual([]);
+    expect(updates.errors).toEqual([
+      expect.objectContaining({
+        upstream_id: "expected-id",
+        error: expect.stringMatching(/id mismatch/i),
+      }),
+    ]);
+  });
+
+  it("treats a caller-supplied cloud-prefixed id as a pin, not a generated slug", async () => {
+    const vault = await publishHttpsVault({
+      slug: "prefixed",
+      id: "vault-prefixed",
+      name: "Prefixed Vault",
+      skillName: "prefixed-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollment({
+      upstream: {
+        id: "cloud:expected-id",
+        name: "Prefixed Vault",
+        type: "https",
+        catalog_url: vault.catalogUrl,
+      },
+    });
+    expect(enrollment.id).toBe("cloud:expected-id");
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+
+    const updates = await listSyncUpdates();
+    expect(updates.errors).toEqual([
+      expect.objectContaining({
+        upstream_id: "cloud:expected-id",
+        error: expect.stringMatching(/id mismatch/i),
+      }),
+    ]);
+  });
+
+  it("persists the first catalog pin even when install fails", async () => {
+    const vault = await publishHttpsVault({
+      slug: "install-pin",
+      id: "vault-install-pin",
+      name: "Install Pin Vault",
+      skillName: "install-pin-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+
+    await expect(
+      installSyncResource({
+        resource_id: "skill.missing",
+        upstream_id: enrollment.id,
+      }),
+    ).rejects.toThrow(/Resource not found/);
+
+    expect((await listEnrolledUpstreams()).upstreams[0]).toMatchObject({
+      id: "vault-install-pin",
+      public_key: vault.signerPublicKey,
+      catalog_status: "ready",
+    });
+  });
+
   it("replaces an existing HTTPS enrollment that shares a catalog URL or id", async () => {
     const vault = await publishHttpsVault({
       slug: "dup",

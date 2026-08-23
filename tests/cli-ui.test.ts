@@ -132,4 +132,25 @@ describe("CLI UI helpers", () => {
     expect(output).not.toContain("Error:");
     expect(output).not.toContain('{"error"');
   });
+
+  it("strips terminal control characters from Cloud error messages", () => {
+    const error = new HttpsSyncError(
+      500,
+      "Internal Server Error",
+      new URL("https://autovault.dev/v/acme/catalog.json"),
+      "boom\u001b[31mhacked",
+    );
+    const stream = {
+      isTTY: false,
+      columns: 72,
+      write() {
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+
+    const output = formatCliError(error, stream);
+    expect(output).toContain("boom");
+    expect(output).not.toContain("\u001b");
+    expect(error.serverMessage).toBe("boom[31mhacked");
+  });
 });
