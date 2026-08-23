@@ -462,6 +462,15 @@ describe("cloud sync HTTPS upstream", () => {
     ).rejects.toThrow(/Only https catalog URLs are supported/);
   });
 
+  it("refuses loopback HTTPS catalogs in remote mode", async () => {
+    process.env.AUTOVAULT_MODE = "remote";
+    process.env.AUTOVAULT_PUBLIC_URL = "https://example.test";
+    resetConfigCache();
+    await expect(
+      completeEnrollmentFromTarget("https://127.0.0.1/v/ssrf")
+    ).rejects.toThrow(/private catalog host/);
+  });
+
   it("keeps a locally revoked HTTPS enrollment revoked after status refresh", async () => {
     const vault = await publishHttpsVault({
       slug: "revoked",
