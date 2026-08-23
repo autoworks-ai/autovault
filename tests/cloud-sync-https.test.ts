@@ -14,6 +14,7 @@ import {
 import { createSyncSigningKeypair } from "../src/sync/testing.js";
 import { resetConfigCache } from "../src/config.js";
 import {
+  completeEnrollment,
   completeEnrollmentFromTarget,
   installSyncResource,
   listEnrolledUpstreams,
@@ -564,6 +565,92 @@ describe("cloud sync HTTPS upstream", () => {
       public_key: vault.signerPublicKey,
       catalog_status: "ready",
     });
+  });
+
+  it("keeps a caller-supplied signing key pin when the catalog is unpublished", async () => {
+    const vault = await publishHttpsVault({
+      slug: "pinned",
+      id: "vault-pinned",
+      name: "Pinned Vault",
+      skillName: "pinned-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollment({
+      upstream: {
+        id: "vault-pinned",
+        name: "Pinned Vault",
+        type: "https",
+        catalog_url: vault.catalogUrl,
+        public_key: vault.signerPublicKey,
+      },
+    });
+    expect(enrollment.public_key).toBe(vault.signerPublicKey);
+    expect(enrollment.catalog_status).toBe("unpublished");
+
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+    const updates = await listSyncUpdates();
+    expect(updates.errors).toEqual([]);
+    expect((await listEnrolledUpstreams()).upstreams[0]).toMatchObject({
+      id: "vault-pinned",
+      public_key: vault.signerPublicKey,
+      catalog_status: "ready",
+    });
+  });
+
+  it("rejects the first catalog when it does not match the unpublished pin", async () => {
+    const vault = await publishHttpsVault({
+      slug: "mismatch",
+      id: "vault-mismatch",
+      name: "Mismatch Vault",
+      skillName: "mismatch-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollment({
+      upstream: {
+        id: "vault-mismatch",
+        name: "Mismatch Vault",
+        type: "https",
+        catalog_url: vault.catalogUrl,
+        public_key: createSyncSigningKeypair().publicKey,
+      },
+    });
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+
+    const updates = await listSyncUpdates();
+    expect(updates.resources).toEqual([]);
+    expect(updates.errors).toEqual([
+      expect.objectContaining({
+        upstream_id: "vault-mismatch",
+        error: expect.stringMatching(/public key mismatch/i),
+      }),
+    ]);
+  });
+
+  it("replaces an existing HTTPS enrollment that shares a catalog URL or id", async () => {
+    const vault = await publishHttpsVault({
+      slug: "dup",
+      id: "vault-dup",
+      name: "Dup Vault",
+      skillName: "dup-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    await completeEnrollmentFromTarget(vault.vaultUrl);
+    await completeEnrollmentFromTarget(vault.vaultUrl);
+    expect((await listEnrolledUpstreams()).upstreams).toHaveLength(1);
   });
 
   it("renders a human empty-catalog link instead of crashing", async () => {

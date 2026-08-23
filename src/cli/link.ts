@@ -124,7 +124,7 @@ function formatLinkResult(enrollment: EnrolledUpstream): string {
   const waiting = unpublished ? "waiting for a catalog" : "waiting for admit";
   const next = unpublished
     ? [
-        `Admit this machine at ${admitUrl}`,
+        ...(pending ? [`Admit this machine at ${admitUrl}`] : []),
         "Publish the first catalog from the owner console",
       ]
     : pending

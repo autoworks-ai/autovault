@@ -528,6 +528,7 @@ function httpsIdentityFromCatalog(
   return {
     id: expected?.id ?? slug ?? "cloud",
     name: expected?.name || slug || "cloud",
+    ...(expected?.public_key ? { public_key: expected.public_key } : {}),
   };
 }
 
@@ -537,7 +538,9 @@ function replaceStoredUpstream(
 ): z.infer<typeof upstreamStateSchema> {
   const rest = state.upstreams.filter((entry) => {
     if (entry.type === "https" && upstream.type === "https") {
-      return entry.catalog_url !== upstream.catalog_url;
+      return (
+        entry.catalog_url !== upstream.catalog_url && entry.id !== upstream.id
+      );
     }
     return entry.id !== upstream.id;
   });
