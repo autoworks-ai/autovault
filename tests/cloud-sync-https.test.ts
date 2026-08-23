@@ -824,6 +824,92 @@ describe("cloud sync HTTPS upstream", () => {
     expect(ids).toHaveLength(2);
   });
 
+  it("rejects promoting an unpublished Cloud vault onto an existing upstream id", async () => {
+    const signer = createSyncSigningKeypair();
+    const catalogPath = await writeFakeUpstreamCatalog(
+      path.join(currentStorageRoot(), "local-collide"),
+      {
+        id: "vault-collide",
+        name: "Local Collide",
+        publicKey: signer.publicKey,
+        releases: [],
+      },
+    );
+    await completeEnrollment({
+      upstream: {
+        id: "vault-collide",
+        name: "Local Collide",
+        type: "file",
+        catalog_path: catalogPath,
+        public_key: signer.publicKey,
+      },
+    });
+
+    const vault = await publishHttpsVault({
+      slug: "collide",
+      id: "vault-collide",
+      name: "Cloud Collide",
+      skillName: "collide-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+
+    const updates = await listSyncUpdates();
+    expect(updates.errors).toEqual([
+      expect.objectContaining({
+        upstream_id: "cloud:collide",
+        error: expect.stringMatching(/already enrolled/i),
+      }),
+    ]);
+    const ids = (await listEnrolledUpstreams()).upstreams.map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+    }));
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        { id: "vault-collide", type: "file" },
+        { id: "cloud:collide", type: "https" },
+      ]),
+    );
+  });
+
+  it("keeps a caller-supplied display name after the catalog is published", async () => {
+    const vault = await publishHttpsVault({
+      slug: "named",
+      id: "vault-named",
+      name: "Catalog Name",
+      skillName: "named-helper",
+      version: "1.0.0",
+      body: "Published later",
+      unpublished: true,
+    });
+    vaults.push(vault);
+
+    const enrollment = await completeEnrollment({
+      upstream: {
+        id: "vault-named",
+        name: "My Device Name",
+        type: "https",
+        catalog_url: vault.catalogUrl,
+      },
+    });
+    expect(enrollment.name).toBe("My Device Name");
+    vault.approve(enrollment.enrollment.device_public_key);
+    vault.publishCatalog();
+    await listSyncUpdates();
+    expect((await listEnrolledUpstreams()).upstreams[0]).toMatchObject({
+      id: "vault-named",
+      name: "My Device Name",
+      catalog_status: "ready",
+    });
+  });
+
   it("renders a human empty-catalog link instead of crashing", async () => {
     const vault = await publishHttpsVault({
       slug: "newuser",
