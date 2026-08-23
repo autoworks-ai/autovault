@@ -186,7 +186,14 @@ slug (`autovault link acme`); the client expands that to
 `https://autovault.dev/v/<slug>/catalog.json`. A full HTTPS URL or local
 catalog path still works. On a TTY the command waits for owner admit;
 `--json` and non-TTY runs return pending immediately. Override the Cloud origin
-with `AUTOVAULT_CLOUD_ORIGIN`.
+with `AUTOVAULT_CLOUD_ORIGIN`. HTTPS enrollments POST a device public key, land
+`pending` until the owner admits the device, then discover, verify, and install
+signed releases. Bundle URLs are pinned to `bundles/<bundle_hash>.json` relative
+to `catalog.json` and re-verified (release signature, bundle hash, per-file
+SHA-256) before install. Device requests are signed with
+`X-AutoVault-Device` / `-Timestamp` / `-Signature`. Beta limitation: if the live
+catalog `public_key` drifts from the key pinned at enrollment, `readCatalog`
+hard-fails and every device must re-enroll.
 
 Common flows:
 
