@@ -1,3 +1,4 @@
+import dns from "node:dns/promises";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { assertContentLength, fetchWithDeadline, readBoundedText } from "../util/bounded-fetch.js";
@@ -166,11 +167,50 @@ function catalogDirectoryPath(catalogUrl: URL): string {
 }
 
 function assertAllowedSyncUrl(url: URL): void {
-  if (url.protocol === "https:") return;
+  if (url.protocol === "https:") {
+    if (loadConfig().mode === "remote" && isLoopbackHost(url.hostname)) {
+      throw new Error(`HTTPS sync refused private catalog host: ${url.hostname}`);
+    }
+    return;
+  }
   if (url.protocol === "http:" && isLoopbackHost(url.hostname) && loadConfig().mode === "local") {
     return;
   }
   throw new Error(`Only https catalog URLs are supported (got ${url.protocol})`);
+}
+
+async function assertRemotePublicDestination(url: URL): Promise<void> {
+  if (loadConfig().mode !== "remote") return;
+  if (isLoopbackHost(url.hostname)) {
+    throw new Error(`HTTPS sync refused private catalog host: ${url.hostname}`);
+  }
+  let addresses: dns.LookupAddress[];
+  try {
+    addresses = await dns.lookup(url.hostname, { all: true });
+  } catch {
+    throw new Error(`HTTPS sync failed: cannot resolve ${url.hostname}`);
+  }
+  for (const address of addresses) {
+    if (isPrivateIp(address.address)) {
+      throw new Error(`HTTPS sync refused private catalog host: ${url.hostname}`);
+    }
+  }
+}
+
+function isPrivateIp(ip: string): boolean {
+  const value = ip.toLowerCase();
+  if (value === "0.0.0.0" || value === "::" || value === "::1") return true;
+  if (value.startsWith("127.")) return true;
+  if (value.startsWith("10.")) return true;
+  if (value.startsWith("192.168.")) return true;
+  if (value.startsWith("169.254.")) return true;
+  const rfc1918 = value.match(/^172\.(\d+)\./);
+  if (rfc1918) {
+    const octet = Number(rfc1918[1]);
+    if (octet >= 16 && octet <= 31) return true;
+  }
+  if (value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe80:")) return true;
+  return false;
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -188,6 +228,7 @@ async function fetchSignedJson(
   }
 ): Promise<unknown> {
   assertAllowedSyncUrl(url);
+  await assertRemotePublicDestination(url);
   const timestamp = String(Math.floor(Date.now() / 1000));
   const signature = signDeviceRequest(input.device.secretKey, input.method, url.pathname, timestamp);
   const headers: Record<string, string> = {
