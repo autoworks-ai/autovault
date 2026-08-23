@@ -35,7 +35,7 @@ function usageText(): string {
   autovault doctor [skill-name] [--clean] [--repair] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
-  autovault init <upstream-catalog-or-directory> [--json]
+  autovault link <slug|catalog-url|directory> [--json]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
   autovault serve [--help]
   autovault ui [--port <n>] [--no-open]
@@ -204,6 +204,7 @@ const TOP_LEVEL_COMMANDS = [
   "doctor",
   "import-autohub",
   "init",
+  "link",
   "profiles",
   "remove",
   "resolve",
@@ -583,20 +584,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === "init") {
-    const target = args.find((arg) => !arg.startsWith("-"));
-    if (!target) usage();
-    const { completeEnrollmentFromTarget } = await import("./sync/local.js");
-    const enrollment = await withSuppressedLogs(() => completeEnrollmentFromTarget(target));
-    if (hasFlag(args, "--json")) {
-      writeJson({ enrollment });
-    } else {
-      process.stdout.write(`AutoVault upstream enrolled: ${enrollment.name}\n`);
-      process.stdout.write(`  id      ${enrollment.id}\n`);
-      process.stdout.write(`  device  ${enrollment.enrollment.device_id}\n`);
-      process.stdout.write(`  status  ${enrollment.enrollment.status}\n`);
-      writeOptionalUpdateNotice();
-    }
+  if (command === "link" || command === "init") {
+    const { runLinkCommand } = await import("./cli/link.js");
+    await runLinkCommand(args);
     return;
   }
 

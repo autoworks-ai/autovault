@@ -161,7 +161,7 @@ autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
 autovault audit-repo --repo /path/to/repo [--format json|markdown]
 autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
-autovault init <upstream-catalog-url-or-directory> [--json]
+autovault link <slug|catalog-url|directory> [--json]
 autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
 autovault serve [--help]
 autovault ui [--port <n>] [--no-open]
@@ -180,9 +180,13 @@ signed upstream update installs, enrolled-client revocation, and
 permission-group visibility. It serves the packaged React assets and uses the
 same `/api/v1` management API shape as remote AutoVault.
 
-`autovault init <upstream-catalog-url-or-directory>` enrolls the local vault with
-a signed upstream catalog. File catalogs are for local testing. HTTPS catalogs
-(`autovault init https://autovault.dev/v/<slug>`) POST a device public key, land
+`autovault link <slug|catalog-url|directory>` links this machine to a signed
+upstream catalog. `init` remains a compatibility alias. Humans type a Cloud
+slug (`autovault link acme`); the client expands that to
+`https://autovault.dev/v/<slug>/catalog.json`. A full HTTPS URL or local
+catalog path still works. On a TTY the command waits for owner admit;
+`--json` and non-TTY runs return pending immediately. Override the Cloud origin
+with `AUTOVAULT_CLOUD_ORIGIN`. HTTPS enrollments POST a device public key, land
 `pending` until the owner admits the device, then discover, verify, and install
 signed releases. Bundle URLs are pinned to `bundles/<bundle_hash>.json` relative
 to `catalog.json` and re-verified (release signature, bundle hash, per-file
@@ -210,9 +214,9 @@ autovault add https://example.com/SKILL.md --source url
 # Search installed skills locally.
 autovault skill search code-review --top-k 5
 
-# Enroll a local test catalog or an HTTPS Cloud catalog, then review updates.
-autovault init ./path/to/upstream-catalog
-autovault init https://autovault.dev/v/<slug>
+# Link a local test catalog or an AutoVault Cloud vault, then review updates.
+autovault link ./path/to/upstream-catalog
+autovault link acme
 autovault ui
 
 # Remove a vaulted skill and refresh managed profile links.
