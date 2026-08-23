@@ -12,11 +12,13 @@ import {
   type SyncSkillBundle
 } from "../src/sync/contract.js";
 import { createSyncSigningKeypair } from "../src/sync/testing.js";
+import { resetConfigCache } from "../src/config.js";
 import {
   completeEnrollmentFromTarget,
   installSyncResource,
   listEnrolledUpstreams,
-  listSyncUpdates
+  listSyncUpdates,
+  revokeEnrollment
 } from "../src/sync/local.js";
 import { readSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
@@ -449,6 +451,40 @@ describe("cloud sync HTTPS upstream", () => {
       { method: "POST", pathname: "/v/cli/devices" },
       { method: "GET", pathname: "/v/cli/catalog.json" }
     ]));
+  });
+
+  it("refuses loopback HTTP catalogs in remote mode", async () => {
+    process.env.AUTOVAULT_MODE = "remote";
+    process.env.AUTOVAULT_PUBLIC_URL = "https://example.test";
+    resetConfigCache();
+    await expect(
+      completeEnrollmentFromTarget("http://127.0.0.1:9/v/ssrf")
+    ).rejects.toThrow(/Only https catalog URLs are supported/);
+  });
+
+  it("keeps a locally revoked HTTPS enrollment revoked after status refresh", async () => {
+    const vault = await publishHttpsVault({
+      slug: "revoked",
+      id: "revoked",
+      name: "Revoked Cloud",
+      skillName: "revoked-helper",
+      version: "1.0.0",
+      body: "Revoked body"
+    });
+    vaults.push(vault);
+    const enrollment = await completeEnrollmentFromTarget(vault.vaultUrl);
+    vault.approve(enrollment.enrollment.device_public_key);
+    await revokeEnrollment({ upstream_id: "revoked" });
+
+    const updates = await listSyncUpdates();
+    expect(updates.resources).toEqual([]);
+    expect(updates.errors).toEqual([
+      expect.objectContaining({
+        upstream_id: "revoked",
+        error: expect.stringMatching(/revoked/i)
+      })
+    ]);
+    expect((await listEnrolledUpstreams()).upstreams[0]?.enrollment.status).toBe("revoked");
   });
 });
 

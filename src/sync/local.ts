@@ -453,6 +453,7 @@ async function enrollHttpsFromCatalogUrl(
 
 async function refreshHttpsEnrollment(upstream: StoredEnrolledUpstream): Promise<void> {
   if (upstream.type !== "https") return;
+  if (upstream.enrollment.status === "revoked") return;
   const status = await fetchHttpsDeviceStatus(
     new URL(upstream.catalog_url),
     deviceKeypair(upstream)
