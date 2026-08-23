@@ -183,15 +183,26 @@ const confirmSchema = z
   })
   .strict();
 
-const enrollmentUpstreamSchema = z
-  .object({
-    id: z.string().min(1),
-    name: z.string().min(1),
-    type: z.literal("file"),
-    catalog_path: z.string().min(1),
-    public_key: z.string().min(1)
-  })
-  .strict();
+const enrollmentUpstreamSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      type: z.literal("file"),
+      catalog_path: z.string().min(1),
+      public_key: z.string().min(1)
+    })
+    .strict(),
+  z
+    .object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      type: z.literal("https"),
+      catalog_url: z.string().min(1),
+      public_key: z.string().min(1)
+    })
+    .strict()
+]);
 
 const enrollmentSchema = z
   .object({
