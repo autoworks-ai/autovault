@@ -33,18 +33,21 @@ export type HttpsDeviceEnrollment = z.infer<
 
 export class HttpsSyncError extends Error {
   readonly name = "HttpsSyncError";
+  readonly serverMessage: string | null;
 
   constructor(
     readonly status: number,
     readonly statusText: string,
     readonly url: URL,
-    readonly serverMessage: string | null,
+    serverMessage: string | null,
   ) {
+    const safe = serverMessage ? sanitizeServerMessage(serverMessage) : "";
     super(
-      serverMessage && serverMessage.length > 0
-        ? serverMessage
+      safe.length > 0
+        ? safe
         : `HTTPS sync failed: ${status} ${statusText} (${url})`,
     );
+    this.serverMessage = safe.length > 0 ? safe : null;
   }
 }
 
@@ -298,13 +301,20 @@ function parseServerErrorMessage(text: string): string | null {
       "error" in parsed &&
       typeof (parsed as { error: unknown }).error === "string"
     ) {
-      const message = (parsed as { error: string }).error.trim();
+      const message = sanitizeServerMessage(
+        (parsed as { error: string }).error,
+      );
       if (message) return message;
     }
   } catch {
     // Fall through to the raw body when Cloud returns non-JSON.
   }
-  return trimmed.length > 240 ? `${trimmed.slice(0, 237)}...` : trimmed;
+  const raw = sanitizeServerMessage(trimmed);
+  return raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
+}
+
+function sanitizeServerMessage(message: string): string {
+  return message.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
 }
 
 async function fetchSignedJson(
