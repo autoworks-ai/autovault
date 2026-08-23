@@ -13,8 +13,17 @@ import {
   verifySkillBundleAgainstRelease,
   verifySyncRelease,
   type SyncCatalog,
-  type SyncRelease
+  type SyncRelease,
+  type SyncSigningKeypair
 } from "./contract.js";
+import {
+  enrollHttpsDevice,
+  fetchHttpsBundle,
+  fetchHttpsCatalog,
+  fetchHttpsDeviceStatus,
+  isHttpSyncTarget,
+  normalizeHttpsCatalogUrl
+} from "./https.js";
 
 const enrollmentMetadataSchema = z.object({
   status: z.enum(["pending", "active", "revoked"]),
@@ -29,7 +38,7 @@ const storedEnrollmentMetadataSchema = enrollmentMetadataSchema.extend({
   device_secret_key: z.string().min(1)
 });
 
-const upstreamBaseSchema = z.object({
+const fileUpstreamBaseSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   type: z.literal("file"),
@@ -37,13 +46,23 @@ const upstreamBaseSchema = z.object({
   public_key: z.string().min(1)
 });
 
-const enrolledUpstreamSchema = upstreamBaseSchema.extend({
-  enrollment: enrollmentMetadataSchema
+const httpsUpstreamBaseSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  type: z.literal("https"),
+  catalog_url: z.string().min(1),
+  public_key: z.string().min(1)
 });
 
-const storedEnrolledUpstreamSchema = upstreamBaseSchema.extend({
-  enrollment: storedEnrollmentMetadataSchema
-});
+const enrolledUpstreamSchema = z.discriminatedUnion("type", [
+  fileUpstreamBaseSchema.extend({ enrollment: enrollmentMetadataSchema }),
+  httpsUpstreamBaseSchema.extend({ enrollment: enrollmentMetadataSchema })
+]);
+
+const storedEnrolledUpstreamSchema = z.discriminatedUnion("type", [
+  fileUpstreamBaseSchema.extend({ enrollment: storedEnrollmentMetadataSchema }),
+  httpsUpstreamBaseSchema.extend({ enrollment: storedEnrollmentMetadataSchema })
+]);
 
 const upstreamStateSchema = z.object({
   schema_version: z.literal(1),
@@ -53,14 +72,24 @@ const upstreamStateSchema = z.object({
 export type EnrolledUpstream = z.infer<typeof enrolledUpstreamSchema>;
 type StoredEnrolledUpstream = z.infer<typeof storedEnrolledUpstreamSchema>;
 
+export type FileUpstreamInput = {
+  id: string;
+  name: string;
+  type: "file";
+  catalog_path: string;
+  public_key: string;
+};
+
+export type HttpsUpstreamInput = {
+  id: string;
+  name: string;
+  type: "https";
+  catalog_url: string;
+  public_key: string;
+};
+
 export type CompleteEnrollmentInput = {
-  upstream: {
-    id: string;
-    name: string;
-    type: "file";
-    catalog_path: string;
-    public_key: string;
-  };
+  upstream: FileUpstreamInput | HttpsUpstreamInput;
 };
 
 export type SyncUpdateResource = {
@@ -151,6 +180,9 @@ export async function completeEnrollment(
   input: CompleteEnrollmentInput,
   status: "pending" | "active" = "active"
 ): Promise<EnrolledUpstream> {
+  if (input.upstream.type === "https") {
+    return enrollHttpsUpstream(input.upstream);
+  }
   const catalog = await readCatalogFile(input.upstream.catalog_path);
   if (catalog.id !== input.upstream.id) {
     throw new Error(`Upstream id mismatch: catalog has '${catalog.id}'`);
@@ -180,6 +212,9 @@ export async function completeEnrollment(
 export async function completeEnrollmentFromTarget(
   target: string
 ): Promise<EnrolledUpstream> {
+  if (isHttpSyncTarget(target)) {
+    return enrollHttpsFromCatalogUrl(normalizeHttpsCatalogUrl(target));
+  }
   const catalogPath = await resolveCatalogPath(target);
   const catalog = await readCatalogFile(catalogPath);
   return completeEnrollment({
@@ -191,6 +226,17 @@ export async function completeEnrollmentFromTarget(
       public_key: catalog.public_key
     }
   });
+}
+
+export async function refreshEnrollment(upstreamId: string): Promise<EnrolledUpstream> {
+  const state = await readState();
+  const upstream = state.upstreams.find((entry) => entry.id === upstreamId);
+  if (!upstream) throw new Error(`Upstream not enrolled: ${upstreamId}`);
+  if (upstream.type === "https") {
+    await refreshHttpsEnrollment(upstream);
+    await writeState(state);
+  }
+  return publicUpstream(upstream);
 }
 
 export async function listEnrolledUpstreams(): Promise<{ upstreams: EnrolledUpstream[] }> {
@@ -229,6 +275,14 @@ export async function listSyncUpdates(): Promise<SyncUpdatesResult> {
   const errors: SyncUpdatesResult["errors"] = [];
 
   for (const upstream of state.upstreams) {
+    if (upstream.type === "https") {
+      try {
+        await refreshHttpsEnrollment(upstream);
+      } catch (error) {
+        errors.push({ upstream_id: upstream.id, error: errorMessage(error) });
+        continue;
+      }
+    }
     if (upstream.enrollment.status === "revoked") {
       errors.push({ upstream_id: upstream.id, error: "Enrollment revoked" });
       continue;
@@ -267,6 +321,10 @@ export async function installSyncResource(
   const state = await readState();
   const upstream = state.upstreams.find((entry) => entry.id === input.upstream_id);
   if (!upstream) throw new Error(`Upstream not enrolled: ${input.upstream_id}`);
+  if (upstream.type === "https") {
+    await refreshHttpsEnrollment(upstream);
+    await writeState(state);
+  }
   if (upstream.enrollment.status === "revoked") {
     throw new Error(`Enrollment revoked for upstream: ${input.upstream_id}`);
   }
@@ -301,7 +359,10 @@ export async function installSyncResource(
     expected_name: release.name
   });
   if (install.success !== true) {
-    throw new Error(`Install failed: ${JSON.stringify(install.warnings ?? install.validation ?? install)}`);
+    const detail = Array.isArray(install.warnings) && install.warnings.length > 0
+      ? install.warnings
+      : (install.validation ?? install);
+    throw new Error(`Install failed: ${JSON.stringify(detail)}`);
   }
   upstream.enrollment.last_check_in_at = new Date().toISOString();
   await writeState(state);
@@ -352,9 +413,70 @@ function updateResource(
   };
 }
 
+async function enrollHttpsUpstream(input: HttpsUpstreamInput): Promise<EnrolledUpstream> {
+  return enrollHttpsFromCatalogUrl(normalizeHttpsCatalogUrl(input.catalog_url), input);
+}
+
+async function enrollHttpsFromCatalogUrl(
+  catalogUrl: URL,
+  expected?: { id?: string; name?: string; public_key?: string }
+): Promise<EnrolledUpstream> {
+  const device = createSyncSigningKeypair();
+  const posted = await enrollHttpsDevice(catalogUrl, device);
+  const catalog = await fetchHttpsCatalog(catalogUrl, device);
+  if (expected?.id && catalog.id !== expected.id) {
+    throw new Error(`Upstream id mismatch: catalog has '${catalog.id}'`);
+  }
+  if (expected?.public_key && catalog.public_key !== expected.public_key) {
+    throw new Error("Upstream public key mismatch");
+  }
+  const state = await readState();
+  const upstream: StoredEnrolledUpstream = {
+    id: catalog.id,
+    name: expected?.name || catalog.name,
+    type: "https",
+    catalog_url: catalogUrl.href,
+    public_key: catalog.public_key,
+    enrollment: {
+      status: posted.status,
+      device_id: posted.device_id,
+      device_public_key: device.publicKey,
+      device_secret_key: device.secretKey,
+      enrolled_at: new Date().toISOString()
+    }
+  };
+  const rest = state.upstreams.filter((entry) => entry.id !== upstream.id);
+  await writeState({ schema_version: 1, upstreams: [...rest, upstream] });
+  return publicUpstream(upstream);
+}
+
+async function refreshHttpsEnrollment(upstream: StoredEnrolledUpstream): Promise<void> {
+  if (upstream.type !== "https") return;
+  const status = await fetchHttpsDeviceStatus(
+    new URL(upstream.catalog_url),
+    deviceKeypair(upstream)
+  );
+  upstream.enrollment.status = status.status;
+  if (status.device_id) upstream.enrollment.device_id = status.device_id;
+  if (status.status === "revoked" && !upstream.enrollment.revoked_at) {
+    upstream.enrollment.revoked_at = new Date().toISOString();
+  }
+  upstream.enrollment.last_check_in_at = new Date().toISOString();
+}
+
+function deviceKeypair(upstream: StoredEnrolledUpstream): SyncSigningKeypair {
+  return {
+    publicKey: upstream.enrollment.device_public_key,
+    secretKey: upstream.enrollment.device_secret_key
+  };
+}
+
 async function readCatalog(upstream: StoredEnrolledUpstream): Promise<SyncCatalog> {
-  const catalog = await readCatalogFile(upstream.catalog_path);
+  const catalog = upstream.type === "https"
+    ? await fetchHttpsCatalog(new URL(upstream.catalog_url), deviceKeypair(upstream))
+    : await readCatalogFile(upstream.catalog_path);
   if (catalog.id !== upstream.id) throw new Error(`Upstream id mismatch: ${catalog.id}`);
+  // Beta limitation: rotating the publishing key requires every device to re-enroll.
   if (catalog.public_key !== upstream.public_key) throw new Error("Upstream public key mismatch");
   return catalog;
 }
@@ -372,6 +494,14 @@ async function readCatalogFile(catalogPath: string): Promise<SyncCatalog> {
 }
 
 async function readBundle(upstream: StoredEnrolledUpstream, release: SyncRelease) {
+  if (upstream.type === "https") {
+    return fetchHttpsBundle(
+      new URL(upstream.catalog_url),
+      release.bundle_path,
+      release.bundle_hash,
+      deviceKeypair(upstream)
+    );
+  }
   const catalogDir = path.dirname(path.resolve(upstream.catalog_path));
   const bundlePath = path.resolve(catalogDir, release.bundle_path);
   if (bundlePath !== catalogDir && !bundlePath.startsWith(catalogDir + path.sep)) {

@@ -124,9 +124,10 @@ AutoVault supports:
   forking upstream `SKILL.md`
 - install, update, proposal, bulk-import, removal, resource-read, and drift-check
   workflows
-- enrolled pull-sync foundations for signed upstream skill releases, including
-  metadata-only update checks, local approval policy, bundle verification, and
-  revocation state
+- enrolled pull-sync for signed upstream skill releases over file catalogs and
+  HTTPS catalogs (`catalog.json` + `bundles/<bundle_hash>.json`), including
+  device enrollment, metadata-only update checks, local approval policy, bundle
+  verification, and revocation state
 - source adapters for GitHub, `agentskills`, arbitrary HTTPS URLs, local bundles,
   and inline MCP-proposed content
 - three-tier deduplication for proposals
@@ -160,7 +161,7 @@ autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
 autovault audit-repo --repo /path/to/repo [--format json|markdown]
 autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
-autovault init <upstream-catalog-or-directory> [--json]
+autovault init <upstream-catalog-url-or-directory> [--json]
 autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
 autovault serve [--help]
 autovault ui [--port <n>] [--no-open]
@@ -179,10 +180,16 @@ signed upstream update installs, enrolled-client revocation, and
 permission-group visibility. It serves the packaged React assets and uses the
 same `/api/v1` management API shape as remote AutoVault.
 
-`autovault init <upstream-catalog-or-directory>` enrolls the local vault with a
-signed upstream catalog. The first implementation supports file-backed catalogs
-for local testing and future cloud adapters; downloaded resources still install
-through AutoVault's existing validation, manifest, and profile-sync paths.
+`autovault init <upstream-catalog-url-or-directory>` enrolls the local vault with
+a signed upstream catalog. File catalogs are for local testing. HTTPS catalogs
+(`autovault init https://autovault.dev/v/<slug>`) POST a device public key, land
+`pending` until the owner admits the device, then discover, verify, and install
+signed releases. Bundle URLs are pinned to `bundles/<bundle_hash>.json` relative
+to `catalog.json` and re-verified (release signature, bundle hash, per-file
+SHA-256) before install. Device requests are signed with
+`X-AutoVault-Device` / `-Timestamp` / `-Signature`. Beta limitation: if the live
+catalog `public_key` drifts from the key pinned at enrollment, `readCatalog`
+hard-fails and every device must re-enroll.
 
 Common flows:
 
@@ -203,8 +210,9 @@ autovault add https://example.com/SKILL.md --source url
 # Search installed skills locally.
 autovault skill search code-review --top-k 5
 
-# Enroll a local test upstream and review signed updates in the dashboard.
+# Enroll a local test catalog or an HTTPS Cloud catalog, then review updates.
 autovault init ./path/to/upstream-catalog
+autovault init https://autovault.dev/v/<slug>
 autovault ui
 
 # Remove a vaulted skill and refresh managed profile links.

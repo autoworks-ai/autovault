@@ -186,8 +186,6 @@ type DashboardContext = {
 type EnrolledUpstream = {
   id: string;
   name: string;
-  type: "file";
-  catalog_path: string;
   public_key: string;
   enrollment: {
     status: "pending" | "active" | "revoked";
@@ -197,7 +195,10 @@ type EnrolledUpstream = {
     revoked_at?: string;
     last_check_in_at?: string;
   };
-};
+} & (
+  | { type: "file"; catalog_path: string }
+  | { type: "https"; catalog_url: string }
+);
 
 type UpstreamsResult = {
   upstreams: EnrolledUpstream[];
