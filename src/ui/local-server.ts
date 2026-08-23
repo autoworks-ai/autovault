@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import type { Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -19,6 +18,7 @@ import {
 } from "./bundle.js";
 import { ensureStorage, recoverOrphanBackups } from "../storage/index.js";
 import { MAX_TOTAL_BYTES } from "../util/limits.js";
+import { openBrowser } from "../util/open-browser.js";
 
 const SESSION_COOKIE = "autovault_ui_session";
 const SAFE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{32,}$/;
@@ -263,21 +263,6 @@ function timingSafeStringEqual(actual: string, expected: string): boolean {
 function booleanEnv(value: string | undefined): boolean {
   if (!value) return false;
   return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
-}
-
-function openBrowser(url: string): void {
-  const command =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "cmd"
-        : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore"
-  });
-  child.unref();
 }
 
 function listen(app: Express, port: number, host: string): Promise<HttpServer> {

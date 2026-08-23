@@ -497,8 +497,9 @@ describe("cloud sync HTTPS upstream", () => {
       enrollment: {
         type: string;
         catalog_url: string;
-        enrollment: { status: string };
+        enrollment: { status: string; device_public_key: string };
       };
+      admit: { url: string; fingerprint: string };
     };
     expect(body).toMatchObject({
       enrollment: {
@@ -507,7 +508,12 @@ describe("cloud sync HTTPS upstream", () => {
         enrollment: expect.objectContaining({ status: "pending" }),
       },
     });
-    expect(body).not.toHaveProperty("admit");
+    expect(body.admit.fingerprint).toBe(
+      `${body.enrollment.enrollment.device_public_key.slice(0, 4)}…${body.enrollment.enrollment.device_public_key.slice(-4)}`,
+    );
+    expect(body.admit.url).toBe(
+      `${vault.origin}/cloud?admit=${encodeURIComponent(body.admit.fingerprint)}`,
+    );
     expect(result.stdout).not.toContain("device_secret_key");
     expect(vault.requests).toEqual(
       expect.arrayContaining([
@@ -722,7 +728,7 @@ describe("cloud sync HTTPS upstream", () => {
     expect(result.stdout).toContain("Linked newuser");
     expect(result.stdout).toContain("nothing published yet");
     expect(result.stdout).toContain("Admit this machine");
-    expect(result.stdout).not.toContain("?admit=");
+    expect(result.stdout).toContain("?admit=");
     expect(result.stdout).toMatch(/publish/i);
     expect(result.stdout).not.toContain("catalog.json");
     expect(result.stdout).not.toContain('"error"');

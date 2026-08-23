@@ -5,7 +5,8 @@ import { makeTheme } from "./ui/theme.js";
 import { writeJson } from "./ui/output.js";
 import { writeOptionalUpdateNotice } from "./update.js";
 import { withSuppressedLogs } from "../util/log.js";
-import { cloudAdmitUrl } from "../sync/target.js";
+import { openBrowser, shouldOpenBrowser } from "../util/open-browser.js";
+import { cloudAdmitUrl, deviceFingerprint } from "../sync/target.js";
 import type { EnrolledUpstream } from "../sync/local.js";
 
 const WAIT_INTERVAL_MS = 1500;
@@ -13,10 +14,11 @@ const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 export async function runLinkCommand(args: string[]): Promise<void> {
   const json = args.includes("--json");
+  const noBrowser = args.includes("--no-browser");
   const target = args.find((arg) => !arg.startsWith("-"));
   if (!target) {
     process.stderr.write(
-      "Usage: autovault link <slug|catalog-url|directory> [--json]\n",
+      "Usage: autovault link <slug|catalog-url|directory> [--json] [--no-browser]\n",
     );
     process.exit(1);
   }
@@ -28,16 +30,61 @@ export async function runLinkCommand(args: string[]): Promise<void> {
   );
 
   if (!json && shouldWaitForAdmit(enrollment)) {
+    process.stdout.write(formatAdmitPrompt(enrollment));
+    maybeOpenAdmitBrowser(enrollment, { json, noBrowser });
     enrollment = await waitForAdmit(enrollment, refreshEnrollment);
   }
 
   if (json) {
-    writeJson({ enrollment });
+    writeJson(jsonLinkResult(enrollment));
     return;
   }
 
   process.stdout.write(formatLinkResult(enrollment));
   writeOptionalUpdateNotice();
+}
+
+function jsonLinkResult(enrollment: EnrolledUpstream): {
+  enrollment: EnrolledUpstream;
+  admit?: { url: string; fingerprint: string };
+} {
+  if (enrollment.type !== "https") return { enrollment };
+  const fingerprint = deviceFingerprint(
+    enrollment.enrollment.device_public_key,
+  );
+  return {
+    enrollment,
+    admit: {
+      url: cloudAdmitUrl(fingerprint),
+      fingerprint,
+    },
+  };
+}
+
+function formatAdmitPrompt(enrollment: EnrolledUpstream): string {
+  const theme = makeTheme(process.stdout);
+  const fingerprint = deviceFingerprint(
+    enrollment.enrollment.device_public_key,
+  );
+  const admitUrl = cloudAdmitUrl(fingerprint);
+  return [
+    `${theme.style.yellow(theme.symbol.warn)} ${theme.style.bold("Admit this machine")} ${theme.style.dim(`ed25519 ${fingerprint}`)}`,
+    `  ${theme.style.dim("open")} ${admitUrl}`,
+    "",
+  ].join("\n");
+}
+
+function maybeOpenAdmitBrowser(
+  enrollment: EnrolledUpstream,
+  flags: { json: boolean; noBrowser: boolean },
+): void {
+  if (enrollment.type !== "https") return;
+  if (enrollment.enrollment.status !== "pending") return;
+  if (!shouldOpenBrowser(flags)) return;
+  const fingerprint = deviceFingerprint(
+    enrollment.enrollment.device_public_key,
+  );
+  openBrowser(cloudAdmitUrl(fingerprint));
 }
 
 function shouldWaitForAdmit(enrollment: EnrolledUpstream): boolean {
@@ -51,8 +98,12 @@ async function waitForAdmit(
   enrollment: EnrolledUpstream,
   refresh: (upstreamId: string) => Promise<EnrolledUpstream>,
 ): Promise<EnrolledUpstream> {
+  const fingerprint = deviceFingerprint(
+    enrollment.enrollment.device_public_key,
+  );
+  const admitUrl = cloudAdmitUrl(fingerprint);
   const spin = startSpinner(
-    `waiting for owner admit at ${cloudAdmitUrl()}  ·  ${shortKey(enrollment.enrollment.device_public_key)}`,
+    `waiting for Admit in the browser  ·  ${fingerprint}`,
   );
   const deadline = Date.now() + WAIT_TIMEOUT_MS;
   try {
@@ -68,7 +119,7 @@ async function waitForAdmit(
         return current;
       }
     }
-    spin.stop("still pending");
+    spin.stop(`still pending  ·  ${admitUrl}`);
     return enrollment;
   } catch (error) {
     spin.error(error instanceof Error ? error.message : String(error));
@@ -80,8 +131,10 @@ function formatLinkResult(enrollment: EnrolledUpstream): string {
   const unpublished = isUnpublishedCatalog(enrollment);
   const pending = enrollment.enrollment.status === "pending";
   const theme = makeTheme(process.stdout);
-  const fingerprint = shortKey(enrollment.enrollment.device_public_key);
-  const admitUrl = cloudAdmitUrl();
+  const fingerprint = deviceFingerprint(
+    enrollment.enrollment.device_public_key,
+  );
+  const admitUrl = cloudAdmitUrl(fingerprint);
   const rows = keyValueRows(
     [
       ...(unpublished
@@ -154,11 +207,6 @@ function isUnpublishedCatalog(enrollment: EnrolledUpstream): boolean {
   return (
     enrollment.type === "https" && enrollment.catalog_status === "unpublished"
   );
-}
-
-function shortKey(publicKey: string): string {
-  if (publicKey.length < 10) return publicKey;
-  return `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}`;
 }
 
 function sleep(ms: number): Promise<void> {

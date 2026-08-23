@@ -39,6 +39,21 @@ describe("resolveLinkTarget", () => {
     ).toBe("johngarturo-6ff992");
   });
 
+  it("builds a GitHub-style complete admit URL from the device fingerprint", async () => {
+    const { cloudAdmitUrl, deviceFingerprint } = await import(
+      "../src/sync/target.js"
+    );
+    const fingerprint = deviceFingerprint(
+      "DdiEpLBSOYMhWReWNz7t7Oh0BAgq6X0h2yb-wL4NJLw",
+    );
+    expect(fingerprint).toBe("DdiE…NJLw");
+    expect(cloudAdmitUrl(fingerprint)).toBe(
+      `${DEFAULT_CLOUD_ORIGIN}/cloud?admit=${encodeURIComponent("DdiE…NJLw")}`,
+    );
+    expect(cloudAdmitUrl(fingerprint)).toContain("%E2%80%A6");
+    expect(cloudAdmitUrl()).toBe(`${DEFAULT_CLOUD_ORIGIN}/cloud`);
+  });
+
   it("treats relative paths as file catalogs", () => {
     expect(resolveLinkTarget("./upstream")).toEqual({
       kind: "file",
