@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { loadConfig } from "../config.js";
 import { assertContentLength, fetchWithDeadline, readBoundedText } from "../util/bounded-fetch.js";
 import { MAX_TOTAL_BYTES } from "../util/limits.js";
 import {
@@ -166,7 +167,9 @@ function catalogDirectoryPath(catalogUrl: URL): string {
 
 function assertAllowedSyncUrl(url: URL): void {
   if (url.protocol === "https:") return;
-  if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return;
+  if (url.protocol === "http:" && isLoopbackHost(url.hostname) && loadConfig().mode === "local") {
+    return;
+  }
   throw new Error(`Only https catalog URLs are supported (got ${url.protocol})`);
 }
 
