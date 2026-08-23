@@ -601,8 +601,25 @@ async function readCatalog(
     ) {
       throw new Error(`Upstream id mismatch: ${catalog.id}`);
     }
+    const state = await readState();
+    const collision = state.upstreams.some(
+      (entry) =>
+        entry.id === catalog.id &&
+        !(
+          entry.type === "https" &&
+          upstream.type === "https" &&
+          entry.catalog_url === upstream.catalog_url
+        ),
+    );
+    if (collision) {
+      throw new Error(`Upstream id already enrolled: ${catalog.id}`);
+    }
     upstream.id = catalog.id;
-    upstream.name = catalog.name;
+    const slug = slugFromCatalogUrl(upstream.catalog_url);
+    const generatedName = slug || "cloud";
+    if (upstream.name === generatedName) {
+      upstream.name = catalog.name;
+    }
     upstream.public_key = catalog.public_key;
     upstream.catalog_status = "ready";
     return catalog;
