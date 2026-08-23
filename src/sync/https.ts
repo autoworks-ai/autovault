@@ -184,7 +184,7 @@ async function assertRemotePublicDestination(url: URL): Promise<void> {
   if (isLoopbackHost(url.hostname)) {
     throw new Error(`HTTPS sync refused private catalog host: ${url.hostname}`);
   }
-  let addresses: dns.LookupAddress[];
+  let addresses: Array<{ address: string }>;
   try {
     addresses = await dns.lookup(url.hostname, { all: true });
   } catch {
