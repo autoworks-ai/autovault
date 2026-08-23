@@ -3,8 +3,12 @@ import { createServer } from "./mcp/server.js";
 import { ensureStorage, recoverOrphanBackups } from "./storage/index.js";
 import { loadConfig } from "./config.js";
 import { log } from "./util/log.js";
+import { installStdioLifecycle } from "./lifecycle.js";
 
 async function main(): Promise<void> {
+  // Capture before any await — process.ppid is dynamic; a late read after
+  // reparent would make the watchdog a no-op (mcp-automem #137).
+  const parentPid = process.ppid;
   const config = loadConfig();
   await ensureStorage();
   // Run crash recovery exactly once at boot — not from ensureStorage. Recovery
@@ -21,6 +25,12 @@ async function main(): Promise<void> {
   });
   const server = createServer();
   const transport = new StdioServerTransport();
+  installStdioLifecycle({
+    transport,
+    onCloseAssignable: server.server,
+    envName: "AUTOVAULT_PARENT_WATCHDOG_MS",
+    parentPid,
+  });
   await server.connect(transport);
   log.info("autovault.ready");
 }
