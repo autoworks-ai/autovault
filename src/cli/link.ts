@@ -44,6 +44,15 @@ export async function runLinkCommand(args: string[]): Promise<void> {
   writeOptionalUpdateNotice();
 }
 
+function httpsAdmitUrl(
+  enrollment: EnrolledUpstream,
+  fingerprint?: string,
+): string {
+  const catalogUrl =
+    enrollment.type === "https" ? enrollment.catalog_url : undefined;
+  return cloudAdmitUrl(fingerprint, catalogUrl);
+}
+
 function jsonLinkResult(enrollment: EnrolledUpstream): {
   enrollment: EnrolledUpstream;
   admit?: { url: string; fingerprint: string };
@@ -55,7 +64,7 @@ function jsonLinkResult(enrollment: EnrolledUpstream): {
   return {
     enrollment,
     admit: {
-      url: cloudAdmitUrl(fingerprint),
+      url: httpsAdmitUrl(enrollment, fingerprint),
       fingerprint,
     },
   };
@@ -66,7 +75,7 @@ function formatAdmitPrompt(enrollment: EnrolledUpstream): string {
   const fingerprint = deviceFingerprint(
     enrollment.enrollment.device_public_key,
   );
-  const admitUrl = cloudAdmitUrl(fingerprint);
+  const admitUrl = httpsAdmitUrl(enrollment, fingerprint);
   return [
     `${theme.style.yellow(theme.symbol.warn)} ${theme.style.bold("Admit this machine")} ${theme.style.dim(`ed25519 ${fingerprint}`)}`,
     `  ${theme.style.dim("open")} ${admitUrl}`,
@@ -84,7 +93,7 @@ function maybeOpenAdmitBrowser(
   const fingerprint = deviceFingerprint(
     enrollment.enrollment.device_public_key,
   );
-  openBrowser(cloudAdmitUrl(fingerprint));
+  openBrowser(httpsAdmitUrl(enrollment, fingerprint));
 }
 
 function shouldWaitForAdmit(enrollment: EnrolledUpstream): boolean {
@@ -101,7 +110,7 @@ async function waitForAdmit(
   const fingerprint = deviceFingerprint(
     enrollment.enrollment.device_public_key,
   );
-  const admitUrl = cloudAdmitUrl(fingerprint);
+  const admitUrl = httpsAdmitUrl(enrollment, fingerprint);
   const spin = startSpinner(
     `waiting for Admit in the browser  ·  ${fingerprint}`,
   );
@@ -134,7 +143,7 @@ function formatLinkResult(enrollment: EnrolledUpstream): string {
   const fingerprint = deviceFingerprint(
     enrollment.enrollment.device_public_key,
   );
-  const admitUrl = cloudAdmitUrl(fingerprint);
+  const admitUrl = httpsAdmitUrl(enrollment, fingerprint);
   const rows = keyValueRows(
     [
       ...(unpublished

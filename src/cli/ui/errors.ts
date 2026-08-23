@@ -53,7 +53,7 @@ function describeHttpsSyncError(error: HttpsSyncError): CliErrorView {
         "The vault exists. The owner has not published a signed catalog.",
       rows: cloudRows(slug, error),
       next: [
-        `Admit this machine at ${cloudAdmitUrl()}`,
+        `Admit this machine at ${cloudAdmitUrl(undefined, error.url.href)}`,
         "Publish the first catalog from the owner console, then run autovault link again",
       ],
     };
@@ -65,7 +65,7 @@ function describeHttpsSyncError(error: HttpsSyncError): CliErrorView {
         ? `Cloud does not have a vault named ${slug}.`
         : "Cloud does not have a vault at that address.",
       rows: cloudRows(slug, error),
-      next: [`Create or copy the slug from ${cloudAdmitUrl()}`],
+      next: [`Create or copy the slug from ${cloudAdmitUrl(undefined, error.url.href)}`],
     };
   }
   if (/too many devices/i.test(message)) {
@@ -74,7 +74,7 @@ function describeHttpsSyncError(error: HttpsSyncError): CliErrorView {
       summary:
         "The owner needs to admit or deny pending machines before another can link.",
       rows: cloudRows(slug, error),
-      next: [`Clear the queue at ${cloudAdmitUrl()}`],
+      next: [`Clear the queue at ${cloudAdmitUrl(undefined, error.url.href)}`],
     };
   }
   if (error.status === 401 || /signature/i.test(message)) {

@@ -14,8 +14,9 @@ export function cloudOrigin(): string {
   return raw.replace(/\/+$/, "");
 }
 
-export function cloudAdmitUrl(fingerprint?: string): string {
-  const base = `${cloudOrigin()}/cloud`;
+export function cloudAdmitUrl(fingerprint?: string, catalogUrl?: string): string {
+  const origin = catalogUrl ? new URL(catalogUrl).origin : cloudOrigin();
+  const base = `${origin}/cloud`;
   if (!fingerprint) return base;
   return `${base}?admit=${encodeURIComponent(fingerprint)}`;
 }

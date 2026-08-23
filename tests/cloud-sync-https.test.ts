@@ -523,6 +523,28 @@ describe("cloud sync HTTPS upstream", () => {
     );
   });
 
+  it("builds the admit URL from the catalog origin, not the default Cloud origin", async () => {
+    const vault = await publishHttpsVault({
+      slug: "acme",
+      id: "acme",
+      name: "ACME Cloud",
+      skillName: "cli-https-helper",
+      version: "1.0.0",
+      body: "CLI body",
+    });
+    vaults.push(vault);
+
+    const result = await runCli(["link", vault.catalogUrl, "--json"]);
+    expect(result.status).toBe(0);
+    const body = JSON.parse(result.stdout) as {
+      admit: { url: string };
+    };
+    expect(body.admit.url.startsWith(`${vault.origin}/cloud?admit=`)).toBe(
+      true,
+    );
+    expect(body.admit.url).not.toContain("autovault.dev");
+  });
+
   it("enrolls a Cloud vault that has no published catalog yet", async () => {
     const vault = await publishHttpsVault({
       slug: "newuser",

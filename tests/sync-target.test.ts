@@ -52,6 +52,14 @@ describe("resolveLinkTarget", () => {
     );
     expect(cloudAdmitUrl(fingerprint)).toContain("%E2%80%A6");
     expect(cloudAdmitUrl()).toBe(`${DEFAULT_CLOUD_ORIGIN}/cloud`);
+    expect(
+      cloudAdmitUrl(
+        fingerprint,
+        "https://vault.example/v/acme/catalog.json",
+      ),
+    ).toBe(
+      `https://vault.example/cloud?admit=${encodeURIComponent("DdiE…NJLw")}`,
+    );
   });
 
   it("treats relative paths as file catalogs", () => {
