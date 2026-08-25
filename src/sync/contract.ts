@@ -15,6 +15,14 @@ export const SYNC_DEVICE_HEADERS = {
   signature: "X-AutoVault-Signature"
 } as const;
 
+// Slug-less RFC 8628-shaped pairing. These paths are the client spec:
+// POST /api/devices/pair  -> device_code, user_code, verification_uri*
+// POST /api/devices/token -> slug + catalog_url, or 400 { error }
+export const SYNC_DEVICE_PAIR_PATH = "/api/devices/pair";
+export const SYNC_DEVICE_TOKEN_PATH = "/api/devices/token";
+export const DEVICE_CODE_GRANT_TYPE =
+  "urn:ietf:params:oauth:grant-type:device_code";
+
 export const syncResourceKindSchema = z.enum(["skill", "agent", "mcp_server", "collection"]);
 export const syncUpdatePolicySchema = z.enum(["auto_apply", "user_approve", "admin_hold"]);
 

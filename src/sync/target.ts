@@ -1,24 +1,30 @@
 import path from "node:path";
 import { isHttpSyncTarget, normalizeHttpsCatalogUrl } from "./https.js";
+import { cloudOrigin } from "./origin.js";
 
-export const DEFAULT_CLOUD_ORIGIN = "https://autovault.dev";
+export {
+  DEFAULT_CLOUD_ORIGIN,
+  cloudApiUrl,
+  cloudOrigin,
+  isCloudOriginUrl,
+} from "./origin.js";
 export const CLOUD_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export type ResolvedLinkTarget =
   | { kind: "https"; catalogUrl: string; slug?: string }
   | { kind: "file"; path: string };
 
-export function cloudOrigin(): string {
-  const raw =
-    process.env.AUTOVAULT_CLOUD_ORIGIN?.trim() || DEFAULT_CLOUD_ORIGIN;
-  return raw.replace(/\/+$/, "");
-}
-
 export function cloudAdmitUrl(fingerprint?: string, catalogUrl?: string): string {
   const origin = catalogUrl ? new URL(catalogUrl).origin : cloudOrigin();
   const base = `${origin}/cloud`;
   if (!fingerprint) return base;
   return `${base}?admit=${encodeURIComponent(fingerprint)}`;
+}
+
+export function cloudPairUrl(userCode?: string): string {
+  const base = `${cloudOrigin()}/cloud/pair`;
+  if (!userCode) return base;
+  return `${base}?code=${encodeURIComponent(userCode)}`;
 }
 
 export function deviceFingerprint(publicKey: string): string {

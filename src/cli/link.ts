@@ -6,8 +6,12 @@ import { writeJson } from "./ui/output.js";
 import { writeOptionalUpdateNotice } from "./update.js";
 import { withSuppressedLogs } from "../util/log.js";
 import { openBrowser, shouldOpenBrowser } from "../util/open-browser.js";
-import { cloudAdmitUrl, deviceFingerprint } from "../sync/target.js";
-import type { EnrolledUpstream } from "../sync/local.js";
+import {
+  cloudAdmitUrl,
+  deviceFingerprint,
+  isCloudOriginUrl,
+} from "../sync/target.js";
+import type { CloudPairing, EnrolledUpstream } from "../sync/local.js";
 
 const WAIT_INTERVAL_MS = 1500;
 const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
@@ -17,10 +21,8 @@ export async function runLinkCommand(args: string[]): Promise<void> {
   const noBrowser = args.includes("--no-browser");
   const target = args.find((arg) => !arg.startsWith("-"));
   if (!target) {
-    process.stderr.write(
-      "Usage: autovault link <slug|catalog-url|directory> [--json] [--no-browser]\n",
-    );
-    process.exit(1);
+    await runPairingLink({ json, noBrowser });
+    return;
   }
 
   const { completeEnrollmentFromTarget, refreshEnrollment } =
@@ -36,6 +38,44 @@ export async function runLinkCommand(args: string[]): Promise<void> {
   }
 
   if (json) {
+    writeJson(jsonLinkResult(enrollment));
+    return;
+  }
+
+  process.stdout.write(formatLinkResult(enrollment));
+  writeOptionalUpdateNotice();
+}
+
+async function runPairingLink(flags: {
+  json: boolean;
+  noBrowser: boolean;
+}): Promise<void> {
+  const { completeCloudPairing, ensureCloudPairing, refreshEnrollment } =
+    await import("../sync/local.js");
+  const pairing = await withSuppressedLogs(() => ensureCloudPairing());
+
+  if (!flags.json) {
+    process.stdout.write(formatPairingPrompt(pairing));
+  }
+  maybeOpenPairingBrowser(pairing, flags);
+
+  if (flags.json && !shouldWaitForPairing()) {
+    writeJson({ pairing });
+    return;
+  }
+  if (!shouldWaitForPairing()) {
+    writeOptionalUpdateNotice();
+    return;
+  }
+
+  let enrollment = await waitForPairing(pairing, completeCloudPairing);
+  if (!flags.json && shouldWaitForAdmit(enrollment)) {
+    process.stdout.write(formatAdmitPrompt(enrollment));
+    maybeOpenAdmitBrowser(enrollment, flags);
+    enrollment = await waitForAdmit(enrollment, refreshEnrollment);
+  }
+
+  if (flags.json) {
     writeJson(jsonLinkResult(enrollment));
     return;
   }
@@ -83,6 +123,16 @@ function formatAdmitPrompt(enrollment: EnrolledUpstream): string {
   ].join("\n");
 }
 
+function formatPairingPrompt(pairing: CloudPairing): string {
+  const theme = makeTheme(process.stdout);
+  return [
+    `${theme.style.yellow(theme.symbol.warn)} ${theme.style.bold("Confirm this code in the browser")} ${theme.style.dim(`ed25519 ${pairing.fingerprint}`)}`,
+    `  ${theme.style.bold(pairing.user_code)}`,
+    `  ${theme.style.dim("open")} ${pairing.verification_uri_complete}`,
+    "",
+  ].join("\n");
+}
+
 function maybeOpenAdmitBrowser(
   enrollment: EnrolledUpstream,
   flags: { json: boolean; noBrowser: boolean },
@@ -96,11 +146,47 @@ function maybeOpenAdmitBrowser(
   openBrowser(httpsAdmitUrl(enrollment, fingerprint));
 }
 
+function maybeOpenPairingBrowser(
+  pairing: CloudPairing,
+  flags: { json: boolean; noBrowser: boolean },
+): void {
+  if (!shouldOpenBrowser(flags)) return;
+  if (!isCloudOriginUrl(pairing.verification_uri_complete)) return;
+  openBrowser(pairing.verification_uri_complete);
+}
+
 function shouldWaitForAdmit(enrollment: EnrolledUpstream): boolean {
   if (enrollment.type !== "https") return false;
   if (enrollment.enrollment.status !== "pending") return false;
+  return shouldWaitOnTty();
+}
+
+function shouldWaitForPairing(): boolean {
+  return shouldWaitOnTty();
+}
+
+function shouldWaitOnTty(): boolean {
   if (process.env.CI) return false;
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
+
+async function waitForPairing(
+  pairing: CloudPairing,
+  complete: (input?: {
+    sleep?: (ms: number) => Promise<void>;
+  }) => Promise<EnrolledUpstream>,
+): Promise<EnrolledUpstream> {
+  const spin = startSpinner(
+    `waiting for confirm in the browser  ·  ${pairing.user_code}`,
+  );
+  try {
+    const enrollment = await withSuppressedLogs(() => complete());
+    spin.stop("confirmed");
+    return enrollment;
+  } catch (error) {
+    spin.error(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
 
 async function waitForAdmit(

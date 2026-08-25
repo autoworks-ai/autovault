@@ -48,9 +48,12 @@ while it remains in pre-1.0 development.
   signed with the device key (`X-AutoVault-Device` / `-Timestamp` /
   `-Signature`). Beta limitation: rotating the publishing key requires every
   device to re-enroll.
-- `autovault link <slug>` is the canonical Cloud enroll command (`init` stays
-  as an alias). Slugs expand to `https://autovault.dev/v/<slug>`; override the
-  origin with `AUTOVAULT_CLOUD_ORIGIN`. On a TTY the command waits for admit.
+- `autovault link` with no argument starts RFC 8628-shaped Cloud pairing:
+  the CLI prints a confirmation code, opens `/cloud/pair`, and learns its
+  slug after the owner confirms. `autovault link <slug>` remains the
+  fallback for older enrollments (`init` stays an alias). Slugs expand to
+  `https://autovault.dev/v/<slug>`; override the origin with
+  `AUTOVAULT_CLOUD_ORIGIN`. On a TTY the command waits for confirm/admit.
 - Named profiles can opt in to emitting a Claude Code `skillOverrides` block
   alongside the project-local symlink farm. Without this, the per-project
   `<project>/.claude/skills/` symlinks are purely additive to

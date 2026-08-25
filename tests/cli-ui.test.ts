@@ -153,4 +153,26 @@ describe("CLI UI helpers", () => {
     expect(output).not.toContain("\u001b");
     expect(error.serverMessage).toBe("boom[31mhacked");
   });
+
+  it("points slug enrollment when Cloud pairing endpoints are missing", () => {
+    const error = new HttpsSyncError(
+      404,
+      "Not Found",
+      new URL("https://autovault.dev/api/devices/pair"),
+      "not found",
+    );
+    const stream = {
+      isTTY: false,
+      columns: 72,
+      write() {
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+
+    const output = formatCliError(error, stream);
+
+    expect(output).toContain("Cloud pairing is not available yet");
+    expect(output).toContain("autovault link <slug>");
+    expect(output).not.toContain("autovault failed");
+  });
 });

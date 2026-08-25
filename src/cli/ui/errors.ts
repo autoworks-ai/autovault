@@ -1,4 +1,8 @@
 import { HttpsSyncError } from "../../sync/https.js";
+import {
+  SYNC_DEVICE_PAIR_PATH,
+  SYNC_DEVICE_TOKEN_PATH,
+} from "../../sync/contract.js";
 import { cloudAdmitUrl, slugFromCatalogUrl } from "../../sync/target.js";
 import { badge } from "./messages.js";
 import { keyValueRows, type TableRow } from "./table.js";
@@ -58,6 +62,22 @@ function describeHttpsSyncError(error: HttpsSyncError): CliErrorView {
       ],
     };
   }
+  if (
+    error.status === 404 &&
+    (error.url.pathname === SYNC_DEVICE_PAIR_PATH ||
+      error.url.pathname === SYNC_DEVICE_TOKEN_PATH)
+  ) {
+    return {
+      title: "Cloud pairing is not available yet",
+      summary:
+        "This Cloud origin does not have the slug-less pairing endpoints.",
+      rows: cloudRows(slug, error),
+      next: [
+        "Copy the vault slug from the owner console",
+        "Run autovault link <slug>",
+      ],
+    };
+  }
   if (/no such vault/i.test(message)) {
     return {
       title: "No vault uses that slug",
@@ -75,6 +95,22 @@ function describeHttpsSyncError(error: HttpsSyncError): CliErrorView {
         "The owner needs to admit or deny pending machines before another can link.",
       rows: cloudRows(slug, error),
       next: [`Clear the queue at ${cloudAdmitUrl(undefined, error.url.href)}`],
+    };
+  }
+  if (/expired_token/i.test(message)) {
+    return {
+      title: "This pairing code expired",
+      summary: "Confirm the next code from autovault link.",
+      rows: cloudRows(slug, error),
+      next: ["Run autovault link"],
+    };
+  }
+  if (/access_denied/i.test(message)) {
+    return {
+      title: "The owner denied this machine",
+      summary: "The browser pairing was rejected.",
+      rows: cloudRows(slug, error),
+      next: ["Run autovault link"],
     };
   }
   if (error.status === 401 || /signature/i.test(message)) {

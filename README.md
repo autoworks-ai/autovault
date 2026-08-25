@@ -161,7 +161,7 @@ autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
 autovault audit-repo --repo /path/to/repo [--format json|markdown]
 autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
-autovault link <slug|catalog-url|directory> [--json]
+autovault link [slug|catalog-url|directory] [--json] [--no-browser]
 autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
 autovault serve [--help]
 autovault ui [--port <n>] [--no-open]
@@ -180,17 +180,21 @@ signed upstream update installs, enrolled-client revocation, and
 permission-group visibility. It serves the packaged React assets and uses the
 same `/api/v1` management API shape as remote AutoVault.
 
-`autovault link <slug|catalog-url|directory>` links this machine to a signed
-upstream catalog. `init` remains a compatibility alias. Humans type a Cloud
-slug (`autovault link acme`); the client expands that to
-`https://autovault.dev/v/<slug>/catalog.json`. A full HTTPS URL or local
-catalog path still works. On a TTY the command waits for owner admit;
-`--json` and non-TTY runs return pending immediately. Override the Cloud origin
-with `AUTOVAULT_CLOUD_ORIGIN`. HTTPS enrollments POST a device public key, land
-`pending` until the owner admits the device, then discover, verify, and install
-signed releases. Bundle URLs are pinned to `bundles/<bundle_hash>.json` relative
-to `catalog.json` and re-verified (release signature, bundle hash, per-file
-SHA-256) before install. Device requests are signed with
+`autovault link` with no argument starts a Cloud device pairing: the CLI
+prints a short confirmation code, opens the browser, and polls until the
+owner confirms the code. The slug is no longer something a human types.
+`autovault link <slug|catalog-url|directory>` remains the fallback for older
+Cloud enrollments and local catalogs (`init` stays a compatibility alias).
+Humans who already know a Cloud slug can still type `autovault link acme`;
+the client expands that to `https://autovault.dev/v/<slug>/catalog.json`.
+On a TTY the command waits for owner confirm/admit; `--json` and non-TTY
+runs return pending immediately. Override the Cloud origin with
+`AUTOVAULT_CLOUD_ORIGIN`. Pairing POSTs a self-signed device key to
+`/api/devices/pair` and polls `/api/devices/token`. Slug enrollment POSTs
+to `/v/<slug>/devices` and lands `pending` until the owner admits the
+device. Signed releases are discovered from `catalog.json` and
+`bundles/<bundle_hash>.json` and re-verified (release signature, bundle
+hash, per-file SHA-256) before install. Device requests are signed with
 `X-AutoVault-Device` / `-Timestamp` / `-Signature`. Beta limitation: if the live
 catalog `public_key` drifts from the key pinned at enrollment, `readCatalog`
 hard-fails and every device must re-enroll.
@@ -214,9 +218,10 @@ autovault add https://example.com/SKILL.md --source url
 # Search installed skills locally.
 autovault skill search code-review --top-k 5
 
-# Link a local test catalog or an AutoVault Cloud vault, then review updates.
-autovault link ./path/to/upstream-catalog
+# Link this machine to AutoVault Cloud, or a local test catalog.
+autovault link
 autovault link acme
+autovault link ./path/to/upstream-catalog
 autovault ui
 
 # Remove a vaulted skill and refresh managed profile links.

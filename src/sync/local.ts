@@ -23,8 +23,16 @@ import {
   fetchHttpsDeviceStatus,
   isUnpublishedCatalogError,
   normalizeHttpsCatalogUrl,
+  pollDevicePairing,
+  startDevicePairing,
+  type DevicePairingToken,
 } from "./https.js";
-import { resolveLinkTarget, slugFromCatalogUrl } from "./target.js";
+import { cloudOrigin } from "./origin.js";
+import {
+  deviceFingerprint,
+  resolveLinkTarget,
+  slugFromCatalogUrl,
+} from "./target.js";
 
 const enrollmentMetadataSchema = z.object({
   status: z.enum(["pending", "active", "revoked"]),
@@ -75,6 +83,30 @@ const upstreamStateSchema = z.object({
 
 export type EnrolledUpstream = z.infer<typeof enrolledUpstreamSchema>;
 type StoredEnrolledUpstream = z.infer<typeof storedEnrolledUpstreamSchema>;
+
+const pairingStateSchema = z.object({
+  schema_version: z.literal(1),
+  device_public_key: z.string().min(1),
+  device_secret_key: z.string().min(1),
+  device_code: z.string().min(16),
+  user_code: z.string().min(4),
+  verification_uri: z.string().url(),
+  verification_uri_complete: z.string().url(),
+  expires_at: z.string().min(1),
+  interval: z.number().int().nonnegative(),
+  started_at: z.string().min(1),
+});
+
+type StoredCloudPairing = z.infer<typeof pairingStateSchema>;
+
+export type CloudPairing = {
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in: number;
+  interval: number;
+  fingerprint: string;
+};
 
 export type FileUpstreamInput = {
   id: string;
@@ -149,6 +181,10 @@ function upstreamStatePath(): string {
   return path.join(syncDir(), "upstreams.json");
 }
 
+function pairingStatePath(): string {
+  return path.join(syncDir(), "pairing.json");
+}
+
 async function readState(): Promise<z.infer<typeof upstreamStateSchema>> {
   try {
     const raw = await fs.readFile(upstreamStatePath(), "utf-8");
@@ -178,6 +214,57 @@ async function writeState(
   });
   await fs.rename(tmp, upstreamStatePath());
   await fs.chmod(upstreamStatePath(), 0o600).catch(() => {});
+}
+
+async function readPairingState(): Promise<StoredCloudPairing | null> {
+  try {
+    const raw = await fs.readFile(pairingStatePath(), "utf-8");
+    const parsed = pairingStateSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      throw new Error(
+        parsed.error.issues.map((issue) => issue.message).join("; "),
+      );
+    }
+    return parsed.data;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function writePairingState(state: StoredCloudPairing): Promise<void> {
+  await fs.mkdir(syncDir(), { recursive: true });
+  const tmp = `${pairingStatePath()}.tmp.${process.pid}.${Date.now()}`;
+  await fs.writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, {
+    mode: 0o600,
+    encoding: "utf-8",
+  });
+  await fs.rename(tmp, pairingStatePath());
+  await fs.chmod(pairingStatePath(), 0o600).catch(() => {});
+}
+
+async function clearPairingState(): Promise<void> {
+  await fs.unlink(pairingStatePath()).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+}
+
+function publicPairing(state: StoredCloudPairing): CloudPairing {
+  const remainingMs = Date.parse(state.expires_at) - Date.now();
+  return {
+    user_code: state.user_code,
+    verification_uri: state.verification_uri,
+    verification_uri_complete: state.verification_uri_complete,
+    expires_in: Math.max(0, Math.floor(remainingMs / 1000)),
+    interval: state.interval,
+    fingerprint: deviceFingerprint(state.device_public_key),
+  };
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 export async function initEnrollment(
@@ -216,6 +303,63 @@ export async function completeEnrollment(
   };
   await writeState(replaceStoredUpstream(state, upstream));
   return publicUpstream(upstream);
+}
+
+export async function startCloudPairing(): Promise<CloudPairing> {
+  const device = createSyncSigningKeypair();
+  const started = await startDevicePairing(device);
+  const now = new Date();
+  const stored: StoredCloudPairing = {
+    schema_version: 1,
+    device_public_key: device.publicKey,
+    device_secret_key: device.secretKey,
+    device_code: started.device_code,
+    user_code: started.user_code,
+    verification_uri: started.verification_uri,
+    verification_uri_complete: started.verification_uri_complete,
+    expires_at: new Date(
+      now.getTime() + started.expires_in * 1000,
+    ).toISOString(),
+    interval: started.interval,
+    started_at: now.toISOString(),
+  };
+  await writePairingState(stored);
+  return publicPairing(stored);
+}
+
+export async function ensureCloudPairing(): Promise<CloudPairing> {
+  const existing = await readPairingState();
+  if (existing && Date.parse(existing.expires_at) > Date.now()) {
+    return publicPairing(existing);
+  }
+  return startCloudPairing();
+}
+
+export async function completeCloudPairing(input?: {
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<EnrolledUpstream> {
+  const stored = await readPairingState();
+  if (!stored) {
+    throw new Error("No Cloud pairing in progress. Run autovault link.");
+  }
+  const device = {
+    publicKey: stored.device_public_key,
+    secretKey: stored.device_secret_key,
+  };
+  let interval = stored.interval;
+  const sleep = input?.sleep ?? defaultSleep;
+  const deadline = Date.parse(stored.expires_at);
+  while (Date.now() < deadline) {
+    const poll = await pollDevicePairing(device, stored.device_code);
+    if (poll.state === "authorized") {
+      const enrollment = await storePairedEnrollment(poll.result, device);
+      await clearPairingState();
+      return enrollment;
+    }
+    if (poll.state === "slow_down") interval += 5;
+    await sleep(interval * 1000);
+  }
+  throw new Error("This pairing code expired. Run autovault link again.");
 }
 
 export async function completeEnrollmentFromTarget(
@@ -476,36 +620,83 @@ async function enrollHttpsFromCatalogUrl(
 ): Promise<EnrolledUpstream> {
   const device = createSyncSigningKeypair();
   const posted = await enrollHttpsDevice(catalogUrl, device);
+  return storeHttpsEnrollment({
+    catalogUrl,
+    device,
+    device_id: posted.device_id,
+    status: posted.status,
+    expected,
+  });
+}
+
+async function storePairedEnrollment(
+  token: DevicePairingToken,
+  device: SyncSigningKeypair,
+): Promise<EnrolledUpstream> {
+  const catalogUrl = new URL(token.catalog_url);
+  assertPairedCatalogUrl(catalogUrl, token.slug);
+  return storeHttpsEnrollment({
+    catalogUrl: normalizeHttpsCatalogUrl(catalogUrl.href),
+    device,
+    device_id: token.device_id,
+    status: token.status,
+  });
+}
+
+function assertPairedCatalogUrl(catalogUrl: URL, slug: string): void {
+  const origin = new URL(`${cloudOrigin()}/`);
+  if (
+    catalogUrl.protocol !== origin.protocol ||
+    catalogUrl.host !== origin.host
+  ) {
+    throw new Error("Pairing catalog URL must stay on the Cloud origin");
+  }
+  if (slugFromCatalogUrl(catalogUrl) !== slug) {
+    throw new Error("Pairing catalog URL does not match the returned slug");
+  }
+}
+
+async function storeHttpsEnrollment(input: {
+  catalogUrl: URL;
+  device: SyncSigningKeypair;
+  device_id: string;
+  status: "pending" | "active" | "revoked";
+  expected?: { id?: string; name?: string; public_key?: string };
+}): Promise<EnrolledUpstream> {
   let catalog: SyncCatalog | null = null;
   try {
-    catalog = await fetchHttpsCatalog(catalogUrl, device);
+    catalog = await fetchHttpsCatalog(input.catalogUrl, input.device);
   } catch (error) {
     if (!isUnpublishedCatalogError(error)) throw error;
   }
-  if (catalog && expected?.id && catalog.id !== expected.id) {
+  if (catalog && input.expected?.id && catalog.id !== input.expected.id) {
     throw new Error(`Upstream id mismatch: catalog has '${catalog.id}'`);
   }
   if (
     catalog &&
-    expected?.public_key &&
-    catalog.public_key !== expected.public_key
+    input.expected?.public_key &&
+    catalog.public_key !== input.expected.public_key
   ) {
     throw new Error("Upstream public key mismatch");
   }
-  const identity = httpsIdentityFromCatalog(catalogUrl, catalog, expected);
+  const identity = httpsIdentityFromCatalog(
+    input.catalogUrl,
+    catalog,
+    input.expected,
+  );
   const state = await readState();
   const upstream: StoredEnrolledUpstream = {
     id: identity.id,
     name: identity.name,
     type: "https",
-    catalog_url: catalogUrl.href,
+    catalog_url: input.catalogUrl.href,
     ...(identity.public_key ? { public_key: identity.public_key } : {}),
     catalog_status: catalog ? "ready" : "unpublished",
     enrollment: {
-      status: posted.status,
-      device_id: posted.device_id,
-      device_public_key: device.publicKey,
-      device_secret_key: device.secretKey,
+      status: input.status,
+      device_id: input.device_id,
+      device_public_key: input.device.publicKey,
+      device_secret_key: input.device.secretKey,
       enrolled_at: new Date().toISOString(),
     },
   };
