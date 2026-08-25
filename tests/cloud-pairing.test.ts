@@ -480,6 +480,7 @@ describe("device pairing (RFC 8628-shaped)", () => {
     clouds.push(cloud);
     process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
     await startCloudPairing();
+    await backdatePairingClock(2_000);
     const progressed = await progressCloudPairing({
       wait: false,
       sleep: async () => {},
@@ -488,6 +489,84 @@ describe("device pairing (RFC 8628-shaped)", () => {
       status: "pending",
       pairing: { interval: 6 },
     });
+    const tokenPolls = cloud.requests.filter(
+      (request) => request.pathname === SYNC_DEVICE_TOKEN_PATH,
+    ).length;
+    const skipped = await progressCloudPairing({
+      wait: false,
+      sleep: async () => {},
+    });
+    expect(skipped).toMatchObject({
+      status: "pending",
+      pairing: { interval: 6 },
+    });
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_TOKEN_PATH),
+    ).toHaveLength(tokenPolls);
+  });
+
+  it("skips the first JSON token poll until the advertised interval elapses", async () => {
+    const cloud = await publishPairingCloud({ interval: 5 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    const skipped = await progressCloudPairing({
+      wait: false,
+      sleep: async () => {},
+    });
+    expect(skipped).toMatchObject({
+      status: "pending",
+      pairing: { interval: 5 },
+    });
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_TOKEN_PATH),
+    ).toHaveLength(0);
+  });
+
+  it("waits the advertised interval before the first interactive token poll", async () => {
+    const cloud = await publishPairingCloud({ interval: 5 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    const sleeps: number[] = [];
+    const pending = progressCloudPairing({
+      wait: true,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        cloud.confirm(await pairingPublicKey());
+      },
+    });
+    await expect(pending).resolves.toMatchObject({
+      status: "complete",
+      enrollment: { catalog_url: cloud.catalogUrl },
+    });
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeGreaterThanOrEqual(4_000);
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_TOKEN_PATH),
+    ).toHaveLength(1);
+  });
+
+  it("clears pairing state after invalid_grant so retry mints a new code", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    await patchPairingState({ device_code: "unknown-device-code" });
+    await expect(
+      progressCloudPairing({ wait: false, sleep: async () => {} }),
+    ).rejects.toMatchObject({
+      name: "HttpsSyncError",
+      serverMessage: "invalid_grant",
+    });
+    await expect(fs.stat(pairingStatePath())).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const retry = await ensureCloudPairing();
+    expect(retry.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_PAIR_PATH),
+    ).toHaveLength(2);
   });
 
   it("clamps a zero pairing interval before the interactive wait sleeps", async () => {
@@ -507,7 +586,8 @@ describe("device pairing (RFC 8628-shaped)", () => {
       status: "complete",
       enrollment: { catalog_url: cloud.catalogUrl },
     });
-    expect(sleeps).toEqual([5000]);
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeGreaterThanOrEqual(4_000);
   });
 
   it("discards a cached pairing when AUTOVAULT_CLOUD_ORIGIN changes", async () => {
@@ -710,9 +790,44 @@ describe("device pairing (RFC 8628-shaped)", () => {
 });
 
 async function pairingPublicKey(): Promise<string> {
-  const raw = await fs.readFile(
-    path.join(currentStorageRoot(), "cloud-sync", "pairing.json"),
-    "utf8",
-  );
-  return (JSON.parse(raw) as { device_public_key: string }).device_public_key;
+  const stored = await readPairingStateFile();
+  return stored.device_public_key;
+}
+
+function pairingStatePath(): string {
+  return path.join(currentStorageRoot(), "cloud-sync", "pairing.json");
+}
+
+async function readPairingStateFile(): Promise<{
+  device_public_key: string;
+  device_code: string;
+  started_at: string;
+  last_polled_at?: string;
+}> {
+  const raw = await fs.readFile(pairingStatePath(), "utf8");
+  return JSON.parse(raw) as {
+    device_public_key: string;
+    device_code: string;
+    started_at: string;
+    last_polled_at?: string;
+  };
+}
+
+async function patchPairingState(patch: Record<string, unknown>): Promise<void> {
+  const stored = {
+    ...(await readPairingStateFile()),
+    ...patch,
+  };
+  await fs.writeFile(pairingStatePath(), `${JSON.stringify(stored, null, 2)}\n`);
+}
+
+async function backdatePairingClock(ms: number): Promise<void> {
+  const stored = await readPairingStateFile();
+  const shift = (iso: string) => new Date(Date.parse(iso) - ms).toISOString();
+  await patchPairingState({
+    started_at: shift(stored.started_at),
+    ...(stored.last_polled_at
+      ? { last_polled_at: shift(stored.last_polled_at) }
+      : {}),
+  });
 }

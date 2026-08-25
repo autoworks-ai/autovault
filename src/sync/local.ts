@@ -98,6 +98,7 @@ const pairingStateSchema = z.object({
   expires_at: z.string().min(1),
   interval: z.number().int().nonnegative(),
   started_at: z.string().min(1),
+  last_polled_at: z.string().min(1).optional(),
 });
 
 const PAIRING_MIN_POLL_SECONDS = 5;
@@ -377,7 +378,19 @@ export async function progressCloudPairing(input?: {
   const wait = input?.wait !== false;
   const deadline = Date.parse(stored.expires_at);
   while (Date.now() < deadline) {
+    const waitMs = msUntilNextPoll(stored, wait);
+    if (waitMs > 0) {
+      if (!wait) {
+        return { status: "pending", pairing: publicPairing(stored) };
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(waitMs, remainingMs));
+      if (Date.now() >= deadline) break;
+    }
     let poll: DevicePairingPoll;
+    stored.last_polled_at = new Date().toISOString();
+    await writePairingState(stored);
     try {
       poll = await pollDevicePairing(device, stored.device_code);
     } catch (error) {
@@ -397,7 +410,6 @@ export async function progressCloudPairing(input?: {
     if (!wait) {
       return { status: "pending", pairing: publicPairing(stored) };
     }
-    await sleep(pairingPollDelaySeconds(interval) * 1000);
   }
   await clearPairingState();
   throw new Error("This pairing code expired. Run autovault link again.");
@@ -419,11 +431,22 @@ export async function completeCloudPairing(input?: {
 function isTerminalPairingError(error: unknown): boolean {
   if (!(error instanceof HttpsSyncError)) return false;
   const code = error.serverMessage ?? "";
-  return code === "access_denied" || code === "expired_token";
+  return (
+    code === "access_denied" ||
+    code === "expired_token" ||
+    code === "invalid_grant"
+  );
 }
 
-function pairingPollDelaySeconds(interval: number): number {
-  return interval > 0 ? interval : PAIRING_MIN_POLL_SECONDS;
+function msUntilNextPoll(stored: StoredCloudPairing, wait: boolean): number {
+  const advertised = stored.interval > 0 ? stored.interval : 0;
+  const delaySeconds =
+    wait && advertised === 0 && stored.last_polled_at
+      ? PAIRING_MIN_POLL_SECONDS
+      : advertised;
+  if (delaySeconds === 0) return 0;
+  const last = Date.parse(stored.last_polled_at ?? stored.started_at);
+  return Math.max(0, last + delaySeconds * 1000 - Date.now());
 }
 
 export async function completeEnrollmentFromTarget(
