@@ -50,7 +50,7 @@ async function runPairingLink(flags: {
   json: boolean;
   noBrowser: boolean;
 }): Promise<void> {
-  const { completeCloudPairing, ensureCloudPairing, refreshEnrollment } =
+  const { completeCloudPairing, ensureCloudPairing, progressCloudPairing, refreshEnrollment } =
     await import("../sync/local.js");
   const pairing = await withSuppressedLogs(() => ensureCloudPairing());
 
@@ -59,16 +59,25 @@ async function runPairingLink(flags: {
   }
   maybeOpenPairingBrowser(pairing, flags);
 
-  if (flags.json && !shouldWaitForPairing()) {
-    writeJson({ pairing });
-    return;
-  }
-  if (!shouldWaitForPairing()) {
+  const wait = shouldWaitForPairing();
+  if (!wait && !flags.json) {
     writeOptionalUpdateNotice();
     return;
   }
 
-  let enrollment = await waitForPairing(pairing, completeCloudPairing);
+  let enrollment;
+  if (wait) {
+    enrollment = await waitForPairing(pairing, completeCloudPairing);
+  } else {
+    const progressed = await withSuppressedLogs(() =>
+      progressCloudPairing({ wait: false, sleep: async () => {} }),
+    );
+    if (progressed.status === "pending") {
+      writeJson({ pairing: progressed.pairing });
+      return;
+    }
+    enrollment = progressed.enrollment;
+  }
   if (!flags.json && shouldWaitForAdmit(enrollment)) {
     process.stdout.write(formatAdmitPrompt(enrollment));
     maybeOpenAdmitBrowser(enrollment, flags);

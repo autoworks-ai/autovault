@@ -21,10 +21,12 @@ import {
   fetchHttpsBundle,
   fetchHttpsCatalog,
   fetchHttpsDeviceStatus,
+  HttpsSyncError,
   isUnpublishedCatalogError,
   normalizeHttpsCatalogUrl,
   pollDevicePairing,
   startDevicePairing,
+  type DevicePairingPoll,
   type DevicePairingToken,
 } from "./https.js";
 import { cloudOrigin } from "./origin.js";
@@ -335,9 +337,14 @@ export async function ensureCloudPairing(): Promise<CloudPairing> {
   return startCloudPairing();
 }
 
-export async function completeCloudPairing(input?: {
+export type CloudPairingProgress =
+  | { status: "pending"; pairing: CloudPairing }
+  | { status: "complete"; enrollment: EnrolledUpstream };
+
+export async function progressCloudPairing(input?: {
   sleep?: (ms: number) => Promise<void>;
-}): Promise<EnrolledUpstream> {
+  wait?: boolean;
+}): Promise<CloudPairingProgress> {
   const stored = await readPairingState();
   if (!stored) {
     throw new Error("No Cloud pairing in progress. Run autovault link.");
@@ -348,18 +355,52 @@ export async function completeCloudPairing(input?: {
   };
   let interval = stored.interval;
   const sleep = input?.sleep ?? defaultSleep;
+  const wait = input?.wait !== false;
   const deadline = Date.parse(stored.expires_at);
   while (Date.now() < deadline) {
-    const poll = await pollDevicePairing(device, stored.device_code);
+    let poll: DevicePairingPoll;
+    try {
+      poll = await pollDevicePairing(device, stored.device_code);
+    } catch (error) {
+      if (isTerminalPairingError(error)) await clearPairingState();
+      throw error;
+    }
     if (poll.state === "authorized") {
       const enrollment = await storePairedEnrollment(poll.result, device);
       await clearPairingState();
-      return enrollment;
+      return { status: "complete", enrollment };
     }
-    if (poll.state === "slow_down") interval += 5;
+    if (poll.state === "slow_down") {
+      interval += 5;
+      stored.interval = interval;
+      await writePairingState(stored);
+    }
+    if (!wait) {
+      return { status: "pending", pairing: publicPairing(stored) };
+    }
     await sleep(interval * 1000);
   }
+  await clearPairingState();
   throw new Error("This pairing code expired. Run autovault link again.");
+}
+
+export async function completeCloudPairing(input?: {
+  sleep?: (ms: number) => Promise<void>;
+}): Promise<EnrolledUpstream> {
+  const result = await progressCloudPairing({
+    sleep: input?.sleep,
+    wait: true,
+  });
+  if (result.status !== "complete") {
+    throw new Error("This pairing code expired. Run autovault link again.");
+  }
+  return result.enrollment;
+}
+
+function isTerminalPairingError(error: unknown): boolean {
+  if (!(error instanceof HttpsSyncError)) return false;
+  const code = error.serverMessage ?? "";
+  return code === "access_denied" || code === "expired_token";
 }
 
 export async function completeEnrollmentFromTarget(

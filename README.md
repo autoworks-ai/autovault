@@ -188,7 +188,8 @@ Cloud enrollments and local catalogs (`init` stays a compatibility alias).
 Humans who already know a Cloud slug can still type `autovault link acme`;
 the client expands that to `https://autovault.dev/v/<slug>/catalog.json`.
 On a TTY the command waits for owner confirm/admit; `--json` and non-TTY
-runs return pending immediately. Override the Cloud origin with
+runs return pending immediately, and a later `autovault link --json`
+completes pairing once the owner has confirmed. Override the Cloud origin with
 `AUTOVAULT_CLOUD_ORIGIN`. Pairing POSTs a self-signed device key to
 `/api/devices/pair` and polls `/api/devices/token`. Slug enrollment POSTs
 to `/v/<slug>/devices` and lands `pending` until the owner admits the

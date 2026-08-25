@@ -18,6 +18,7 @@ import {
 import {
   completeCloudPairing,
   ensureCloudPairing,
+  progressCloudPairing,
   startCloudPairing,
 } from "../src/sync/local.js";
 import { createSyncSigningKeypair } from "../src/sync/testing.js";
@@ -51,6 +52,7 @@ async function publishPairingCloud(input?: {
   slug?: string;
   unpublished?: boolean;
   interval?: number;
+  slowDown?: number;
 }): Promise<PairingCloud> {
   const slug = input?.slug ?? "acme";
   const catalogPath = `/v/${slug}/catalog.json`;
@@ -81,6 +83,7 @@ async function publishPairingCloud(input?: {
   >();
   const requests: PairingCloud["requests"] = [];
   let pairCount = 0;
+  let slowDownRemaining = input?.slowDown ?? 0;
 
   const server = http.createServer((req, res) => {
     void handleRequest(req, res);
@@ -137,6 +140,11 @@ async function publishPairingCloud(input?: {
           : undefined;
         if (!pairing || pairing.publicKey !== devicePublicKey) {
           writeJson(res, 400, { error: "invalid_grant" });
+          return;
+        }
+        if (slowDownRemaining > 0) {
+          slowDownRemaining -= 1;
+          writeJson(res, 400, { error: "slow_down" });
           return;
         }
         if (pairing.denied) {
@@ -443,6 +451,45 @@ describe("device pairing (RFC 8628-shaped)", () => {
     expect(HttpsSyncError).toBeDefined();
   });
 
+  it("clears pairing state after access_denied so retry mints a new code", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const first = await startCloudPairing();
+    cloud.deny(await pairingPublicKey());
+
+    await expect(
+      completeCloudPairing({ sleep: async () => {} }),
+    ).rejects.toMatchObject({
+      name: "HttpsSyncError",
+      serverMessage: "access_denied",
+    });
+    await expect(
+      fs.stat(path.join(currentStorageRoot(), "cloud-sync", "pairing.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+
+    const retry = await ensureCloudPairing();
+    expect(retry.user_code).not.toBe(first.user_code);
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_PAIR_PATH),
+    ).toHaveLength(2);
+  });
+
+  it("persists slow_down backoff for the next JSON poll", async () => {
+    const cloud = await publishPairingCloud({ interval: 1, slowDown: 1 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    const progressed = await progressCloudPairing({
+      wait: false,
+      sleep: async () => {},
+    });
+    expect(progressed).toMatchObject({
+      status: "pending",
+      pairing: { interval: 6 },
+    });
+  });
+
   it("stores a Cloud enrollment from pairing without posting /v/<slug>/devices", async () => {
     const cloud = await publishPairingCloud();
     clouds.push(cloud);
@@ -527,7 +574,37 @@ describe("device pairing (RFC 8628-shaped)", () => {
     expect(result.stdout).not.toContain("device_code");
     expect(cloud.requests).toEqual([
       { method: "POST", pathname: "/api/devices/pair" },
+      { method: "POST", pathname: "/api/devices/token" },
     ]);
+  });
+
+  it("lets autovault link --json finish pairing after the owner confirms", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    const started = await runCli(["link", "--json"], {
+      AUTOVAULT_CLOUD_ORIGIN: cloud.origin,
+      CI: "1",
+    });
+    expect(started.status).toBe(0);
+    expect(JSON.parse(started.stdout)).toMatchObject({
+      pairing: { user_code: "WDJB-MJHT" },
+    });
+
+    cloud.confirm(await pairingPublicKey());
+    const finished = await runCli(["link", "--json"], {
+      AUTOVAULT_CLOUD_ORIGIN: cloud.origin,
+      CI: "1",
+    });
+    expect(finished.status).toBe(0);
+    expect(JSON.parse(finished.stdout)).toMatchObject({
+      enrollment: {
+        type: "https",
+        catalog_url: cloud.catalogUrl,
+        enrollment: expect.objectContaining({ status: "active" }),
+      },
+    });
+    expect(finished.stdout).not.toContain("device_secret_key");
+    expect(finished.stdout).not.toContain('"pairing"');
   });
 
   it("prints the user code from autovault link with no argument", async () => {
