@@ -52,6 +52,7 @@ async function publishPairingCloud(input?: {
   slug?: string;
   unpublished?: boolean;
   interval?: number;
+  omitInterval?: boolean;
   slowDown?: number;
 }): Promise<PairingCloud> {
   const slug = input?.slug ?? "acme";
@@ -123,7 +124,7 @@ async function publishPairingCloud(input?: {
           verification_uri: `${origin}/cloud/pair`,
           verification_uri_complete: `${origin}/cloud/pair?code=${encodeURIComponent(userCode)}`,
           expires_in: 900,
-          interval: input?.interval ?? 0,
+          ...(input?.omitInterval ? {} : { interval: input?.interval ?? 0 }),
         });
         return;
       }
@@ -396,6 +397,16 @@ describe("device pairing (RFC 8628-shaped)", () => {
     expect(cloud.requests).toEqual([
       { method: "POST", pathname: "/api/devices/pair" },
     ]);
+  });
+
+  it("defaults an omitted pairing interval to five seconds", async () => {
+    const cloud = await publishPairingCloud({ omitInterval: true });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const started = await startDevicePairing(createSyncSigningKeypair());
+    expect(started.interval).toBe(5);
+    const pairing = await startCloudPairing();
+    expect(pairing.interval).toBe(5);
   });
 
   it("polls authorization_pending until the owner confirms the code", async () => {
@@ -724,16 +735,60 @@ describe("device pairing (RFC 8628-shaped)", () => {
     ).toHaveLength(0);
   });
 
+  it("clears an exactly-due pairing under the lock without sleeping", async () => {
+    const cloud = await publishPairingCloud({ interval: 5 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    await patchPairingState({
+      expires_at: new Date().toISOString(),
+    });
+    await expect(
+      progressCloudPairing({
+        wait: true,
+        sleep: async () => {
+          throw new Error("should not sleep past a due pairing deadline");
+        },
+      }),
+    ).rejects.toThrow(/expired/i);
+    await expect(fs.stat(pairingStatePath())).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("reclaims a pairing lock left behind by a dead process", async () => {
     const cloud = await publishPairingCloud();
     clouds.push(cloud);
     process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
     const lockPath = path.join(currentStorageRoot(), "cloud-sync", "pairing.lock");
     await fs.mkdir(path.dirname(lockPath), { recursive: true });
-    await fs.writeFile(lockPath, "999999\n");
+    await fs.writeFile(lockPath, "999999\ndead-token\n");
     const pairing = await ensureCloudPairing();
     expect(pairing.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
     await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("lets concurrent waiters steal a dead lock once", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const lockPath = path.join(
+      currentStorageRoot(),
+      "cloud-sync",
+      "pairing.lock",
+    );
+    await fs.mkdir(path.dirname(lockPath), { recursive: true });
+    await fs.writeFile(lockPath, "999999\ndead-token\n");
+    const [first, second] = await Promise.all([
+      ensureCloudPairing(),
+      ensureCloudPairing(),
+    ]);
+    expect(second.user_code).toBe(first.user_code);
+    expect(
+      cloud.requests.filter(
+        (request) => request.pathname === SYNC_DEVICE_PAIR_PATH,
+      ),
+    ).toHaveLength(1);
   });
 
   it("pairs an unpublished vault and keeps catalog_status unpublished", async () => {

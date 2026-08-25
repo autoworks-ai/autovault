@@ -196,40 +196,79 @@ function pairingLockPath(): string {
 }
 
 const PAIRING_LOCK_WAIT_MS = 10_000;
-const PAIRING_LOCK_STALE_MS = 30_000;
 
-async function pairingLockHeld(lockPath: string): Promise<boolean> {
+function pairingLockToken(): string {
+  return `${process.pid}\n${randomUUID()}\n`;
+}
+
+function pairingLockOwnerAlive(raw: string): boolean {
+  const pid = Number.parseInt(raw.trim().split("\n", 1)[0] ?? "", 10);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
-    const raw = await fs.readFile(lockPath, "utf8");
-    const pid = Number.parseInt(raw.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 0) return false;
     process.kill(pid, 0);
     return true;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ESRCH" || code === "ENOENT") return false;
-    if (code === "EPERM") return true;
+    if (code === "ESRCH") return false;
+    return code === "EPERM";
   }
+}
+
+async function stealStalePairingLock(lockPath: string): Promise<void> {
+  let token: string;
   try {
-    const stat = await fs.stat(lockPath);
-    return Date.now() - stat.mtimeMs < PAIRING_LOCK_STALE_MS;
-  } catch {
-    return false;
+    token = await fs.readFile(lockPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  if (pairingLockOwnerAlive(token)) return;
+  const stolen = `${lockPath}.${process.pid}.${randomUUID()}.stolen`;
+  try {
+    const again = await fs.readFile(lockPath, "utf8");
+    if (again !== token) return;
+    await fs.rename(lockPath, stolen);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  await fs.unlink(stolen).catch(() => {});
+}
+
+async function releasePairingLock(
+  lockPath: string,
+  token: string,
+): Promise<void> {
+  try {
+    const current = await fs.readFile(lockPath, "utf8");
+    if (current !== token) return;
+    await fs.unlink(lockPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
 
 async function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
   await fs.mkdir(syncDir(), { recursive: true });
   const lockPath = pairingLockPath();
+  const token = pairingLockToken();
   const deadline = Date.now() + PAIRING_LOCK_WAIT_MS;
   while (true) {
     try {
-      await fs.writeFile(lockPath, `${process.pid}\n`, { flag: "wx" });
+      await fs.writeFile(lockPath, token, { flag: "wx" });
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (!(await pairingLockHeld(lockPath))) {
-        await fs.unlink(lockPath).catch(() => {});
+      let existing: string | null = null;
+      try {
+        existing = await fs.readFile(lockPath, "utf8");
+      } catch (readError) {
+        if ((readError as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw readError;
+        }
+      }
+      if (existing === null || !pairingLockOwnerAlive(existing)) {
+        await stealStalePairingLock(lockPath);
         continue;
       }
       if (Date.now() >= deadline) {
@@ -243,7 +282,7 @@ async function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } finally {
-    await fs.unlink(lockPath).catch(() => {});
+    await releasePairingLock(lockPath, token);
   }
 }
 
@@ -423,10 +462,12 @@ export async function progressCloudPairing(input?: {
   const wait = input?.wait !== false;
   let deadline = Number.POSITIVE_INFINITY;
   let skipDelay = false;
+  let trackedDeviceCode: string | undefined;
   while (Date.now() < deadline) {
     const step = await withPairingLock(() => claimPairingPoll(wait, skipDelay));
     skipDelay = false;
     deadline = step.deadline;
+    trackedDeviceCode = step.deviceCode;
     if (step.kind === "complete") {
       return { status: "complete", enrollment: step.enrollment };
     }
@@ -443,15 +484,41 @@ export async function progressCloudPairing(input?: {
       skipDelay = true;
     }
   }
-  await clearPairingState();
+  await withPairingLock(() =>
+    clearPairingStateIfDevice(trackedDeviceCode),
+  );
   throw new Error("This pairing code expired. Run autovault link again.");
 }
 
 type PairingPollClaim =
-  | { kind: "complete"; enrollment: EnrolledUpstream; deadline: number }
-  | { kind: "pending"; pairing: CloudPairing; deadline: number }
-  | { kind: "defer"; pairing: CloudPairing; waitMs: number; deadline: number }
-  | { kind: "continue"; deadline: number };
+  | {
+      kind: "complete";
+      enrollment: EnrolledUpstream;
+      deadline: number;
+      deviceCode: string;
+    }
+  | {
+      kind: "pending";
+      pairing: CloudPairing;
+      deadline: number;
+      deviceCode: string;
+    }
+  | {
+      kind: "defer";
+      pairing: CloudPairing;
+      waitMs: number;
+      deadline: number;
+      deviceCode: string;
+    }
+  | { kind: "continue"; deadline: number; deviceCode: string };
+
+async function clearPairingStateIfDevice(
+  deviceCode: string | undefined,
+): Promise<void> {
+  if (!deviceCode) return;
+  const stored = await readPairingState();
+  if (stored?.device_code === deviceCode) await clearPairingState();
+}
 
 async function claimPairingPoll(
   wait: boolean,
@@ -466,13 +533,20 @@ async function claimPairingPoll(
     throw new Error("Cloud origin changed. Run autovault link again.");
   }
   const deadline = Date.parse(stored.expires_at);
-  if (deadline <= Date.now()) {
+  if (deadline < Date.now()) {
     await clearPairingState();
     throw new Error("This pairing code expired. Run autovault link again.");
   }
   const waitMs = skipDelay ? 0 : msUntilNextPoll(stored, wait);
+  const deviceCode = stored.device_code;
   if (waitMs > 0) {
-    return { kind: "defer", pairing: publicPairing(stored), waitMs, deadline };
+    return {
+      kind: "defer",
+      pairing: publicPairing(stored),
+      waitMs,
+      deadline,
+      deviceCode,
+    };
   }
   const device = {
     publicKey: stored.device_public_key,
@@ -490,16 +564,21 @@ async function claimPairingPoll(
   if (poll.state === "authorized") {
     const enrollment = await storePairedEnrollment(poll.result, device);
     await clearPairingState();
-    return { kind: "complete", enrollment, deadline };
+    return { kind: "complete", enrollment, deadline, deviceCode };
   }
   if (poll.state === "slow_down") {
     stored.interval += 5;
     await writePairingState(stored);
   }
   if (!wait) {
-    return { kind: "pending", pairing: publicPairing(stored), deadline };
+    return {
+      kind: "pending",
+      pairing: publicPairing(stored),
+      deadline,
+      deviceCode,
+    };
   }
-  return { kind: "continue", deadline };
+  return { kind: "continue", deadline, deviceCode };
 }
 
 export async function completeCloudPairing(input?: {
