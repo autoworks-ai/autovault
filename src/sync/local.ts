@@ -191,6 +191,62 @@ function pairingStatePath(): string {
   return path.join(syncDir(), "pairing.json");
 }
 
+function pairingLockPath(): string {
+  return path.join(syncDir(), "pairing.lock");
+}
+
+const PAIRING_LOCK_WAIT_MS = 10_000;
+const PAIRING_LOCK_STALE_MS = 30_000;
+
+async function pairingLockHeld(lockPath: string): Promise<boolean> {
+  try {
+    const raw = await fs.readFile(lockPath, "utf8");
+    const pid = Number.parseInt(raw.trim(), 10);
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH" || code === "ENOENT") return false;
+    if (code === "EPERM") return true;
+  }
+  try {
+    const stat = await fs.stat(lockPath);
+    return Date.now() - stat.mtimeMs < PAIRING_LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+async function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
+  await fs.mkdir(syncDir(), { recursive: true });
+  const lockPath = pairingLockPath();
+  const deadline = Date.now() + PAIRING_LOCK_WAIT_MS;
+  while (true) {
+    try {
+      await fs.writeFile(lockPath, `${process.pid}\n`, { flag: "wx" });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (!(await pairingLockHeld(lockPath))) {
+        await fs.unlink(lockPath).catch(() => {});
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          "Could not start Cloud pairing; another link is already in progress.",
+        );
+      }
+      await defaultSleep(25);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await fs.unlink(lockPath).catch(() => {});
+  }
+}
+
 async function readState(): Promise<z.infer<typeof upstreamStateSchema>> {
   try {
     const raw = await fs.readFile(upstreamStatePath(), "utf-8");
@@ -341,16 +397,18 @@ export async function startCloudPairing(): Promise<CloudPairing> {
 }
 
 export async function ensureCloudPairing(): Promise<CloudPairing> {
-  const existing = await readPairingState();
-  if (
-    existing &&
-    Date.parse(existing.expires_at) > Date.now() &&
-    existing.origin === cloudOrigin()
-  ) {
-    return publicPairing(existing);
-  }
-  if (existing) await clearPairingState();
-  return startCloudPairing();
+  return withPairingLock(async () => {
+    const existing = await readPairingState();
+    if (
+      existing &&
+      Date.parse(existing.expires_at) > Date.now() &&
+      existing.origin === cloudOrigin()
+    ) {
+      return publicPairing(existing);
+    }
+    if (existing) await clearPairingState();
+    return startCloudPairing();
+  });
 }
 
 export type CloudPairingProgress =

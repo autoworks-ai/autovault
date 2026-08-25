@@ -16,7 +16,20 @@ import type { CloudPairing, EnrolledUpstream } from "../sync/local.js";
 const WAIT_INTERVAL_MS = 1500;
 const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
+function linkHelp(): string {
+  return `Usage:
+  autovault link [slug|catalog-url|directory] [--json] [--no-browser]
+  autovault init [slug|catalog-url|directory] [--json] [--no-browser]
+
+With no argument, starts Cloud device pairing and prints a user code.
+`;
+}
+
 export async function runLinkCommand(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    process.stdout.write(linkHelp());
+    return;
+  }
   const json = args.includes("--json");
   const noBrowser = args.includes("--no-browser");
   const target = args.find((arg) => !arg.startsWith("-"));

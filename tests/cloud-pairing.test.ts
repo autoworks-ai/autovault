@@ -677,6 +677,32 @@ describe("device pairing (RFC 8628-shaped)", () => {
     ).toHaveLength(1);
   });
 
+  it("serializes concurrent ensureCloudPairing so only one code is minted", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const [first, second] = await Promise.all([
+      ensureCloudPairing(),
+      ensureCloudPairing(),
+    ]);
+    expect(second.user_code).toBe(first.user_code);
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_PAIR_PATH),
+    ).toHaveLength(1);
+  });
+
+  it("reclaims a pairing lock left behind by a dead process", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const lockPath = path.join(currentStorageRoot(), "cloud-sync", "pairing.lock");
+    await fs.mkdir(path.dirname(lockPath), { recursive: true });
+    await fs.writeFile(lockPath, "999999\n");
+    const pairing = await ensureCloudPairing();
+    expect(pairing.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
+    await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("pairs an unpublished vault and keeps catalog_status unpublished", async () => {
     const cloud = await publishPairingCloud({ unpublished: true });
     clouds.push(cloud);
@@ -744,6 +770,17 @@ describe("device pairing (RFC 8628-shaped)", () => {
     });
     expect(finished.stdout).not.toContain("device_secret_key");
     expect(finished.stdout).not.toContain('"pairing"');
+  });
+
+  it("prints usage for autovault link --help without contacting Cloud", async () => {
+    const result = await runCli(["link", "--help"], {
+      CI: "1",
+      NO_COLOR: "1",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Usage:");
+    expect(result.stdout).toContain("autovault link");
+    expect(result.stdout).not.toContain("WDJB-MJHT");
   });
 
   it("prints the user code from autovault link with no argument", async () => {
