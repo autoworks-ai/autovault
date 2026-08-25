@@ -197,6 +197,10 @@ function pairingLockPath(): string {
 
 const PAIRING_LOCK_WAIT_MS = 10_000;
 
+function pairingLockPidPath(lockPath: string): string {
+  return path.join(lockPath, "pid");
+}
+
 function pairingLockToken(): string {
   return `${process.pid}\n${randomUUID()}\n`;
 }
@@ -215,34 +219,95 @@ function pairingLockOwnerAlive(raw: string): boolean {
 }
 
 async function stealStalePairingLock(lockPath: string): Promise<void> {
-  let token: string;
+  let stat: { isDirectory(): boolean; isFile(): boolean };
   try {
-    token = await fs.readFile(lockPath, "utf8");
+    stat = await fs.lstat(lockPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  if (pairingLockOwnerAlive(token)) return;
-  const stolen = `${lockPath}.${process.pid}.${randomUUID()}.stolen`;
+  if (stat.isFile()) {
+    let observed: string;
+    try {
+      observed = await fs.readFile(lockPath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    if (pairingLockOwnerAlive(observed)) return;
+    await claimAndDropIfDead(lockPath, observed);
+    return;
+  }
+  const pidPath = pairingLockPidPath(lockPath);
+  let observed: string;
   try {
-    const again = await fs.readFile(lockPath, "utf8");
-    if (again !== token) return;
-    await fs.rename(lockPath, stolen);
+    observed = await fs.readFile(pidPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      await fs.rmdir(lockPath).catch(() => {});
+      return;
+    }
+    throw error;
+  }
+  if (pairingLockOwnerAlive(observed)) return;
+  const claimed = path.join(
+    path.dirname(lockPath),
+    `pairing.lock.${process.pid}.${randomUUID()}.claimed`,
+  );
+  try {
+    await fs.rename(pidPath, claimed);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
     throw error;
   }
-  await fs.unlink(stolen).catch(() => {});
+  const contents = await fs.readFile(claimed, "utf8").catch(() => "");
+  if (contents !== observed || pairingLockOwnerAlive(contents)) {
+    await fs.rename(claimed, pidPath).catch(() => {});
+    return;
+  }
+  await fs.unlink(claimed).catch(() => {});
+  await fs.rmdir(lockPath).catch(() => {});
+}
+
+async function claimAndDropIfDead(
+  lockPath: string,
+  observed: string,
+): Promise<void> {
+  const claimed = `${lockPath}.${process.pid}.${randomUUID()}.claimed`;
+  try {
+    await fs.rename(lockPath, claimed);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const contents = await fs.readFile(claimed, "utf8").catch(() => "");
+  if (contents !== observed || pairingLockOwnerAlive(contents)) {
+    await fs.rename(claimed, lockPath).catch(() => {});
+    return;
+  }
+  await fs.unlink(claimed).catch(() => {});
 }
 
 async function releasePairingLock(
   lockPath: string,
   token: string,
 ): Promise<void> {
+  const pidPath = pairingLockPidPath(lockPath);
   try {
-    const current = await fs.readFile(lockPath, "utf8");
+    const current = await fs.readFile(pidPath, "utf8");
     if (current !== token) return;
-    await fs.unlink(lockPath);
+    const claimed = path.join(
+      path.dirname(lockPath),
+      `pairing.lock.${process.pid}.${randomUUID()}.claimed`,
+    );
+    await fs.rename(pidPath, claimed);
+    const again = await fs.readFile(claimed, "utf8");
+    if (again !== token) {
+      await fs.rename(claimed, pidPath).catch(() => {});
+      return;
+    }
+    await fs.unlink(claimed).catch(() => {});
+    await fs.rmdir(lockPath).catch(() => {});
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -255,21 +320,37 @@ async function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
   const deadline = Date.now() + PAIRING_LOCK_WAIT_MS;
   while (true) {
     try {
-      await fs.writeFile(lockPath, token, { flag: "wx" });
+      await fs.mkdir(lockPath);
+      await fs.writeFile(pairingLockPidPath(lockPath), token);
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       let existing: string | null = null;
       try {
-        existing = await fs.readFile(lockPath, "utf8");
+        existing = await fs.readFile(pairingLockPidPath(lockPath), "utf8");
       } catch (readError) {
-        if ((readError as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw readError;
+        const code = (readError as NodeJS.ErrnoException).code;
+        if (code !== "ENOENT" && code !== "ENOTDIR") throw readError;
+      }
+      if (existing === null) {
+        try {
+          const st = await fs.stat(lockPath);
+          if (Date.now() - st.mtimeMs < 1000) {
+            await defaultSleep(25);
+            continue;
+          }
+        } catch {
+          continue;
         }
       }
       if (existing === null || !pairingLockOwnerAlive(existing)) {
         await stealStalePairingLock(lockPath);
-        continue;
+        try {
+          await fs.lstat(lockPath);
+        } catch (statError) {
+          if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw statError;
+        }
       }
       if (Date.now() >= deadline) {
         throw new Error(

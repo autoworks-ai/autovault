@@ -761,8 +761,8 @@ describe("device pairing (RFC 8628-shaped)", () => {
     clouds.push(cloud);
     process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
     const lockPath = path.join(currentStorageRoot(), "cloud-sync", "pairing.lock");
-    await fs.mkdir(path.dirname(lockPath), { recursive: true });
-    await fs.writeFile(lockPath, "999999\ndead-token\n");
+    await fs.mkdir(lockPath, { recursive: true });
+    await fs.writeFile(path.join(lockPath, "pid"), "999999\ndead-token\n");
     const pairing = await ensureCloudPairing();
     expect(pairing.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
     await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
@@ -777,8 +777,8 @@ describe("device pairing (RFC 8628-shaped)", () => {
       "cloud-sync",
       "pairing.lock",
     );
-    await fs.mkdir(path.dirname(lockPath), { recursive: true });
-    await fs.writeFile(lockPath, "999999\ndead-token\n");
+    await fs.mkdir(lockPath, { recursive: true });
+    await fs.writeFile(path.join(lockPath, "pid"), "999999\ndead-token\n");
     const [first, second] = await Promise.all([
       ensureCloudPairing(),
       ensureCloudPairing(),
