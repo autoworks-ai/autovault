@@ -419,6 +419,44 @@ export async function progressCloudPairing(input?: {
   sleep?: (ms: number) => Promise<void>;
   wait?: boolean;
 }): Promise<CloudPairingProgress> {
+  const sleep = input?.sleep ?? defaultSleep;
+  const wait = input?.wait !== false;
+  let deadline = Number.POSITIVE_INFINITY;
+  let skipDelay = false;
+  while (Date.now() < deadline) {
+    const step = await withPairingLock(() => claimPairingPoll(wait, skipDelay));
+    skipDelay = false;
+    deadline = step.deadline;
+    if (step.kind === "complete") {
+      return { status: "complete", enrollment: step.enrollment };
+    }
+    if (step.kind === "pending") {
+      return { status: "pending", pairing: step.pairing };
+    }
+    if (step.kind === "defer") {
+      if (!wait) {
+        return { status: "pending", pairing: step.pairing };
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await sleep(Math.min(step.waitMs, remainingMs));
+      skipDelay = true;
+    }
+  }
+  await clearPairingState();
+  throw new Error("This pairing code expired. Run autovault link again.");
+}
+
+type PairingPollClaim =
+  | { kind: "complete"; enrollment: EnrolledUpstream; deadline: number }
+  | { kind: "pending"; pairing: CloudPairing; deadline: number }
+  | { kind: "defer"; pairing: CloudPairing; waitMs: number; deadline: number }
+  | { kind: "continue"; deadline: number };
+
+async function claimPairingPoll(
+  wait: boolean,
+  skipDelay: boolean,
+): Promise<PairingPollClaim> {
   const stored = await readPairingState();
   if (!stored) {
     throw new Error("No Cloud pairing in progress. Run autovault link.");
@@ -427,50 +465,41 @@ export async function progressCloudPairing(input?: {
     await clearPairingState();
     throw new Error("Cloud origin changed. Run autovault link again.");
   }
+  const deadline = Date.parse(stored.expires_at);
+  if (deadline <= Date.now()) {
+    await clearPairingState();
+    throw new Error("This pairing code expired. Run autovault link again.");
+  }
+  const waitMs = skipDelay ? 0 : msUntilNextPoll(stored, wait);
+  if (waitMs > 0) {
+    return { kind: "defer", pairing: publicPairing(stored), waitMs, deadline };
+  }
   const device = {
     publicKey: stored.device_public_key,
     secretKey: stored.device_secret_key,
   };
-  let interval = stored.interval;
-  const sleep = input?.sleep ?? defaultSleep;
-  const wait = input?.wait !== false;
-  const deadline = Date.parse(stored.expires_at);
-  while (Date.now() < deadline) {
-    const waitMs = msUntilNextPoll(stored, wait);
-    if (waitMs > 0) {
-      if (!wait) {
-        return { status: "pending", pairing: publicPairing(stored) };
-      }
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) break;
-      await sleep(Math.min(waitMs, remainingMs));
-      if (Date.now() >= deadline) break;
-    }
-    let poll: DevicePairingPoll;
-    stored.last_polled_at = new Date().toISOString();
-    await writePairingState(stored);
-    try {
-      poll = await pollDevicePairing(device, stored.device_code);
-    } catch (error) {
-      if (isTerminalPairingError(error)) await clearPairingState();
-      throw error;
-    }
-    if (poll.state === "authorized") {
-      const enrollment = await storePairedEnrollment(poll.result, device);
-      await clearPairingState();
-      return { status: "complete", enrollment };
-    }
-    if (poll.state === "slow_down") {
-      interval += 5;
-      stored.interval = interval;
-      await writePairingState(stored);
-    }
-    if (!wait) {
-      return { status: "pending", pairing: publicPairing(stored) };
-    }
+  stored.last_polled_at = new Date().toISOString();
+  await writePairingState(stored);
+  let poll: DevicePairingPoll;
+  try {
+    poll = await pollDevicePairing(device, stored.device_code);
+  } catch (error) {
+    if (isTerminalPairingError(error)) await clearPairingState();
+    throw error;
   }
-  await clearPairingState();
-  throw new Error("This pairing code expired. Run autovault link again.");
+  if (poll.state === "authorized") {
+    const enrollment = await storePairedEnrollment(poll.result, device);
+    await clearPairingState();
+    return { kind: "complete", enrollment, deadline };
+  }
+  if (poll.state === "slow_down") {
+    stored.interval += 5;
+    await writePairingState(stored);
+  }
+  if (!wait) {
+    return { kind: "pending", pairing: publicPairing(stored), deadline };
+  }
+  return { kind: "continue", deadline };
 }
 
 export async function completeCloudPairing(input?: {

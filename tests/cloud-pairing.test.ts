@@ -691,6 +691,39 @@ describe("device pairing (RFC 8628-shaped)", () => {
     ).toHaveLength(1);
   });
 
+  it("serializes concurrent JSON token polls onto one request", async () => {
+    const cloud = await publishPairingCloud({ interval: 1 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    await backdatePairingClock(2_000);
+    const [first, second] = await Promise.all([
+      progressCloudPairing({ wait: false, sleep: async () => {} }),
+      progressCloudPairing({ wait: false, sleep: async () => {} }),
+    ]);
+    expect(first.status).toBe("pending");
+    expect(second.status).toBe("pending");
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_TOKEN_PATH),
+    ).toHaveLength(1);
+  });
+
+  it("raises a local expiry without polling an already-expired pairing", async () => {
+    const cloud = await publishPairingCloud({ interval: 0 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    await patchPairingState({
+      expires_at: new Date(Date.now() - 1000).toISOString(),
+    });
+    await expect(
+      progressCloudPairing({ wait: false, sleep: async () => {} }),
+    ).rejects.toThrow(/expired/i);
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_TOKEN_PATH),
+    ).toHaveLength(0);
+  });
+
   it("reclaims a pairing lock left behind by a dead process", async () => {
     const cloud = await publishPairingCloud();
     clouds.push(cloud);
@@ -780,6 +813,16 @@ describe("device pairing (RFC 8628-shaped)", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Usage:");
     expect(result.stdout).toContain("autovault link");
+    expect(result.stdout).not.toContain("WDJB-MJHT");
+  });
+
+  it("rejects unknown autovault link options instead of starting pairing", async () => {
+    const result = await runCli(["link", "--jsno"], {
+      CI: "1",
+      NO_COLOR: "1",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Unknown option: --jsno");
     expect(result.stdout).not.toContain("WDJB-MJHT");
   });
 

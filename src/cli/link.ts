@@ -15,6 +15,7 @@ import type { CloudPairing, EnrolledUpstream } from "../sync/local.js";
 
 const WAIT_INTERVAL_MS = 1500;
 const WAIT_TIMEOUT_MS = 5 * 60 * 1000;
+const KNOWN_LINK_FLAGS = new Set(["--json", "--no-browser", "--help", "-h"]);
 
 function linkHelp(): string {
   return `Usage:
@@ -29,6 +30,13 @@ export async function runLinkCommand(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) {
     process.stdout.write(linkHelp());
     return;
+  }
+  const unknown = args.find(
+    (arg) => arg.startsWith("-") && !KNOWN_LINK_FLAGS.has(arg),
+  );
+  if (unknown) {
+    process.stderr.write(`Unknown option: ${unknown}\n${linkHelp()}`);
+    process.exit(1);
   }
   const json = args.includes("--json");
   const noBrowser = args.includes("--no-browser");
