@@ -88,6 +88,7 @@ type StoredEnrolledUpstream = z.infer<typeof storedEnrolledUpstreamSchema>;
 
 const pairingStateSchema = z.object({
   schema_version: z.literal(1),
+  origin: z.string().url(),
   device_public_key: z.string().min(1),
   device_secret_key: z.string().min(1),
   device_code: z.string().min(16),
@@ -98,6 +99,8 @@ const pairingStateSchema = z.object({
   interval: z.number().int().nonnegative(),
   started_at: z.string().min(1),
 });
+
+const PAIRING_MIN_POLL_SECONDS = 5;
 
 type StoredCloudPairing = z.infer<typeof pairingStateSchema>;
 
@@ -221,11 +224,17 @@ async function writeState(
 async function readPairingState(): Promise<StoredCloudPairing | null> {
   try {
     const raw = await fs.readFile(pairingStatePath(), "utf-8");
-    const parsed = pairingStateSchema.safeParse(JSON.parse(raw));
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw);
+    } catch {
+      await clearPairingState();
+      return null;
+    }
+    const parsed = pairingStateSchema.safeParse(parsedJson);
     if (!parsed.success) {
-      throw new Error(
-        parsed.error.issues.map((issue) => issue.message).join("; "),
-      );
+      await clearPairingState();
+      return null;
     }
     return parsed.data;
   } catch (error) {
@@ -313,6 +322,7 @@ export async function startCloudPairing(): Promise<CloudPairing> {
   const now = new Date();
   const stored: StoredCloudPairing = {
     schema_version: 1,
+    origin: cloudOrigin(),
     device_public_key: device.publicKey,
     device_secret_key: device.secretKey,
     device_code: started.device_code,
@@ -331,9 +341,14 @@ export async function startCloudPairing(): Promise<CloudPairing> {
 
 export async function ensureCloudPairing(): Promise<CloudPairing> {
   const existing = await readPairingState();
-  if (existing && Date.parse(existing.expires_at) > Date.now()) {
+  if (
+    existing &&
+    Date.parse(existing.expires_at) > Date.now() &&
+    existing.origin === cloudOrigin()
+  ) {
     return publicPairing(existing);
   }
+  if (existing) await clearPairingState();
   return startCloudPairing();
 }
 
@@ -348,6 +363,10 @@ export async function progressCloudPairing(input?: {
   const stored = await readPairingState();
   if (!stored) {
     throw new Error("No Cloud pairing in progress. Run autovault link.");
+  }
+  if (stored.origin !== cloudOrigin()) {
+    await clearPairingState();
+    throw new Error("Cloud origin changed. Run autovault link again.");
   }
   const device = {
     publicKey: stored.device_public_key,
@@ -378,7 +397,7 @@ export async function progressCloudPairing(input?: {
     if (!wait) {
       return { status: "pending", pairing: publicPairing(stored) };
     }
-    await sleep(interval * 1000);
+    await sleep(pairingPollDelaySeconds(interval) * 1000);
   }
   await clearPairingState();
   throw new Error("This pairing code expired. Run autovault link again.");
@@ -401,6 +420,10 @@ function isTerminalPairingError(error: unknown): boolean {
   if (!(error instanceof HttpsSyncError)) return false;
   const code = error.serverMessage ?? "";
   return code === "access_denied" || code === "expired_token";
+}
+
+function pairingPollDelaySeconds(interval: number): number {
+  return interval > 0 ? interval : PAIRING_MIN_POLL_SECONDS;
 }
 
 export async function completeEnrollmentFromTarget(

@@ -490,6 +490,65 @@ describe("device pairing (RFC 8628-shaped)", () => {
     });
   });
 
+  it("clamps a zero pairing interval before the interactive wait sleeps", async () => {
+    const cloud = await publishPairingCloud({ interval: 0 });
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    const sleeps: number[] = [];
+    const pending = progressCloudPairing({
+      wait: true,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+        cloud.confirm(await pairingPublicKey());
+      },
+    });
+    await expect(pending).resolves.toMatchObject({
+      status: "complete",
+      enrollment: { catalog_url: cloud.catalogUrl },
+    });
+    expect(sleeps).toEqual([5000]);
+  });
+
+  it("discards a cached pairing when AUTOVAULT_CLOUD_ORIGIN changes", async () => {
+    const first = await publishPairingCloud({ slug: "one" });
+    const second = await publishPairingCloud({ slug: "two" });
+    clouds.push(first, second);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = first.origin;
+    await startCloudPairing();
+    process.env.AUTOVAULT_CLOUD_ORIGIN = second.origin;
+    const resumed = await ensureCloudPairing();
+    expect(resumed.verification_uri).toBe(`${second.origin}/cloud/pair`);
+    expect(
+      first.requests.filter((request) => request.pathname === SYNC_DEVICE_PAIR_PATH),
+    ).toHaveLength(1);
+    expect(
+      second.requests.filter((request) => request.pathname === SYNC_DEVICE_PAIR_PATH),
+    ).toHaveLength(1);
+  });
+
+  it("treats a pairing cache without origin as stale", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    await startCloudPairing();
+    const pairingPath = path.join(
+      currentStorageRoot(),
+      "cloud-sync",
+      "pairing.json",
+    );
+    const stored = JSON.parse(await fs.readFile(pairingPath, "utf8")) as {
+      origin?: string;
+    };
+    delete stored.origin;
+    await fs.writeFile(pairingPath, `${JSON.stringify(stored, null, 2)}\n`);
+    const resumed = await ensureCloudPairing();
+    expect(resumed.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
+    expect(
+      cloud.requests.filter((request) => request.pathname === SYNC_DEVICE_PAIR_PATH),
+    ).toHaveLength(2);
+  });
+
   it("stores a Cloud enrollment from pairing without posting /v/<slug>/devices", async () => {
     const cloud = await publishPairingCloud();
     clouds.push(cloud);
