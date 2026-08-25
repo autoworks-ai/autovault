@@ -756,7 +756,22 @@ describe("device pairing (RFC 8628-shaped)", () => {
     });
   });
 
-  it("reclaims a pairing lock left behind by a dead process", async () => {
+  it("reclaims a leftover file lock from the previous protocol", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const lockPath = path.join(
+      currentStorageRoot(),
+      "cloud-sync",
+      "pairing.lock",
+    );
+    await fs.mkdir(path.dirname(lockPath), { recursive: true });
+    await fs.writeFile(lockPath, "999999\ndead-token\n");
+    const pairing = await ensureCloudPairing();
+    expect(pairing.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
+  });
+
+  it("reclaims a leftover mkdir lock from the previous protocol", async () => {
     const cloud = await publishPairingCloud();
     clouds.push(cloud);
     process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
@@ -765,10 +780,9 @@ describe("device pairing (RFC 8628-shaped)", () => {
     await fs.writeFile(path.join(lockPath, "pid"), "999999\ndead-token\n");
     const pairing = await ensureCloudPairing();
     expect(pairing.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
-    await expect(fs.stat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("lets concurrent waiters steal a dead lock once", async () => {
+  it("lets concurrent waiters share one pairing past a leftover lock artifact", async () => {
     const cloud = await publishPairingCloud();
     clouds.push(cloud);
     process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
@@ -789,6 +803,37 @@ describe("device pairing (RFC 8628-shaped)", () => {
         (request) => request.pathname === SYNC_DEVICE_PAIR_PATH,
       ),
     ).toHaveLength(1);
+  });
+
+  it("waits on a live flock and proceeds after the holder dies", async () => {
+    const cloud = await publishPairingCloud();
+    clouds.push(cloud);
+    process.env.AUTOVAULT_CLOUD_ORIGIN = cloud.origin;
+    const holder = await holdPairingFlockUntilKilled();
+    try {
+      const pending = ensureCloudPairing();
+      await defaultSleep(200);
+      expect(
+        cloud.requests.filter(
+          (request) => request.pathname === SYNC_DEVICE_PAIR_PATH,
+        ),
+      ).toHaveLength(0);
+      holder.kill("SIGKILL");
+      await new Promise<void>((resolve) =>
+        holder.once("close", () => resolve()),
+      );
+      const pairing = await pending;
+      expect(pairing.verification_uri).toBe(`${cloud.origin}/cloud/pair`);
+      expect(
+        cloud.requests.filter(
+          (request) => request.pathname === SYNC_DEVICE_PAIR_PATH,
+        ),
+      ).toHaveLength(1);
+    } finally {
+      if (!holder.killed && holder.exitCode === null) {
+        holder.kill("SIGKILL");
+      }
+    }
   });
 
   it("pairs an unpublished vault and keeps catalog_status unpublished", async () => {
@@ -965,4 +1010,54 @@ async function backdatePairingClock(ms: number): Promise<void> {
       ? { last_polled_at: shift(stored.last_polled_at) }
       : {}),
   });
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function holdPairingFlockUntilKilled() {
+  const lockPath = path.join(
+    currentStorageRoot(),
+    "cloud-sync",
+    "pairing.lock",
+  );
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+  await fs.writeFile(lockPath, "");
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `
+      const Database = require("better-sqlite3");
+      const db = new Database(${JSON.stringify(lockPath)}, { timeout: 0 });
+      db.exec("BEGIN IMMEDIATE");
+      process.stdout.write("locked\\n");
+      setInterval(() => {}, 1 << 30);
+      `,
+    ],
+    { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  await new Promise<void>((resolve, reject) => {
+    let buf = "";
+    child.stdout.on("data", (chunk) => {
+      buf += String(chunk);
+      if (buf.includes("locked")) resolve();
+    });
+    child.stderr.on("data", (chunk) => {
+      buf += String(chunk);
+    });
+    child.on("error", reject);
+    child.on("exit", (code, signal) => {
+      reject(
+        new Error(
+          `flock holder exited before locking (${code ?? signal}): ${buf}`,
+        ),
+      );
+    });
+  });
+  child.removeAllListeners("exit");
+  return child;
 }

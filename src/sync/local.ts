@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { installSkill } from "../tools/install-skill.js";
@@ -196,175 +197,95 @@ function pairingLockPath(): string {
 }
 
 const PAIRING_LOCK_WAIT_MS = 10_000;
+const PAIRING_LOCK_POLL_MS = 25;
 
-function pairingLockPidPath(lockPath: string): string {
-  return path.join(lockPath, "pid");
+let pairingLockTail: Promise<unknown> = Promise.resolve();
+
+function pairingFlockPath(): string {
+  return path.join(syncDir(), "pairing.flock");
 }
 
-function pairingLockToken(): string {
-  return `${process.pid}\n${randomUUID()}\n`;
+function isSqliteBusy(error: unknown): boolean {
+  const code = (error as { code?: string }).code;
+  return code === "SQLITE_BUSY" || code === "SQLITE_LOCKED";
 }
 
-function pairingLockOwnerAlive(raw: string): boolean {
-  const pid = Number.parseInt(raw.trim().split("\n", 1)[0] ?? "", 10);
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ESRCH") return false;
-    return code === "EPERM";
-  }
-}
-
-async function stealStalePairingLock(lockPath: string): Promise<void> {
-  let stat: { isDirectory(): boolean; isFile(): boolean };
-  try {
-    stat = await fs.lstat(lockPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  if (stat.isFile()) {
-    let observed: string;
-    try {
-      observed = await fs.readFile(lockPath, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-      throw error;
-    }
-    if (pairingLockOwnerAlive(observed)) return;
-    await claimAndDropIfDead(lockPath, observed);
-    return;
-  }
-  const pidPath = pairingLockPidPath(lockPath);
-  let observed: string;
-  try {
-    observed = await fs.readFile(pidPath, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      await fs.rmdir(lockPath).catch(() => {});
-      return;
-    }
-    throw error;
-  }
-  if (pairingLockOwnerAlive(observed)) return;
-  const claimed = path.join(
-    path.dirname(lockPath),
-    `pairing.lock.${process.pid}.${randomUUID()}.claimed`,
+function isSqliteUnusable(error: unknown): boolean {
+  const code = (error as { code?: string }).code;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "SQLITE_CANTOPEN" ||
+    code === "SQLITE_NOTADB" ||
+    code === "EISDIR" ||
+    /unable to open database file/i.test(message) ||
+    /not a database/i.test(message)
   );
+}
+
+function tryBeginPairingLock(lockPath: string): Database.Database {
+  const db = new Database(lockPath, { timeout: 0 });
   try {
-    await fs.rename(pidPath, claimed);
+    db.exec("BEGIN IMMEDIATE");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    db.close();
     throw error;
   }
-  const contents = await fs.readFile(claimed, "utf8").catch(() => "");
-  if (contents !== observed || pairingLockOwnerAlive(contents)) {
-    await fs.rename(claimed, pidPath).catch(() => {});
-    return;
-  }
-  await fs.unlink(claimed).catch(() => {});
-  await fs.rmdir(lockPath).catch(() => {});
+  return db;
 }
 
-async function claimAndDropIfDead(
-  lockPath: string,
-  observed: string,
-): Promise<void> {
-  const claimed = `${lockPath}.${process.pid}.${randomUUID()}.claimed`;
-  try {
-    await fs.rename(lockPath, claimed);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-  const contents = await fs.readFile(claimed, "utf8").catch(() => "");
-  if (contents !== observed || pairingLockOwnerAlive(contents)) {
-    await fs.rename(claimed, lockPath).catch(() => {});
-    return;
-  }
-  await fs.unlink(claimed).catch(() => {});
-}
-
-async function releasePairingLock(
-  lockPath: string,
-  token: string,
-): Promise<void> {
-  const pidPath = pairingLockPidPath(lockPath);
-  try {
-    const current = await fs.readFile(pidPath, "utf8");
-    if (current !== token) return;
-    const claimed = path.join(
-      path.dirname(lockPath),
-      `pairing.lock.${process.pid}.${randomUUID()}.claimed`,
-    );
-    await fs.rename(pidPath, claimed);
-    const again = await fs.readFile(claimed, "utf8");
-    if (again !== token) {
-      await fs.rename(claimed, pidPath).catch(() => {});
-      return;
-    }
-    await fs.unlink(claimed).catch(() => {});
-    await fs.rmdir(lockPath).catch(() => {});
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
-
-async function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
-  await fs.mkdir(syncDir(), { recursive: true });
-  const lockPath = pairingLockPath();
-  const token = pairingLockToken();
+async function acquirePairingLockDb(): Promise<Database.Database> {
   const deadline = Date.now() + PAIRING_LOCK_WAIT_MS;
+  const primary = pairingLockPath();
+  const fallback = pairingFlockPath();
   while (true) {
     try {
-      await fs.mkdir(lockPath);
-      await fs.writeFile(pairingLockPidPath(lockPath), token);
-      break;
+      const db = tryBeginPairingLock(primary);
+      await fs.chmod(primary, 0o600).catch(() => {});
+      return db;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let existing: string | null = null;
-      try {
-        existing = await fs.readFile(pairingLockPidPath(lockPath), "utf8");
-      } catch (readError) {
-        const code = (readError as NodeJS.ErrnoException).code;
-        if (code !== "ENOENT" && code !== "ENOTDIR") throw readError;
-      }
-      if (existing === null) {
-        try {
-          const st = await fs.stat(lockPath);
-          if (Date.now() - st.mtimeMs < 1000) {
-            await defaultSleep(25);
-            continue;
-          }
-        } catch {
-          continue;
+      if (isSqliteBusy(error)) {
+        if (Date.now() >= deadline) {
+          throw new Error(
+            "Could not start Cloud pairing; another link is already in progress.",
+          );
         }
+        await defaultSleep(PAIRING_LOCK_POLL_MS);
+        continue;
       }
-      if (existing === null || !pairingLockOwnerAlive(existing)) {
-        await stealStalePairingLock(lockPath);
-        try {
-          await fs.lstat(lockPath);
-        } catch (statError) {
-          if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue;
-          throw statError;
-        }
-      }
+      if (!isSqliteUnusable(error)) throw error;
+    }
+    try {
+      const db = tryBeginPairingLock(fallback);
+      await fs.chmod(fallback, 0o600).catch(() => {});
+      return db;
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
       if (Date.now() >= deadline) {
         throw new Error(
           "Could not start Cloud pairing; another link is already in progress.",
         );
       }
-      await defaultSleep(25);
+      await defaultSleep(PAIRING_LOCK_POLL_MS);
     }
   }
-  try {
-    return await fn();
-  } finally {
-    await releasePairingLock(lockPath, token);
-  }
+}
+
+function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = async () => {
+    await fs.mkdir(syncDir(), { recursive: true });
+    const db = await acquirePairingLockDb();
+    try {
+      return await fn();
+    } finally {
+      db.close();
+    }
+  };
+  const next = pairingLockTail.then(run, run);
+  pairingLockTail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
 }
 
 async function readState(): Promise<z.infer<typeof upstreamStateSchema>> {
@@ -565,9 +486,7 @@ export async function progressCloudPairing(input?: {
       skipDelay = true;
     }
   }
-  await withPairingLock(() =>
-    clearPairingStateIfDevice(trackedDeviceCode),
-  );
+  await withPairingLock(() => clearPairingStateIfDevice(trackedDeviceCode));
   throw new Error("This pairing code expired. Run autovault link again.");
 }
 
