@@ -10,36 +10,36 @@ const ASCII_MARK: Record<VaultMarkState, string[]> = {
     "  |    ()    |",
     "  |    ||    |",
     "  +----------+",
-    "     |    |"
+    "     |    |",
   ],
   scan: [
     "  +----------+",
     "  |----------|",
     "  |    ()    |",
     "  +----------+",
-    "     |    |"
+    "     |    |",
   ],
   read: [
     "  +----------+",
     "  |    ()    |",
     "  |----------|",
     "  +----------+",
-    "     |    |"
+    "     |    |",
   ],
   admit: [
     "  +----------+",
     "  |    ()    |",
     "  |    ||    |",
     "  +----------+",
-    "     |    |"
+    "     |    |",
   ],
   held: [
     "  +----------+",
     "  |    ()    |",
     "  |    ||    |",
     "  +----------+",
-    "     |    |"
-  ]
+    "     |    |",
+  ],
 };
 
 const UNICODE_MARK: Record<VaultMarkState, string[]> = {
@@ -48,39 +48,42 @@ const UNICODE_MARK: Record<VaultMarkState, string[]> = {
     "  │    ()    │",
     "  │    ||    │",
     "  ╰──┬────┬──╯",
-    "     │    │"
+    "     │    │",
   ],
   scan: [
     "  ╭──────────╮",
     "  │──────────│",
     "  │    ()    │",
     "  ╰──┬────┬──╯",
-    "     │    │"
+    "     │    │",
   ],
   read: [
     "  ╭──────────╮",
     "  │    ()    │",
     "  │──────────│",
     "  ╰──┬────┬──╯",
-    "     │    │"
+    "     │    │",
   ],
   admit: [
     "  ╭──────────╮",
     "  │    ()    │",
     "  │    ||    │",
     "  ╰──┬────┬──╯",
-    "     │    │"
+    "     │    │",
   ],
   held: [
     "  ╭──────────╮",
     "  │    ()    │",
     "  │    ||    │",
     "  ╰──┬────┬──╯",
-    "     │    │"
-  ]
+    "     │    │",
+  ],
 };
 
-function styleForTone(theme: Theme, tone: VaultMarkTone): (text: string) => string {
+function styleForTone(
+  theme: Theme,
+  tone: VaultMarkTone,
+): (text: string) => string {
   switch (tone) {
     case "warn":
       return theme.style.yellow;
@@ -95,7 +98,7 @@ function styleForTone(theme: Theme, tone: VaultMarkTone): (text: string) => stri
 
 export function renderVaultMark(
   theme: Theme,
-  options: { state?: VaultMarkState; tone?: VaultMarkTone } = {}
+  options: { state?: VaultMarkState; tone?: VaultMarkTone } = {},
 ): string[] {
   const state = options.state ?? "locked";
   const tone = options.tone ?? (state === "held" ? "warn" : "mint");
@@ -106,7 +109,7 @@ export function renderVaultMark(
 
 export function renderBrandHeader(
   stream: NodeJS.WriteStream = process.stdout,
-  options: { compact?: boolean } = {}
+  options: { compact?: boolean } = {},
 ): string {
   const theme = makeTheme(stream);
   const tagline = `reviewed ${theme.symbol.arrow} signed ${theme.symbol.arrow} admitted`;
@@ -122,23 +125,42 @@ export function renderBrandHeader(
     `${mark[2]}  ${theme.style.dim("reviewed skill vault for Claude Code, Codex, and Cursor")}`,
     `${mark[3]}`,
     `${mark[4]}`,
-    ""
+    "",
   ].join("\n");
 }
 
 export function renderSuccessOutro(
   title: string,
   lines: string[],
-  stream: NodeJS.WriteStream = process.stdout
+  stream: NodeJS.WriteStream = process.stdout,
+): string {
+  return renderStatusOutro(title, lines, stream, { tone: "mint" });
+}
+
+export function renderStatusOutro(
+  title: string,
+  lines: string[],
+  stream: NodeJS.WriteStream = process.stdout,
+  options: { tone?: VaultMarkTone } = {},
 ): string {
   const theme = makeTheme(stream);
-  const rule = theme.style.mint(repeatVisible(theme.symbol.line, Math.min(theme.width, 68)));
+  const tone = options.tone ?? "mint";
+  const style = styleForTone(theme, tone);
+  const mark =
+    tone === "error"
+      ? theme.symbol.cross
+      : tone === "warn"
+        ? theme.symbol.warn
+        : theme.symbol.check;
+  const rule = style(
+    repeatVisible(theme.symbol.line, Math.min(theme.width, 68)),
+  );
   return [
     "",
     rule,
-    `${theme.style.mint(theme.symbol.check)} ${theme.style.bold(title)}`,
+    `${style(mark)} ${theme.style.bold(title)}`,
     ...lines.map((line) => `  ${line}`),
     rule,
-    ""
+    "",
   ].join("\n");
 }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { renderSetupIntro } from "../src/cli/setup/render.js";
+import { formatCliError } from "../src/cli/ui/errors.js";
 import { sayVault } from "../src/cli/ui/animation.js";
 import { renderVaultMark } from "../src/cli/ui/brand.js";
 import { keyValueRows } from "../src/cli/ui/table.js";
 import { makeTheme } from "../src/cli/ui/theme.js";
+import { HttpsSyncError } from "../src/sync/https.js";
 
 describe("CLI UI helpers", () => {
   it("renders ASCII fallback branding without ANSI", () => {
@@ -104,5 +106,51 @@ describe("CLI UI helpers", () => {
     expect(output).toContain("review, sign, and admit");
     expect(output).not.toContain("+----------+");
     expect(output).not.toContain("AutoVault validated");
+  });
+
+  it("formats Cloud HTTPS failures without Error wrappers or raw JSON", () => {
+    const error = new HttpsSyncError(
+      404,
+      "Not Found",
+      new URL("https://autovault.dev/v/missing-vault/catalog.json"),
+      "No such vault."
+    );
+    const stream = {
+      isTTY: false,
+      columns: 72,
+      write() {
+        return true;
+      }
+    } as unknown as NodeJS.WriteStream;
+
+    const output = formatCliError(error, stream);
+
+    expect(output).toContain("No vault uses that slug");
+    expect(output).toContain("missing-vault");
+    expect(output).toContain("next");
+    expect(output).not.toContain("autovault failed");
+    expect(output).not.toContain("Error:");
+    expect(output).not.toContain('{"error"');
+  });
+
+  it("strips terminal control characters from Cloud error messages", () => {
+    const error = new HttpsSyncError(
+      500,
+      "Internal Server Error",
+      new URL("https://autovault.dev/v/acme/catalog.json"),
+      "boom\u001b[31mhacked",
+    );
+    const stream = {
+      isTTY: false,
+      columns: 72,
+      write() {
+        return true;
+      },
+    } as unknown as NodeJS.WriteStream;
+
+    const output = formatCliError(error, stream);
+    expect(output).toContain("boom");
+    expect(output).not.toContain("\u001b");
+    expect(error.serverMessage).toBe("boom[31mhacked");
   });
 });

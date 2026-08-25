@@ -1,7 +1,11 @@
 import dns from "node:dns/promises";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
-import { assertContentLength, fetchWithDeadline, readBoundedText } from "../util/bounded-fetch.js";
+import {
+  assertContentLength,
+  fetchWithDeadline,
+  readBoundedText,
+} from "../util/bounded-fetch.js";
 import { MAX_TOTAL_BYTES } from "../util/limits.js";
 import {
   httpsBundlePath,
@@ -12,7 +16,7 @@ import {
   syncSkillBundleSchema,
   type SyncCatalog,
   type SyncSigningKeypair,
-  type SyncSkillBundle
+  type SyncSkillBundle,
 } from "./contract.js";
 
 const MAX_SYNC_CATALOG_BYTES = 1 * 1024 * 1024;
@@ -20,10 +24,40 @@ const MAX_SYNC_DEVICE_BYTES = 64 * 1024;
 
 const deviceEnrollmentResponseSchema = z.object({
   device_id: z.string().min(1),
-  status: z.enum(["pending", "active", "revoked"])
+  status: z.enum(["pending", "active", "revoked"]),
 });
 
-export type HttpsDeviceEnrollment = z.infer<typeof deviceEnrollmentResponseSchema>;
+export type HttpsDeviceEnrollment = z.infer<
+  typeof deviceEnrollmentResponseSchema
+>;
+
+export class HttpsSyncError extends Error {
+  readonly name = "HttpsSyncError";
+  readonly serverMessage: string | null;
+
+  constructor(
+    readonly status: number,
+    readonly statusText: string,
+    readonly url: URL,
+    serverMessage: string | null,
+  ) {
+    const safe = serverMessage ? sanitizeServerMessage(serverMessage) : "";
+    super(
+      safe.length > 0
+        ? safe
+        : `HTTPS sync failed: ${status} ${statusText} (${url})`,
+    );
+    this.serverMessage = safe.length > 0 ? safe : null;
+  }
+}
+
+export function isUnpublishedCatalogError(error: unknown): boolean {
+  return (
+    error instanceof HttpsSyncError &&
+    error.status === 404 &&
+    /no published catalog/i.test(error.serverMessage ?? error.message)
+  );
+}
 
 export function isHttpSyncTarget(target: string): boolean {
   try {
@@ -38,18 +72,20 @@ export function normalizeHttpsCatalogUrl(target: string): URL {
   const url = new URL(target);
   assertAllowedSyncUrl(url);
   if (
-    url.pathname === `/${SYNC_HTTPS_CATALOG_FILENAME}`
-    || url.pathname.endsWith(`/${SYNC_HTTPS_CATALOG_FILENAME}`)
+    url.pathname === `/${SYNC_HTTPS_CATALOG_FILENAME}` ||
+    url.pathname.endsWith(`/${SYNC_HTTPS_CATALOG_FILENAME}`)
   ) {
     return url;
   }
-  const root = url.pathname.endsWith("/") ? url : new URL(`${url.pathname}/`, url);
+  const root = url.pathname.endsWith("/")
+    ? url
+    : new URL(`${url.pathname}/`, url);
   return new URL(SYNC_HTTPS_CATALOG_FILENAME, root);
 }
 
 export async function enrollHttpsDevice(
   catalogUrl: URL,
-  device: SyncSigningKeypair
+  device: SyncSigningKeypair,
 ): Promise<HttpsDeviceEnrollment> {
   const url = new URL("devices", catalogDirectoryUrl(catalogUrl));
   const parsed = deviceEnrollmentResponseSchema.safeParse(
@@ -57,48 +93,58 @@ export async function enrollHttpsDevice(
       method: "POST",
       device,
       maxBytes: MAX_SYNC_DEVICE_BYTES,
-      body: { public_key: device.publicKey }
-    })
+      body: { public_key: device.publicKey },
+    }),
   );
   if (!parsed.success) {
-    throw new Error(`Invalid device enrollment response: ${parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ")}`);
+    throw new Error(
+      `Invalid device enrollment response: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
   }
   return parsed.data;
 }
 
 export async function fetchHttpsDeviceStatus(
   catalogUrl: URL,
-  device: SyncSigningKeypair
+  device: SyncSigningKeypair,
 ): Promise<HttpsDeviceEnrollment> {
   const url = new URL("devices/current", catalogDirectoryUrl(catalogUrl));
   const parsed = deviceEnrollmentResponseSchema.safeParse(
-    await fetchSignedJson(url, { method: "GET", device, maxBytes: MAX_SYNC_DEVICE_BYTES })
+    await fetchSignedJson(url, {
+      method: "GET",
+      device,
+      maxBytes: MAX_SYNC_DEVICE_BYTES,
+    }),
   );
   if (!parsed.success) {
-    throw new Error(`Invalid device status response: ${parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ")}`);
+    throw new Error(
+      `Invalid device status response: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
   }
   return parsed.data;
 }
 
 export async function fetchHttpsCatalog(
   catalogUrl: URL,
-  device: SyncSigningKeypair
+  device: SyncSigningKeypair,
 ): Promise<SyncCatalog> {
   const parsed = syncCatalogSchema.safeParse(
     await fetchSignedJson(catalogUrl, {
       method: "GET",
       device,
-      maxBytes: MAX_SYNC_CATALOG_BYTES
-    })
+      maxBytes: MAX_SYNC_CATALOG_BYTES,
+    }),
   );
   if (!parsed.success) {
-    throw new Error(`Invalid upstream catalog: ${parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ")}`);
+    throw new Error(
+      `Invalid upstream catalog: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
   }
   return parsed.data;
 }
@@ -107,20 +153,22 @@ export async function fetchHttpsBundle(
   catalogUrl: URL,
   bundlePath: string,
   bundleHash: string,
-  device: SyncSigningKeypair
+  device: SyncSigningKeypair,
 ): Promise<SyncSkillBundle> {
   const bundleUrl = resolveHttpsBundleUrl(catalogUrl, bundlePath, bundleHash);
   const parsed = syncSkillBundleSchema.safeParse(
     await fetchSignedJson(bundleUrl, {
       method: "GET",
       device,
-      maxBytes: MAX_TOTAL_BYTES
-    })
+      maxBytes: MAX_TOTAL_BYTES,
+    }),
   );
   if (!parsed.success) {
-    throw new Error(`Invalid sync bundle: ${parsed.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("; ")}`);
+    throw new Error(
+      `Invalid sync bundle: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
   }
   return parsed.data;
 }
@@ -128,22 +176,31 @@ export async function fetchHttpsBundle(
 export function resolveHttpsBundleUrl(
   catalogUrl: URL,
   bundlePath: string,
-  bundleHash: string
+  bundleHash: string,
 ): URL {
   const resolved = new URL(bundlePath, catalogUrl);
   assertHttpsBundleContained(catalogUrl, resolved, bundlePath);
   const expected = new URL(httpsBundlePath(bundleHash), catalogUrl);
   if (resolved.href !== expected.href) {
-    throw new Error(`HTTPS bundle path must be bundles/<bundle_hash>.json (got ${bundlePath})`);
+    throw new Error(
+      `HTTPS bundle path must be bundles/<bundle_hash>.json (got ${bundlePath})`,
+    );
   }
   return resolved;
 }
 
-function assertHttpsBundleContained(catalogUrl: URL, bundleUrl: URL, bundlePath: string): void {
+function assertHttpsBundleContained(
+  catalogUrl: URL,
+  bundleUrl: URL,
+  bundlePath: string,
+): void {
   if (bundleUrl.username || bundleUrl.password) {
     throw new Error(`Bundle path escapes upstream catalog: ${bundlePath}`);
   }
-  if (bundleUrl.protocol !== catalogUrl.protocol || bundleUrl.host !== catalogUrl.host) {
+  if (
+    bundleUrl.protocol !== catalogUrl.protocol ||
+    bundleUrl.host !== catalogUrl.host
+  ) {
     throw new Error(`Bundle path escapes upstream catalog: ${bundlePath}`);
   }
   const catalogDir = decodeURIComponent(catalogDirectoryPath(catalogUrl));
@@ -169,14 +226,22 @@ function catalogDirectoryPath(catalogUrl: URL): string {
 function assertAllowedSyncUrl(url: URL): void {
   if (url.protocol === "https:") {
     if (loadConfig().mode === "remote" && isLoopbackHost(url.hostname)) {
-      throw new Error(`HTTPS sync refused private catalog host: ${url.hostname}`);
+      throw new Error(
+        `HTTPS sync refused private catalog host: ${url.hostname}`,
+      );
     }
     return;
   }
-  if (url.protocol === "http:" && isLoopbackHost(url.hostname) && loadConfig().mode === "local") {
+  if (
+    url.protocol === "http:" &&
+    isLoopbackHost(url.hostname) &&
+    loadConfig().mode === "local"
+  ) {
     return;
   }
-  throw new Error(`Only https catalog URLs are supported (got ${url.protocol})`);
+  throw new Error(
+    `Only https catalog URLs are supported (got ${url.protocol})`,
+  );
 }
 
 async function assertRemotePublicDestination(url: URL): Promise<void> {
@@ -192,7 +257,9 @@ async function assertRemotePublicDestination(url: URL): Promise<void> {
   }
   for (const address of addresses) {
     if (isPrivateIp(address.address)) {
-      throw new Error(`HTTPS sync refused private catalog host: ${url.hostname}`);
+      throw new Error(
+        `HTTPS sync refused private catalog host: ${url.hostname}`,
+      );
     }
   }
 }
@@ -209,13 +276,45 @@ function isPrivateIp(ip: string): boolean {
     const octet = Number(rfc1918[1]);
     if (octet >= 16 && octet <= 31) return true;
   }
-  if (value.startsWith("fc") || value.startsWith("fd") || value.startsWith("fe80:")) return true;
+  if (
+    value.startsWith("fc") ||
+    value.startsWith("fd") ||
+    value.startsWith("fe80:")
+  )
+    return true;
   return false;
 }
 
 function isLoopbackHost(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
   return host === "127.0.0.1" || host === "localhost" || host === "::1";
+}
+
+function parseServerErrorMessage(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "error" in parsed &&
+      typeof (parsed as { error: unknown }).error === "string"
+    ) {
+      const message = sanitizeServerMessage(
+        (parsed as { error: string }).error,
+      );
+      if (message) return message;
+    }
+  } catch {
+    // Fall through to the raw body when Cloud returns non-JSON.
+  }
+  const raw = sanitizeServerMessage(trimmed);
+  return raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
+}
+
+function sanitizeServerMessage(message: string): string {
+  return message.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
 }
 
 async function fetchSignedJson(
@@ -225,18 +324,23 @@ async function fetchSignedJson(
     device: SyncSigningKeypair;
     maxBytes: number;
     body?: unknown;
-  }
+  },
 ): Promise<unknown> {
   assertAllowedSyncUrl(url);
   await assertRemotePublicDestination(url);
   const timestamp = String(Math.floor(Date.now() / 1000));
-  const signature = signDeviceRequest(input.device.secretKey, input.method, url.pathname, timestamp);
+  const signature = signDeviceRequest(
+    input.device.secretKey,
+    input.method,
+    url.pathname,
+    timestamp,
+  );
   const headers: Record<string, string> = {
     "User-Agent": "autovault",
     Accept: "application/json",
     [SYNC_DEVICE_HEADERS.device]: input.device.publicKey,
     [SYNC_DEVICE_HEADERS.timestamp]: timestamp,
-    [SYNC_DEVICE_HEADERS.signature]: signature
+    [SYNC_DEVICE_HEADERS.signature]: signature,
   };
   if (input.body !== undefined) headers["content-type"] = "application/json";
   const response = await fetchWithDeadline(
@@ -246,17 +350,26 @@ async function fetchSignedJson(
       method: input.method,
       headers,
       body: input.body === undefined ? undefined : JSON.stringify(input.body),
-      redirect: "manual"
+      redirect: "manual",
     },
-    url.toString()
+    url.toString(),
   );
   if (response.status >= 300 && response.status < 400) {
     throw new Error(`HTTPS sync refused redirect: ${url}`);
   }
-  assertContentLength(url.toString(), response.headers.get("content-length"), input.maxBytes);
+  assertContentLength(
+    url.toString(),
+    response.headers.get("content-length"),
+    input.maxBytes,
+  );
   const text = await readBoundedText(response, input.maxBytes, url.toString());
   if (!response.ok) {
-    throw new Error(`HTTPS sync failed: ${response.status} ${response.statusText} (${url}): ${text}`);
+    throw new HttpsSyncError(
+      response.status,
+      response.statusText,
+      url,
+      parseServerErrorMessage(text),
+    );
   }
   try {
     return JSON.parse(text) as unknown;
