@@ -62,6 +62,14 @@ describe("resolveLinkTarget", () => {
     );
   });
 
+  it("builds slug-less pairing URLs on the Cloud origin", async () => {
+    const { cloudPairUrl } = await import("../src/sync/target.js");
+    expect(cloudPairUrl("WDJB-MJHT")).toBe(
+      `${DEFAULT_CLOUD_ORIGIN}/cloud/pair?code=WDJB-MJHT`,
+    );
+    expect(cloudPairUrl()).toBe(`${DEFAULT_CLOUD_ORIGIN}/cloud/pair`);
+  });
+
   it("treats relative paths as file catalogs", () => {
     expect(resolveLinkTarget("./upstream")).toEqual({
       kind: "file",

@@ -1,4 +1,5 @@
 import dns from "node:dns/promises";
+import os from "node:os";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import {
@@ -8,9 +9,12 @@ import {
 } from "../util/bounded-fetch.js";
 import { MAX_TOTAL_BYTES } from "../util/limits.js";
 import {
+  DEVICE_CODE_GRANT_TYPE,
   httpsBundlePath,
   signDeviceRequest,
   SYNC_DEVICE_HEADERS,
+  SYNC_DEVICE_PAIR_PATH,
+  SYNC_DEVICE_TOKEN_PATH,
   SYNC_HTTPS_CATALOG_FILENAME,
   syncCatalogSchema,
   syncSkillBundleSchema,
@@ -18,6 +22,7 @@ import {
   type SyncSigningKeypair,
   type SyncSkillBundle,
 } from "./contract.js";
+import { cloudApiUrl } from "./origin.js";
 
 const MAX_SYNC_CATALOG_BYTES = 1 * 1024 * 1024;
 const MAX_SYNC_DEVICE_BYTES = 64 * 1024;
@@ -27,9 +32,35 @@ const deviceEnrollmentResponseSchema = z.object({
   status: z.enum(["pending", "active", "revoked"]),
 });
 
+const devicePairingStartSchema = z.object({
+  device_code: z.string().min(16).max(128),
+  user_code: z
+    .string()
+    .min(4)
+    .max(20)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9-]*$/),
+  verification_uri: z.string().url(),
+  verification_uri_complete: z.string().url(),
+  expires_in: z.number().int().positive(),
+  interval: z.number().int().nonnegative(),
+});
+
+const devicePairingTokenSchema = z.object({
+  slug: z.string().min(1),
+  catalog_url: z.string().url(),
+  device_id: z.string().min(1),
+  status: z.enum(["pending", "active"]),
+});
+
 export type HttpsDeviceEnrollment = z.infer<
   typeof deviceEnrollmentResponseSchema
 >;
+export type DevicePairingStart = z.infer<typeof devicePairingStartSchema>;
+export type DevicePairingToken = z.infer<typeof devicePairingTokenSchema>;
+export type DevicePairingPoll =
+  | { state: "pending" }
+  | { state: "slow_down" }
+  | { state: "authorized"; result: DevicePairingToken };
 
 export class HttpsSyncError extends Error {
   readonly name = "HttpsSyncError";
@@ -81,6 +112,63 @@ export function normalizeHttpsCatalogUrl(target: string): URL {
     ? url
     : new URL(`${url.pathname}/`, url);
   return new URL(SYNC_HTTPS_CATALOG_FILENAME, root);
+}
+
+export async function startDevicePairing(
+  device: SyncSigningKeypair,
+): Promise<DevicePairingStart> {
+  const url = cloudApiUrl(SYNC_DEVICE_PAIR_PATH);
+  const hostname = deviceHostname();
+  const parsed = devicePairingStartSchema.safeParse(
+    await fetchSignedJson(url, {
+      method: "POST",
+      device,
+      maxBytes: MAX_SYNC_DEVICE_BYTES,
+      body: {
+        public_key: device.publicKey,
+        ...(hostname ? { hostname } : {}),
+      },
+    }),
+  );
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid device pairing response: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
+  }
+  return parsed.data;
+}
+
+export async function pollDevicePairing(
+  device: SyncSigningKeypair,
+  deviceCode: string,
+): Promise<DevicePairingPoll> {
+  const url = cloudApiUrl(SYNC_DEVICE_TOKEN_PATH);
+  const result = await fetchSignedJsonResult(url, {
+    method: "POST",
+    device,
+    maxBytes: MAX_SYNC_DEVICE_BYTES,
+    body: {
+      device_code: deviceCode,
+      grant_type: DEVICE_CODE_GRANT_TYPE,
+    },
+  });
+  if (!result.ok) {
+    const code = rfcDeviceError(result.body) ?? result.error.serverMessage;
+    if (code === "authorization_pending") return { state: "pending" };
+    if (code === "slow_down") return { state: "slow_down" };
+    throw result.error;
+  }
+  const parsed = devicePairingTokenSchema.safeParse(result.body);
+  if (!parsed.success) {
+    throw new Error(
+      `Invalid device pairing token: ${parsed.error.issues
+        .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+        .join("; ")}`,
+    );
+  }
+  return { state: "authorized", result: parsed.data };
 }
 
 export async function enrollHttpsDevice(
@@ -295,17 +383,8 @@ function parseServerErrorMessage(text: string): string | null {
   if (!trimmed) return null;
   try {
     const parsed = JSON.parse(trimmed) as unknown;
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "error" in parsed &&
-      typeof (parsed as { error: unknown }).error === "string"
-    ) {
-      const message = sanitizeServerMessage(
-        (parsed as { error: string }).error,
-      );
-      if (message) return message;
-    }
+    const message = rfcDeviceError(parsed);
+    if (message) return message;
   } catch {
     // Fall through to the raw body when Cloud returns non-JSON.
   }
@@ -313,8 +392,30 @@ function parseServerErrorMessage(text: string): string | null {
   return raw.length > 240 ? `${raw.slice(0, 237)}...` : raw;
 }
 
+function rfcDeviceError(body: unknown): string | null {
+  if (
+    body &&
+    typeof body === "object" &&
+    "error" in body &&
+    typeof (body as { error: unknown }).error === "string"
+  ) {
+    const message = sanitizeServerMessage((body as { error: string }).error);
+    if (message) return message;
+  }
+  return null;
+}
+
 function sanitizeServerMessage(message: string): string {
   return message.replace(/[\u0000-\u001F\u007F-\u009F]/g, "").trim();
+}
+
+function deviceHostname(): string | undefined {
+  try {
+    const hostname = os.hostname().trim().slice(0, 120);
+    return hostname.length > 0 ? hostname : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchSignedJson(
@@ -326,6 +427,23 @@ async function fetchSignedJson(
     body?: unknown;
   },
 ): Promise<unknown> {
+  const result = await fetchSignedJsonResult(url, input);
+  if (!result.ok) throw result.error;
+  return result.body;
+}
+
+async function fetchSignedJsonResult(
+  url: URL,
+  input: {
+    method: "GET" | "POST";
+    device: SyncSigningKeypair;
+    maxBytes: number;
+    body?: unknown;
+  },
+): Promise<
+  | { ok: true; status: number; body: unknown }
+  | { ok: false; status: number; body: unknown; error: HttpsSyncError }
+> {
   assertAllowedSyncUrl(url);
   await assertRemotePublicDestination(url);
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -338,6 +456,7 @@ async function fetchSignedJson(
   const headers: Record<string, string> = {
     "User-Agent": "autovault",
     Accept: "application/json",
+    "Cache-Control": "no-store",
     [SYNC_DEVICE_HEADERS.device]: input.device.publicKey,
     [SYNC_DEVICE_HEADERS.timestamp]: timestamp,
     [SYNC_DEVICE_HEADERS.signature]: signature,
@@ -363,17 +482,26 @@ async function fetchSignedJson(
     input.maxBytes,
   );
   const text = await readBoundedText(response, input.maxBytes, url.toString());
-  if (!response.ok) {
-    throw new HttpsSyncError(
-      response.status,
-      response.statusText,
-      url,
-      parseServerErrorMessage(text),
-    );
-  }
+  let body: unknown = null;
   try {
-    return JSON.parse(text) as unknown;
+    body = JSON.parse(text) as unknown;
   } catch {
-    throw new Error(`Invalid JSON from HTTPS sync: ${url}`);
+    if (response.ok) {
+      throw new Error(`Invalid JSON from HTTPS sync: ${url}`);
+    }
   }
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      body,
+      error: new HttpsSyncError(
+        response.status,
+        response.statusText,
+        url,
+        parseServerErrorMessage(text),
+      ),
+    };
+  }
+  return { ok: true, status: response.status, body };
 }

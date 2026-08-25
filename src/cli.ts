@@ -40,7 +40,7 @@ function usageText(): string {
   autovault doctor [skill-name] [--clean] [--repair] [--json]
   autovault audit-repo --repo /path/to/repo [--format json|markdown]
   autovault import-autohub --tool-filters /path/tool-filters.json [--mcp-servers /path/mcp-servers.json] [--reset] [--json]
-  autovault link <slug|catalog-url|directory> [--json] [--no-browser]
+  autovault link [slug|catalog-url|directory] [--json] [--no-browser]
   autovault resolve --caller <id> --platform <name> [--channel <id>] --query <text> [--json]
   autovault serve [--help]
   autovault ui [--port <n>] [--no-open]
