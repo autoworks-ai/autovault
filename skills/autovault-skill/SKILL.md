@@ -1,6 +1,11 @@
 ---
 name: autovault-skill
-description: Understand AutoVault-managed skills. AutoVault syncs skills into the agent's normal skill directory, so loaded skills can be used directly without an AutoVault MCP server.
+description: >-
+  Understand AutoVault-managed skills and how to install or update them. Use
+  when a skill is visible via symlink, when authoring or editing SKILL.md, or
+  before touching ~/.autovault/skills. Vault writes must go through
+  `autovault add-local` or MCP propose_skill/update_skill so AutoVault
+  re-signs; never hand-edit vaulted files and run sync-profiles.
 license: MIT
 tags:
   - meta
@@ -10,13 +15,14 @@ agents:
   - claude-code
   - codex
   - autojack
+  - cursor
 category: meta
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
 capabilities:
   network: false
   filesystem: readonly
-  tools: []
+  tools: [Bash]
 ---
 
 # AutoVault Meta-Skill
@@ -31,16 +37,49 @@ AutoVault does not execute skills. The agent that loads a skill is responsible
 for sandboxing and user confirmation before running anything the skill
 describes.
 
+## Hard rule: never write the vault by hand
+
+`~/.autovault/skills/<name>/` is a **signed store**, not a working copy.
+Hand-editing `SKILL.md` there invalidates the Ed25519 manifest
+(`autovault doctor <name>` reports `tampered` / `signature_invalid`).
+`autovault sync-profiles` only refreshes symlinks. It does **not** validate,
+hash, or re-sign.
+
+Author or edit a bundle **outside** the vault (a temp directory is fine),
+then install through the same gate humans and MCP use:
+
+```bash
+# New skill, or replace an existing one by frontmatter name
+autovault add-local /path/to/bundle --sync-profiles
+
+# Preserve recorded provenance when replacing a local skill
+autovault add-local /path/to/bundle --source '<existing-identifier>' --sync-profiles
+```
+
+Confirm the vault accepted the write:
+
+```bash
+autovault doctor <name> --json   # integrity.kind must be "ok"
+```
+
+If MCP tools are connected, `propose_skill` (new) and `update_skill` (existing)
+are the same gate. Use them when present. When they are absent **the CLI is
+required**, not optional. `autovault doctor <name> --repair` re-signs a
+tampered **local** bundle only. Remote-sourced skills (GitHub, agentskills,
+URL) must be reinstalled or updated from upstream. Repair is a recovery hatch,
+not the authoring path.
+
 ## When to use
 
 - When the user asks why an AutoVault-managed skill is visible.
 - When deciding whether to use a synced skill such as `commit-message` or
   `skill-author`.
-- Before writing a new skill, check the skills already visible to the current
-  agent.
+- Before writing or updating a skill. Check installed skills first
+  (`autovault skill search <query>` or the host's skill list).
+- When `autovault doctor` reports tampered integrity.
 - When debugging profile sync or stale skill links.
 
-## Primary workflow: synced skills
+## Read path: synced skills
 
 AutoVault's primary interface is filesystem-native profile sync:
 
@@ -57,7 +96,7 @@ $AUTOVAULT_STORAGE_PATH/
 
 Use synced skills directly through the host's normal skill mechanism. If a
 skill is visible in the current agent session, it is already available; no
-`mcp__autovault__*` tools are required.
+`mcp__autovault__*` tools are required to *follow* it.
 
 For source-aware terminal installs, use the unified CLI:
 
@@ -95,10 +134,11 @@ autovault add https://example.com/SKILL.md --source url
 autovault add https://example.com/SKILL.md --source url --agent codex
 ```
 
-`autovault add-local` remains a compatibility alias for local bundle installer
-scripts. For newly authored skill text from an agent session, use
-`propose_skill` when MCP tools are available instead of writing directly into
-the vault.
+For a local bundle you authored, `autovault add-local /path --sync-profiles`
+is the CLI write gate — the same validation and signing path as MCP
+`propose_skill` / `update_skill`. `autovault add` is for known sources
+(GitHub, agentskills, URL, or a local path). Do not hand-edit
+`$AUTOVAULT_STORAGE_PATH/skills` and then `sync-profiles`.
 
 If a remote skill lacks AutoVault-specific `agents` frontmatter, keep upstream
 bytes unchanged and route profile sync with `--agent <agent>`. Use
@@ -168,7 +208,9 @@ provenance plus the stable bundled skill name, allowing later drift checks
 against the package's current `skills/` directory.
 
 Skip this workflow entirely when the MCP tools are not connected. Missing MCP
-tools are not an error for filesystem-synced skills.
+tools are not an error for *reading* filesystem-synced skills. Missing MCP
+tools **are** a reason to use `autovault add-local`, not a reason to write
+`$AUTOVAULT_STORAGE_PATH/skills` directly.
 
 ## SKILL.md schema (minimum)
 
