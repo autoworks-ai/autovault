@@ -64,8 +64,10 @@ autovault doctor <name> --json   # integrity.kind must be "ok"
 
 If MCP tools are connected, `propose_skill` (new) and `update_skill` (existing)
 are the same gate. Use them when present. When they are absent **the CLI is
-required**, not optional. `autovault doctor <name> --repair` re-signs an
-already-tampered vault copy. That is a recovery hatch, not the authoring path.
+required**, not optional. `autovault doctor <name> --repair` re-signs a
+tampered **local** bundle only. Remote-sourced skills (GitHub, agentskills,
+URL) must be reinstalled or updated from upstream. Repair is a recovery hatch,
+not the authoring path.
 
 ## When to use
 
