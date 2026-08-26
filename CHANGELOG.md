@@ -6,6 +6,34 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 while it remains in pre-1.0 development.
 
+## [0.5.0](https://github.com/autoworks-ai/autovault/compare/v0.4.0...v0.5.0) (2026-08-26)
+
+
+### Features
+
+* **add:** unify skill add UX ([#86](https://github.com/autoworks-ai/autovault/issues/86)) ([0fb5c5b](https://github.com/autoworks-ai/autovault/commit/0fb5c5b09339d7bda69f032f061a2e8dd4b04e07))
+* **cli:** add autovault link with Cloud slug expansion ([#125](https://github.com/autoworks-ai/autovault/issues/125)) ([35361af](https://github.com/autoworks-ai/autovault/commit/35361af156ebd89219c3b0f14817be5824780104))
+* **cli:** harden update UX ([#83](https://github.com/autoworks-ai/autovault/issues/83)) ([8245c5e](https://github.com/autoworks-ai/autovault/commit/8245c5efe904945e62f6b5dccd2813f03e96db9f))
+* **cli:** repair add-local frontmatter interactively ([#77](https://github.com/autoworks-ai/autovault/issues/77)) ([b76c67c](https://github.com/autoworks-ai/autovault/commit/b76c67cd2a844d924c140634d1c86cfd3e1d6699))
+* **cli:** show update notice in version output ([#79](https://github.com/autoworks-ai/autovault/issues/79)) ([83157c6](https://github.com/autoworks-ai/autovault/commit/83157c6b191c0dcf7c1bbc2e64c1c90ebd96687d))
+* **cli:** start Cloud pairing from autovault link with no argument ([#129](https://github.com/autoworks-ai/autovault/issues/129)) ([862db03](https://github.com/autoworks-ai/autovault/commit/862db0345f8031a4b4037b03d6e1d1f76867ba47))
+* **doctor:** verify Codex render fidelity ([#108](https://github.com/autoworks-ai/autovault/issues/108)) ([60fed11](https://github.com/autoworks-ai/autovault/commit/60fed1181bc51332f57d37f6cf51325eb0616019))
+* **skills:** harden bundle imports and provenance ([#109](https://github.com/autoworks-ai/autovault/issues/109)) ([06e232d](https://github.com/autoworks-ai/autovault/commit/06e232d7a832ecfd2da953114b4078e849d0ad47))
+* **sync:** enroll HTTPS signed catalogs ([#124](https://github.com/autoworks-ai/autovault/issues/124)) ([5f124e6](https://github.com/autoworks-ai/autovault/commit/5f124e605c431b0d0d9aef201a8f5fbbf50e4b7f))
+* **ui:** add local dashboard and signed delivery ([#82](https://github.com/autoworks-ai/autovault/issues/82)) ([9156798](https://github.com/autoworks-ai/autovault/commit/9156798fe44222dcfe2e701b5d14c4816995f553))
+* **ui:** add management dashboard and signed sync ([#84](https://github.com/autoworks-ai/autovault/issues/84)) ([11becaa](https://github.com/autoworks-ai/autovault/commit/11becaa60a4013c4f04b29d0c4f38813dbd45cf1))
+* **ui:** share skill template across surfaces and report add-skill outcomes ([#87](https://github.com/autoworks-ai/autovault/issues/87)) ([b166b2f](https://github.com/autoworks-ai/autovault/commit/b166b2f164016bf74f758d87f6e2d1262ba8ea68))
+
+
+### Bug Fixes
+
+* **ci:** always squash dependabot auto-merge so PRs enter the merge queue ([#94](https://github.com/autoworks-ai/autovault/issues/94)) ([df9dad0](https://github.com/autoworks-ai/autovault/commit/df9dad08bfe76a0fea1465a60165bb0d297b6777))
+* **ci:** restore production npm audit gate ([#120](https://github.com/autoworks-ai/autovault/issues/120)) ([9c4b5da](https://github.com/autoworks-ai/autovault/commit/9c4b5daa97293195ed0de0eed852820b109912d1))
+* **ci:** use app token for docs drift ([#75](https://github.com/autoworks-ai/autovault/issues/75)) ([262ee94](https://github.com/autoworks-ai/autovault/commit/262ee94d4bdee2829d8d4157b62d24153948fc31))
+* **cli:** treat unpublished Cloud catalogs as a waiting state ([#126](https://github.com/autoworks-ai/autovault/issues/126)) ([61dd24c](https://github.com/autoworks-ai/autovault/commit/61dd24c3b1cb0da01159e7fe6b15e13997397527))
+* exit orphaned stdio MCP servers on parent death ([#114](https://github.com/autoworks-ai/autovault/issues/114)) ([588160c](https://github.com/autoworks-ai/autovault/commit/588160c0d62560c3bed4a133a4053ebbd1357a4d))
+* **sync:** default omitted pairing interval and OS pairing lock ([#132](https://github.com/autoworks-ai/autovault/issues/132)) ([e761045](https://github.com/autoworks-ai/autovault/commit/e76104506348beb1e703fd8d606eee07369ae367))
+
 ## [0.4.0](https://github.com/autoworks-ai/autovault/compare/v0.3.0...v0.4.0) (2026-05-22)
 
 
