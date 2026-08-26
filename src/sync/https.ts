@@ -42,7 +42,7 @@ const devicePairingStartSchema = z.object({
   verification_uri: z.string().url(),
   verification_uri_complete: z.string().url(),
   expires_in: z.number().int().positive(),
-  interval: z.number().int().nonnegative(),
+  interval: z.number().int().nonnegative().optional().default(5),
 });
 
 const devicePairingTokenSchema = z.object({

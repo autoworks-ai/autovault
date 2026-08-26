@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { z } from "zod";
 import { loadConfig } from "../config.js";
 import { installSkill } from "../tools/install-skill.js";
@@ -196,55 +197,95 @@ function pairingLockPath(): string {
 }
 
 const PAIRING_LOCK_WAIT_MS = 10_000;
-const PAIRING_LOCK_STALE_MS = 30_000;
+const PAIRING_LOCK_POLL_MS = 25;
 
-async function pairingLockHeld(lockPath: string): Promise<boolean> {
-  try {
-    const raw = await fs.readFile(lockPath, "utf8");
-    const pid = Number.parseInt(raw.trim(), 10);
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ESRCH" || code === "ENOENT") return false;
-    if (code === "EPERM") return true;
-  }
-  try {
-    const stat = await fs.stat(lockPath);
-    return Date.now() - stat.mtimeMs < PAIRING_LOCK_STALE_MS;
-  } catch {
-    return false;
-  }
+let pairingLockTail: Promise<unknown> = Promise.resolve();
+
+function pairingFlockPath(): string {
+  return path.join(syncDir(), "pairing.flock");
 }
 
-async function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
-  await fs.mkdir(syncDir(), { recursive: true });
-  const lockPath = pairingLockPath();
+function isSqliteBusy(error: unknown): boolean {
+  const code = (error as { code?: string }).code;
+  return code === "SQLITE_BUSY" || code === "SQLITE_LOCKED";
+}
+
+function isSqliteUnusable(error: unknown): boolean {
+  const code = (error as { code?: string }).code;
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    code === "SQLITE_CANTOPEN" ||
+    code === "SQLITE_NOTADB" ||
+    code === "EISDIR" ||
+    /unable to open database file/i.test(message) ||
+    /not a database/i.test(message)
+  );
+}
+
+function tryBeginPairingLock(lockPath: string): Database.Database {
+  const db = new Database(lockPath, { timeout: 0 });
+  try {
+    db.exec("BEGIN IMMEDIATE");
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  return db;
+}
+
+async function acquirePairingLockDb(): Promise<Database.Database> {
   const deadline = Date.now() + PAIRING_LOCK_WAIT_MS;
+  const primary = pairingLockPath();
+  const fallback = pairingFlockPath();
   while (true) {
     try {
-      await fs.writeFile(lockPath, `${process.pid}\n`, { flag: "wx" });
-      break;
+      const db = tryBeginPairingLock(primary);
+      await fs.chmod(primary, 0o600).catch(() => {});
+      return db;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (!(await pairingLockHeld(lockPath))) {
-        await fs.unlink(lockPath).catch(() => {});
+      if (isSqliteBusy(error)) {
+        if (Date.now() >= deadline) {
+          throw new Error(
+            "Could not start Cloud pairing; another link is already in progress.",
+          );
+        }
+        await defaultSleep(PAIRING_LOCK_POLL_MS);
         continue;
       }
+      if (!isSqliteUnusable(error)) throw error;
+    }
+    try {
+      const db = tryBeginPairingLock(fallback);
+      await fs.chmod(fallback, 0o600).catch(() => {});
+      return db;
+    } catch (error) {
+      if (!isSqliteBusy(error)) throw error;
       if (Date.now() >= deadline) {
         throw new Error(
           "Could not start Cloud pairing; another link is already in progress.",
         );
       }
-      await defaultSleep(25);
+      await defaultSleep(PAIRING_LOCK_POLL_MS);
     }
   }
-  try {
-    return await fn();
-  } finally {
-    await fs.unlink(lockPath).catch(() => {});
-  }
+}
+
+function withPairingLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = async () => {
+    await fs.mkdir(syncDir(), { recursive: true });
+    const db = await acquirePairingLockDb();
+    try {
+      return await fn();
+    } finally {
+      db.close();
+    }
+  };
+  const next = pairingLockTail.then(run, run);
+  pairingLockTail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
 }
 
 async function readState(): Promise<z.infer<typeof upstreamStateSchema>> {
@@ -423,10 +464,12 @@ export async function progressCloudPairing(input?: {
   const wait = input?.wait !== false;
   let deadline = Number.POSITIVE_INFINITY;
   let skipDelay = false;
+  let trackedDeviceCode: string | undefined;
   while (Date.now() < deadline) {
     const step = await withPairingLock(() => claimPairingPoll(wait, skipDelay));
     skipDelay = false;
     deadline = step.deadline;
+    trackedDeviceCode = step.deviceCode;
     if (step.kind === "complete") {
       return { status: "complete", enrollment: step.enrollment };
     }
@@ -443,15 +486,39 @@ export async function progressCloudPairing(input?: {
       skipDelay = true;
     }
   }
-  await clearPairingState();
+  await withPairingLock(() => clearPairingStateIfDevice(trackedDeviceCode));
   throw new Error("This pairing code expired. Run autovault link again.");
 }
 
 type PairingPollClaim =
-  | { kind: "complete"; enrollment: EnrolledUpstream; deadline: number }
-  | { kind: "pending"; pairing: CloudPairing; deadline: number }
-  | { kind: "defer"; pairing: CloudPairing; waitMs: number; deadline: number }
-  | { kind: "continue"; deadline: number };
+  | {
+      kind: "complete";
+      enrollment: EnrolledUpstream;
+      deadline: number;
+      deviceCode: string;
+    }
+  | {
+      kind: "pending";
+      pairing: CloudPairing;
+      deadline: number;
+      deviceCode: string;
+    }
+  | {
+      kind: "defer";
+      pairing: CloudPairing;
+      waitMs: number;
+      deadline: number;
+      deviceCode: string;
+    }
+  | { kind: "continue"; deadline: number; deviceCode: string };
+
+async function clearPairingStateIfDevice(
+  deviceCode: string | undefined,
+): Promise<void> {
+  if (!deviceCode) return;
+  const stored = await readPairingState();
+  if (stored?.device_code === deviceCode) await clearPairingState();
+}
 
 async function claimPairingPoll(
   wait: boolean,
@@ -466,13 +533,20 @@ async function claimPairingPoll(
     throw new Error("Cloud origin changed. Run autovault link again.");
   }
   const deadline = Date.parse(stored.expires_at);
-  if (deadline <= Date.now()) {
+  if (deadline < Date.now()) {
     await clearPairingState();
     throw new Error("This pairing code expired. Run autovault link again.");
   }
   const waitMs = skipDelay ? 0 : msUntilNextPoll(stored, wait);
+  const deviceCode = stored.device_code;
   if (waitMs > 0) {
-    return { kind: "defer", pairing: publicPairing(stored), waitMs, deadline };
+    return {
+      kind: "defer",
+      pairing: publicPairing(stored),
+      waitMs,
+      deadline,
+      deviceCode,
+    };
   }
   const device = {
     publicKey: stored.device_public_key,
@@ -490,16 +564,21 @@ async function claimPairingPoll(
   if (poll.state === "authorized") {
     const enrollment = await storePairedEnrollment(poll.result, device);
     await clearPairingState();
-    return { kind: "complete", enrollment, deadline };
+    return { kind: "complete", enrollment, deadline, deviceCode };
   }
   if (poll.state === "slow_down") {
     stored.interval += 5;
     await writePairingState(stored);
   }
   if (!wait) {
-    return { kind: "pending", pairing: publicPairing(stored), deadline };
+    return {
+      kind: "pending",
+      pairing: publicPairing(stored),
+      deadline,
+      deviceCode,
+    };
   }
-  return { kind: "continue", deadline };
+  return { kind: "continue", deadline, deviceCode };
 }
 
 export async function completeCloudPairing(input?: {
