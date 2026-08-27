@@ -34,7 +34,7 @@ function usageText(): string {
   autovault add <source-or-path> [--source github|agentskills|url|local] [--provenance <value>] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
   autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
   autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
-  autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]
+  autovault sync-profiles [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault profiles list [--json]
   autovault setup [--json] [--review] [--advanced]
   autovault doctor [skill-name] [--clean] [--repair] [--json]
@@ -107,6 +107,28 @@ Options:
   --ui-bundle-url <url>  Fetch a signed UI bundle manifest from this URL.
   --ui-channel <name>    Select the UI bundle channel. Defaults to stable.
 `;
+}
+
+function syncProfilesHelp(): string {
+  return `Usage:
+  autovault sync-profiles [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
+
+Refreshes generated AutoVault profiles and their managed links in existing host
+skill directories. Discovery is enabled by default for ~/.claude/skills,
+~/.codex/skills, and ~/.cursor/skills.
+
+Options:
+  --discover             Discover existing known host skill directories (default).
+  --no-discover          Refresh only configured or explicitly linked roots.
+  --link agent=/path     Add or override a profile root for this sync.
+  --json                 Write the full result as JSON.
+  --help, -h             Show this help without changing profiles.
+`;
+}
+
+function syncProfilesUsage(): never {
+  process.stderr.write(syncProfilesHelp());
+  process.exit(1);
 }
 
 function missingPublicUrlMessage(): string {
@@ -532,18 +554,42 @@ async function main(): Promise<void> {
   }
 
   if (command === "sync-profiles") {
+    if (args.includes("--help") || args.includes("-h")) {
+      process.stdout.write(syncProfilesHelp());
+      return;
+    }
     const profileRoots: Record<string, string> = {};
+    let discover = true;
+    let json = false;
     for (let i = 0; i < args.length; i += 1) {
-      if (args[i] !== "--link") continue;
-      const value = args[i + 1];
-      const [agent, root] = parseProfileLink(value);
-      profileRoots[agent] = root;
-      i += 1;
+      const arg = args[i];
+      if (arg === "--link") {
+        const value = args[i + 1];
+        if (!value || !value.includes("=")) syncProfilesUsage();
+        const [agent, root] = value.split("=", 2);
+        if (!agent || !root) syncProfilesUsage();
+        profileRoots[agent] = root;
+        i += 1;
+        continue;
+      }
+      if (arg === "--discover") {
+        discover = true;
+        continue;
+      }
+      if (arg === "--no-discover") {
+        discover = false;
+        continue;
+      }
+      if (arg === "--json") {
+        json = true;
+        continue;
+      }
+      syncProfilesUsage();
     }
     const result = await withSuppressedLogs(() =>
-      syncProfiles({ profileRoots, discover: hasFlag(args, "--discover") }),
+      syncProfiles({ profileRoots, discover }),
     );
-    if (hasFlag(args, "--json")) {
+    if (json) {
       writeJson(result);
     } else {
       process.stdout.write(formatSyncProfilesResult(result));

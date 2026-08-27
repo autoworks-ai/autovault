@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { addSkill } from "../src/tools/add-skill.js";
 import { deleteSkill } from "../src/tools/delete-skill.js";
 import { getSkill } from "../src/tools/get-skill.js";
@@ -390,6 +390,31 @@ bin:
     const deleted = await deleteSkill({ name: "delete-me-skill" });
     expect(deleted).toMatchObject({ deleted: true, name: "delete-me-skill" });
     await expect(readSkill("delete-me-skill")).resolves.toBeNull();
+  });
+
+  it("supports explicitly disabling profile-root discovery during delete", async () => {
+    const name = "delete-without-discovery";
+    const fakeHome = path.join(currentStorageRoot(), "delete-no-discover-home");
+    const codexRoot = path.join(fakeHome, ".codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+    vi.stubEnv("HOME", fakeHome);
+    try {
+      await addSkill({
+        source: "local",
+        identifier: "vendor/repo",
+        skill_dir: await localBundle(name),
+        profile_roots: { codex: codexRoot }
+      });
+      const consumerLink = path.join(codexRoot, name);
+      await expect(fs.lstat(consumerLink)).resolves.toBeTruthy();
+
+      await deleteSkill({ name, discover_profile_roots: false });
+
+      await expect(fs.lstat(consumerLink)).resolves.toBeTruthy();
+      await fs.unlink(consumerLink);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

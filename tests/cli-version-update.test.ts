@@ -24,6 +24,7 @@ function runCli(args: string[], env: Record<string, string> = {}): Promise<CliRe
         AUTOVAULT_SECURITY_STRICT: "true",
         AUTOVAULT_LATEST_VERSION: "9.9.9",
         NODE_NO_WARNINGS: "1",
+        HOME: path.join(currentStorageRoot(), "home"),
         ...env
       },
       stdio: ["pipe", "pipe", "pipe"]

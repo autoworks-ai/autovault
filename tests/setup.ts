@@ -7,9 +7,13 @@ import { resetCapabilityDbForTests } from "../src/capabilities/db.js";
 import { resetSigningCache } from "../src/util/sign.js";
 
 let tempRoot: string | null = null;
+const originalHome = process.env.HOME;
 
 beforeEach(() => {
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "autovault-test-"));
+  const fakeHome = path.join(tempRoot, "home");
+  fs.mkdirSync(fakeHome, { recursive: true });
+  process.env.HOME = fakeHome;
   process.env.AUTOVAULT_MODE = "local";
   process.env.AUTOVAULT_STORAGE_PATH = tempRoot;
   delete process.env.AUTOVAULT_DB_PATH;
@@ -34,6 +38,8 @@ afterEach(() => {
     tempRoot = null;
   }
   process.env.AUTOVAULT_MODE = "local";
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
   delete process.env.AUTOVAULT_PROFILE_CONFIG_PATH;
   delete process.env.AUTOVAULT_PUBLIC_URL;
   delete process.env.AUTOVAULT_HTTP_PORT;

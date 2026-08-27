@@ -155,7 +155,7 @@ The CLI is the local operator surface:
 autovault add <source-or-path> [--source github|agentskills|url|local] [--provenance <value>] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
 autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
 autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
-autovault sync-profiles [--discover] [--link agent=/path/to/skills] [--json]
+autovault sync-profiles [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault profiles list [--json]
 autovault setup [--json] [--review] [--advanced]
 autovault doctor [skill-name] [--clean] [--repair] [--json]
@@ -173,6 +173,11 @@ autovault skill <action> <name>
 
 Human-readable output is the default. Use `--json` or `--format json` only
 for scripts and other machine consumers.
+
+`autovault sync-profiles` discovers existing `~/.claude/skills`,
+`~/.codex/skills`, and `~/.cursor/skills` directories by default. Use
+`--no-discover` to refresh only configured or explicitly linked roots.
+`sync-profiles --help` prints subcommand usage without touching profile state.
 
 `autovault ui` starts a loopback-only browser dashboard for local skill
 metadata edits, named profile management, profile sync, update checks, deletion,
@@ -249,11 +254,20 @@ ordinary skill integrity results:
 - `render.unverifiable` lists render entries owned by skills that are no longer
   installed.
 - Every skill has `render.kind`: `ok`, `skipped`, or `error`.
+- Every skill has a `plugin_shadows` array. Each collision records category
+  `plugin-shadowed`, the host, plugin identifier, and cached `SKILL.md` path;
+  `summary.plugin_shadowed` counts affected vaulted skills.
 
 `skipped` means that skill has no machine-local render entry; it is not an
 ordinary doctor error. Automation consumers that require an installed and
 verified rendered bundle must positively assert `render.kind == "ok"` rather
 than relying on the process exit code.
+
+Plugin shadows are warnings, not signature failures. AutoVault scans the
+Cursor and Claude Code plugin caches because host plugins can inject a skill
+with the same name even when the vaulted copy is healthy. `skillOverrides`
+does not apply to plugin skills; AutoVault reports these collisions but never
+uninstalls or changes host plugins.
 
 `autovault setup` is the first-run adoption wizard. It scans the vault, bundled
 skills, and discovered native roots such as `~/.claude/skills`,
@@ -278,7 +292,9 @@ Registered tools:
 - `update_skill` - refresh from the recorded source or replace from a new
   source, local bundle, or inline bytes.
 - `delete_skill` - remove an installed skill and its vault-local transforms,
-  then refresh generated profiles.
+  then refresh generated profiles and prune managed consumer links. Existing
+  host roots are discovered by default; the input also accepts optional
+  `discover_profile_roots` and `profile_roots` fields.
 - `check_updates` - compare installed skills against upstream source state and
   report drift or transform-review work.
 

@@ -26,6 +26,7 @@ function runCli(args: string[], env: Record<string, string> = {}): Promise<CliRe
         AUTOVAULT_LOG_LEVEL: "error",
         AUTOVAULT_SECURITY_STRICT: "true",
         NODE_NO_WARNINGS: "1",
+        HOME: path.join(currentStorageRoot(), "home"),
         ...env
       },
       stdio: ["pipe", "pipe", "pipe"]
@@ -217,6 +218,70 @@ All skills --------------------------------------------
     expect(json.exitCode).toBe(0);
     const parsed = JSON.parse(json.stdout) as { profiles: Record<string, string[]> };
     expect(parsed.profiles.codex).toContain("sync-human");
+  });
+
+  it("discovers existing consumer roots by default and supports --no-discover", async () => {
+    await ensureStorage();
+    await writeSkill("sync-discovery-default", catalogSkill("sync-discovery-default"));
+    const fakeHome = path.join(currentStorageRoot(), "sync-home");
+    const codexRoot = path.join(fakeHome, ".codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+
+    const discovered = await runCli(["sync-profiles", "--json"], { HOME: fakeHome });
+    expect(discovered.exitCode).toBe(0);
+    expect(JSON.parse(discovered.stdout)).toMatchObject({
+      linkedRoots: { codex: codexRoot }
+    });
+    await expect(fs.lstat(path.join(codexRoot, "sync-discovery-default"))).resolves.toBeTruthy();
+
+    await fs.rm(path.join(codexRoot, "sync-discovery-default"));
+    const skipped = await runCli(["sync-profiles", "--no-discover", "--json"], {
+      HOME: fakeHome
+    });
+    expect(skipped.exitCode).toBe(0);
+    expect(JSON.parse(skipped.stdout)).toMatchObject({ linkedRoots: {} });
+    await expect(
+      fs.lstat(path.join(codexRoot, "sync-discovery-default"))
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["--help", "-h"])(
+    "prints sync-profiles %s without mutating generated or consumer profiles",
+    async (helpFlag) => {
+      await ensureStorage();
+      await writeSkill("sync-help-sentinel", catalogSkill("sync-help-sentinel"));
+      const fakeHome = path.join(currentStorageRoot(), "sync-help-home");
+      const codexRoot = path.join(fakeHome, ".codex", "skills");
+      await fs.mkdir(codexRoot, { recursive: true });
+      await fs.writeFile(path.join(codexRoot, "sentinel.txt"), "unchanged\n", "utf-8");
+
+      const result = await runCli(["sync-profiles", helpFlag], { HOME: fakeHome });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("Usage:");
+      expect(result.stdout).toContain("autovault sync-profiles");
+      expect(await fs.readFile(path.join(codexRoot, "sentinel.txt"), "utf-8")).toBe(
+        "unchanged\n"
+      );
+      await expect(
+        fs.lstat(path.join(codexRoot, "sync-help-sentinel"))
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        fs.lstat(path.join(currentStorageRoot(), "profiles", "codex", "sync-help-sentinel"))
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+  );
+
+  it("rejects unknown sync-profiles arguments without running a sync", async () => {
+    const result = await runCli(["sync-profiles", "--unexpected"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("Usage:");
+    await expect(fs.lstat(path.join(currentStorageRoot(), "profiles"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
   });
 
   it("uses human defaults and explicit JSON for import-autohub", async () => {
