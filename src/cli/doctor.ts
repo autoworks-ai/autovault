@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { loadConfig } from "../config.js";
 import { collectLocalSkillBundle, LocalBundleLimitError } from "../installer/local.js";
 import {
@@ -31,6 +33,7 @@ import { badge, sectionTitle } from "./ui/messages.js";
 import { bulletList, keyValueRows } from "./ui/table.js";
 import { makeTheme } from "./ui/theme.js";
 import { writeJson } from "./ui/output.js";
+import { scanPluginShadows, type PluginShadow } from "../doctor/plugin-shadows.js";
 
 type DoctorOptions = {
   skill?: string;
@@ -58,6 +61,7 @@ type DoctorSkillReport = {
   integrity: SkillIntegrityStatus;
   source: SkillSourceStatus;
   render: RenderFidelityStatus;
+  plugin_shadows: PluginShadow[];
   actions: string[];
 };
 
@@ -128,10 +132,45 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function signatureInvalidGuidance(name: string, source: SkillSourceStatus): string {
+async function sameCanonicalPath(left: string, right: string): Promise<boolean> {
+  try {
+    const [leftStat, rightStat] = await Promise.all([fs.stat(left), fs.stat(right)]);
+    if (leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino) return true;
+  } catch {
+    // A source may no longer exist. Resolve its nearest real ancestor below so
+    // a stale symlinked vault path still cannot be recommended as upstream.
+  }
+  const canonical = async (value: string): Promise<string> => {
+    const unresolved: string[] = [];
+    let candidate = path.resolve(value);
+    while (true) {
+      try {
+        return path.join(await fs.realpath(candidate), ...unresolved);
+      } catch {
+        const parent = path.dirname(candidate);
+        if (parent === candidate) return path.resolve(value);
+        unresolved.unshift(path.basename(candidate));
+        candidate = parent;
+      }
+    }
+  };
+  const [canonicalLeft, canonicalRight] = await Promise.all([canonical(left), canonical(right)]);
+  return canonicalLeft === canonicalRight;
+}
+
+async function signatureInvalidGuidance(name: string, source: SkillSourceStatus): Promise<string> {
   const sourcePath = localSourceIdentifier(source);
+  const sourceIsVault = sourcePath
+    ? await sameCanonicalPath(sourcePath, skillDir(name))
+    : false;
   const sourceGuidance = sourcePath
-    ? `Fix by editing the original source bundle and running:\n  autovault add-local ${shellQuote(sourcePath)} --sync-profiles`
+    ? sourceIsVault
+      ? [
+          "The recorded local source is the vault directory itself, so it is not an editable upstream.",
+          "To recover safely, copy the bundle to a working directory outside the vault, edit the copy, then run:",
+          "  autovault add-local '<copied-bundle-path>' --sync-profiles"
+        ].join("\n")
+      : `Fix by editing the original source bundle and running:\n  autovault add-local ${shellQuote(sourcePath)} --sync-profiles`
     : "Fix by editing the original source bundle and reinstalling through autovault add-local.";
   return [
     "The vaulted copy was edited after signing. Do not edit ~/.autovault/skills directly.",
@@ -141,11 +180,11 @@ function signatureInvalidGuidance(name: string, source: SkillSourceStatus): stri
   ].join("\n");
 }
 
-function integrityActions(
+async function integrityActions(
   status: SkillIntegrityStatus,
   source: SkillSourceStatus,
   name: string
-): string[] {
+): Promise<string[]> {
   switch (status.kind) {
     case "ok":
       return [];
@@ -155,7 +194,7 @@ function integrityActions(
       return ["Reinstall the skill; the signed manifest is corrupt."];
     case "tampered":
       if (hasSignatureInvalidMismatch(status)) {
-        return [signatureInvalidGuidance(name, source)];
+        return [await signatureInvalidGuidance(name, source)];
       }
       return [
         "Reinstall the skill or inspect the listed files; these are not ignored OS/editor metadata artifacts."
@@ -168,7 +207,8 @@ function overallStatus(
   source: SkillSourceStatus,
   ignoredArtifacts: string[],
   repair: DoctorRepairReport,
-  render: RenderFidelityStatus
+  render: RenderFidelityStatus,
+  pluginShadows: PluginShadow[]
 ): "ok" | "warning" | "error" {
   if (repair.repair_status === "failed" || repair.repair_status === "refused") return "error";
   if (render.kind === "error") return "error";
@@ -177,6 +217,7 @@ function overallStatus(
   if (integrity.kind === "no_manifest" || source.kind === "legacy" || source.kind === "absent") {
     return "warning";
   }
+  if (pluginShadows.length > 0) return "warning";
   if (ignoredArtifacts.length > 0) return "warning";
   return "ok";
 }
@@ -278,7 +319,8 @@ async function inspectSkill(
   name: string,
   clean: boolean,
   repair: boolean,
-  renderEntries: RenderIndexEntry[]
+  renderEntries: RenderIndexEntry[],
+  pluginShadows: PluginShadow[]
 ): Promise<DoctorSkillReport> {
   const before = await listIgnoredSkillArtifacts(name);
   const cleaned = clean && before.length > 0 ? await cleanIgnoredSkillArtifacts(name) : [];
@@ -296,9 +338,14 @@ async function inspectSkill(
   const render = await verifyRenderForSkill(name, renderEntries);
   const ignoredArtifacts = clean ? await listIgnoredSkillArtifacts(name) : before;
   const actions = [
-    ...integrityActions(integrity, source, name),
+    ...(await integrityActions(integrity, source, name)),
     ...sourceActions(source),
     ...(render.kind === "error" ? render.problems : []),
+    ...(pluginShadows.length > 0
+      ? [
+          "skillOverrides cannot suppress plugin skills. Manage the conflicting plugin in Cursor or Claude Code if the vaulted copy should be authoritative; AutoVault reports these collisions but does not uninstall host plugins."
+        ]
+      : []),
     ...(repairReport.repair_status === "refused" || repairReport.repair_status === "failed"
       ? [repairReport.repair_reason]
       : []),
@@ -308,13 +355,21 @@ async function inspectSkill(
   ];
   return {
     name,
-    status: overallStatus(integrity, source, ignoredArtifacts, repairReport, render),
+    status: overallStatus(
+      integrity,
+      source,
+      ignoredArtifacts,
+      repairReport,
+      render,
+      pluginShadows
+    ),
     ignored_artifacts: ignoredArtifacts,
     cleaned,
     ...repairReport,
     integrity,
     source,
     render,
+    plugin_shadows: pluginShadows,
     actions
   };
 }
@@ -344,6 +399,15 @@ function formatReport(report: Awaited<ReturnType<typeof runDoctorReport>>): stri
           value: `${report.summary.cleaned} artifact(s)`,
           status: report.summary.cleaned > 0 ? "ok" : "muted"
         },
+        ...(report.summary.plugin_shadowed > 0
+          ? [
+              {
+                label: "plugin shadows",
+                value: `${report.summary.plugin_shadowed} skill(s)`,
+                status: "warn" as const
+              }
+            ]
+          : []),
         {
           label: "allowlist",
           value: ignoredArtifactNamesDescription(),
@@ -423,6 +487,11 @@ function formatReport(report: Awaited<ReturnType<typeof runDoctorReport>>): stri
       lines.push(`  ${theme.style.dim("integrity")} ${skill.integrity.kind}`);
     }
     lines.push(`  ${theme.style.dim("source")} ${skill.source.kind}`);
+    for (const shadow of skill.plugin_shadows) {
+      lines.push(
+        `  ${theme.style.yellow("plugin shadowed")} ${shadow.host}: ${shadow.plugin} (${shadow.skill_md_path})`
+      );
+    }
     // Render fidelity: only surface when the skill has rendered state on this
     // machine. `skipped` (never rendered here — the default for the bundled
     // demos) prints nothing, keeping the dashboard clean.
@@ -452,11 +521,19 @@ export async function runDoctorReport(options: DoctorOptions) {
   const indexLoad = await loadRenderIndex();
   const renderEntries = indexLoad.kind === "ok" ? indexLoad.entries : [];
 
-  const names = options.skill ? [options.skill] : await listInstalledSkillNames();
+  const installedNames = await listInstalledSkillNames();
+  const names = options.skill ? [options.skill] : installedNames;
+  const pluginShadows = await scanPluginShadows(installedNames);
   const skills = [];
   for (const name of names) {
     skills.push(
-      await inspectSkill(name, Boolean(options.clean), Boolean(options.repair), renderEntries)
+      await inspectSkill(
+        name,
+        Boolean(options.clean),
+        Boolean(options.repair),
+        renderEntries,
+        pluginShadows[name] ?? []
+      )
     );
   }
 
@@ -485,6 +562,7 @@ export async function runDoctorReport(options: DoctorOptions) {
     warnings: skills.filter((skill) => skill.status === "warning").length,
     errors:
       skills.filter((skill) => skill.status === "error").length + reportLevelRenderErrors,
+    plugin_shadowed: skills.filter((skill) => skill.plugin_shadows.length > 0).length,
     ignored_artifacts: skills.reduce((sum, skill) => sum + skill.ignored_artifacts.length, 0),
     cleaned: skills.reduce((sum, skill) => sum + skill.cleaned.length, 0)
   };

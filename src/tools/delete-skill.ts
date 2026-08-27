@@ -32,7 +32,7 @@ export async function deleteSkill(input: DeleteSkillInput): Promise<Record<strin
   try {
     const sync = await syncProfiles({
       profileRoots: input.profile_roots,
-      discover: input.discover_profile_roots
+      discover: input.discover_profile_roots ?? true
     });
     warnings.push(...sync.warnings);
     return { deleted, name, warnings, sync };

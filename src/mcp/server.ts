@@ -213,8 +213,12 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "delete_skill",
-    "Delete an installed skill from the vault and refresh generated profiles. This also removes vault-local transforms for that skill.",
-    { name: z.string() },
+    "Delete an installed skill from the vault and refresh generated profiles. Existing host skill roots are discovered by default so managed consumer links are pruned; pass discover_profile_roots: false to opt out. This also removes vault-local transforms for that skill.",
+    {
+      name: z.string(),
+      profile_roots: z.record(z.string(), z.string()).optional(),
+      discover_profile_roots: z.boolean().optional()
+    },
     async (input, extra) =>
       runTool(
         "delete_skill",

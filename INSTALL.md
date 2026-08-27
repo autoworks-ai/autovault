@@ -162,10 +162,11 @@ Set `AUTOVAULT_PROFILE_LINKS` to make `add_skill`, `update_skill`,
 `propose_skill`, `delete_skill`, and plain `sync-profiles` refresh those roots
 automatically.
 
-AutoVault can also discover existing native roots:
+Plain `autovault sync-profiles` also discovers existing native roots by
+default:
 
 ```bash
-autovault sync-profiles --discover
+autovault sync-profiles
 ```
 
 Discovery only reports roots that already exist. If a host has not created its
@@ -175,6 +176,10 @@ skill directory yet, create it or pass an explicit link:
 mkdir -p "$HOME/.codex/skills"
 autovault sync-profiles --link codex="$HOME/.codex/skills"
 ```
+
+Use `--no-discover` when only configured or explicit `--link` roots should be
+refreshed. `autovault sync-profiles --help` prints usage without changing any
+profile directories.
 
 Audit an AutoHub-style repository before migrating local scripts into vault
 skills:
