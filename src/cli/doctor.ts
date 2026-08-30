@@ -164,13 +164,17 @@ async function isSelfReferentialVaultSource(sourcePath: string, name: string): P
   const vaultPath = skillDir(name);
   if (await sameFileIdentity(sourcePath, vaultPath)) return true;
 
-  const [canonicalSourcePath, canonicalVaultPath] = await Promise.all([
+  const skillsRoot = path.dirname(vaultPath);
+  const [canonicalSourcePath, canonicalVaultPath, canonicalSkillsRoot] = await Promise.all([
     canonicalPath(sourcePath),
-    canonicalPath(vaultPath)
+    canonicalPath(vaultPath),
+    canonicalPath(skillsRoot)
   ]);
   return (
     isSameOrChildPath(path.resolve(sourcePath), path.resolve(vaultPath)) ||
-    isSameOrChildPath(canonicalSourcePath, canonicalVaultPath)
+    isSameOrChildPath(path.resolve(sourcePath), path.resolve(skillsRoot)) ||
+    isSameOrChildPath(canonicalSourcePath, canonicalVaultPath) ||
+    isSameOrChildPath(canonicalSourcePath, canonicalSkillsRoot)
   );
 }
 

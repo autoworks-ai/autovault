@@ -676,6 +676,31 @@ metadata:
     expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 
+  it("doctor treats a source under another installed skill as self-referential", async () => {
+    const name = "self-referential-sibling-source";
+    const siblingName = "self-referential-sibling-vault";
+    const siblingSource = skillDir(siblingName);
+    const skillMd = simpleSkill(name);
+    await writeSkill(siblingName, simpleSkill(siblingName));
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier: siblingSource,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    await fs.writeFile(path.join(skillDir(name), "SKILL.md"), `${skillMd}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as { skills: Array<{ actions: string[] }> };
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("copy the bundle to a working directory outside the vault");
+    expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
+    expect(actions).not.toContain(`autovault add-local '${siblingSource}'`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
+  });
+
   it("doctor recognizes a self-referential vault source through a symlink", async () => {
     const name = "symlinked-self-referential-local-source";
     const vaultDir = skillDir(name);
