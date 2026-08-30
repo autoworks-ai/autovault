@@ -29,6 +29,7 @@ export type ScanPluginShadowsInput = {
 
 export type PluginShadowScanLimits = {
   maxDepth: number;
+  maxDirectories: number;
   maxSkillFiles: number;
   maxSkillBytes: number;
 };
@@ -42,6 +43,7 @@ export type PluginShadowScan = {
 
 export type PluginShadowScanTruncationReason =
   | "depth_limit"
+  | "directory_limit"
   | "skill_file_limit"
   | "skill_file_size_limit"
   | "directory_read_error"
@@ -49,6 +51,7 @@ export type PluginShadowScanTruncationReason =
 
 export const DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS: PluginShadowScanLimits = {
   maxDepth: 16,
+  maxDirectories: 10_000,
   maxSkillFiles: 2_000,
   maxSkillBytes: MAX_SKILL_MD_BYTES
 };
@@ -58,6 +61,8 @@ type ScanState = {
   files: string[];
   truncationReasons: Set<PluginShadowScanTruncationReason>;
   fileLimitReached: boolean;
+  directoryLimitReached: boolean;
+  directoriesVisited: number;
 };
 
 function defaultPluginRoots(home: string): PluginRoot[] {
@@ -74,6 +79,11 @@ function resolveLimits(limits: Partial<PluginShadowScanLimits> | undefined): Plu
   };
   return {
     maxDepth: numericLimit(limits?.maxDepth, DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxDepth, 0),
+    maxDirectories: numericLimit(
+      limits?.maxDirectories,
+      DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxDirectories,
+      1
+    ),
     maxSkillFiles: numericLimit(limits?.maxSkillFiles, DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxSkillFiles, 1),
     maxSkillBytes: numericLimit(limits?.maxSkillBytes, DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxSkillBytes, 1)
   };
@@ -89,7 +99,12 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 async function findSkillFiles(root: string, state: ScanState, depth = 0): Promise<void> {
-  if (state.fileLimitReached) return;
+  if (state.fileLimitReached || state.directoryLimitReached) return;
+  if (state.directoriesVisited >= state.limits.maxDirectories) {
+    state.directoryLimitReached = true;
+    state.truncationReasons.add("directory_limit");
+    return;
+  }
   let rootStat: Awaited<ReturnType<typeof fs.lstat>>;
   try {
     rootStat = await fs.lstat(root);
@@ -98,6 +113,7 @@ async function findSkillFiles(root: string, state: ScanState, depth = 0): Promis
     return;
   }
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return;
+  state.directoriesVisited += 1;
 
   let entries: Dirent[];
   try {
@@ -108,7 +124,7 @@ async function findSkillFiles(root: string, state: ScanState, depth = 0): Promis
   }
 
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-    if (state.fileLimitReached) return;
+    if (state.fileLimitReached || state.directoryLimitReached) return;
     const entryPath = path.join(root, entry.name);
     if (entry.isDirectory()) {
       if (depth >= state.limits.maxDepth) {
@@ -176,7 +192,9 @@ export async function scanPluginShadows(
     limits: resolveLimits(input.limits),
     files: [],
     truncationReasons: new Set(),
-    fileLimitReached: false
+    fileLimitReached: false,
+    directoryLimitReached: false,
+    directoriesVisited: 0
   };
   for (const pluginRoot of roots) {
     await findSkillFiles(pluginRoot.root, state);

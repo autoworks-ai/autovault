@@ -592,7 +592,9 @@ export async function runDoctorReport(options: DoctorOptions) {
 
   const summary = {
     ok: skills.filter((skill) => skill.status === "ok").length,
-    warnings: skills.filter((skill) => skill.status === "warning").length,
+    warnings:
+      skills.filter((skill) => skill.status === "warning").length +
+      (pluginScan.incomplete ? 1 : 0),
     errors:
       skills.filter((skill) => skill.status === "error").length + reportLevelRenderErrors,
     plugin_shadowed: skills.filter((skill) => skill.plugin_shadows.length > 0).length,

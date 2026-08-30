@@ -617,6 +617,51 @@ metadata:
     expect(human.stdout).toContain("cursor");
   });
 
+  it("doctor counts an incomplete plugin scan as a warning without a collision", async () => {
+    const name = "plugin-scan-incomplete";
+    const fakeHome = path.join(currentStorageRoot(), "plugin-scan-warning-home");
+    const cursorRoot = path.join(fakeHome, ".cursor", "plugins", "cache");
+    const skillMd = simpleSkill(name);
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier: "vendor/plugin-scan-incomplete",
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    await fs.mkdir(
+      path.join(
+        cursorRoot,
+        ...Array.from({ length: 17 }, (_, index) => `depth-${index}`)
+      ),
+      { recursive: true }
+    );
+
+    const result = await runCli(["doctor", name, "--json"], { env: { HOME: fakeHome } });
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      summary: {
+        warnings: number;
+        errors: number;
+        plugin_shadowed: number;
+        plugin_scan_incomplete: boolean;
+      };
+      plugin_scan: { incomplete: boolean; truncation_reasons: string[] };
+      skills: Array<{ status: string; plugin_shadows: unknown[] }>;
+    };
+    expect(parsed.summary).toMatchObject({
+      warnings: 1,
+      errors: 0,
+      plugin_shadowed: 0,
+      plugin_scan_incomplete: true
+    });
+    expect(parsed.plugin_scan).toMatchObject({
+      incomplete: true,
+      truncation_reasons: ["depth_limit"]
+    });
+    expect(parsed.skills[0]).toMatchObject({ status: "ok", plugin_shadows: [] });
+  });
+
   it("doctor handles prototype-named and oversized plugin skills safely", async () => {
     const name = "constructor";
     const fakeHome = path.join(currentStorageRoot(), "plugin-edge-home");

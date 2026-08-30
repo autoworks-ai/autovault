@@ -79,6 +79,23 @@ describe("plugin shadow scan", () => {
     });
   });
 
+  it("reports total directory budget exhaustion", async () => {
+    const root = path.join(currentStorageRoot(), "directory-budget-cache");
+    await fs.mkdir(path.join(root, "unvisited-directory"), { recursive: true });
+
+    const scan = await scanPluginShadows(["unvisited-skill"], {
+      roots: [{ host: "cursor", root }],
+      limits: { maxDirectories: 1 }
+    });
+
+    expect(scan).toMatchObject({
+      shadows: {},
+      scanned_skill_files: 0,
+      incomplete: true,
+      truncation_reasons: ["directory_limit"]
+    });
+  });
+
   it("does not follow a plugin-cache root symlink", async () => {
     const externalRoot = path.join(currentStorageRoot(), "external-cache");
     await writePluginSkill(externalRoot, "external-plugin/1", "external-collision");
