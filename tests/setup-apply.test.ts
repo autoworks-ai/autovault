@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resetConfigCache } from "../src/config.js";
 import { applyDecisions } from "../src/cli/setup/apply.js";
 import { renderFinalSummary } from "../src/cli/setup/render.js";
 import { buildReviewPlan } from "../src/cli/setup/review.js";
 import { scanDrift } from "../src/cli/setup/scan.js";
+import * as profileSync from "../src/profiles/sync.js";
 import { ensureStorage, readSkill, skillDir, writeSkill } from "../src/storage/index.js";
 import { currentStorageRoot } from "./setup.js";
 
@@ -71,6 +72,31 @@ async function captureStderr(fn: () => void | Promise<void>): Promise<string> {
 }
 
 describe("setup apply", () => {
+  it("syncs once after batch adoption", async () => {
+    await ensureStorage();
+    const nativeRoot = path.join(currentStorageRoot(), "batch-adoption-root");
+    await writeNative(nativeRoot, "batch-one", skillMd("batch-one", "first", { agents: ["codex"] }));
+    await writeNative(nativeRoot, "batch-two", skillMd("batch-two", "second", { agents: ["codex"] }));
+    const report = await scanDrift({
+      bundledRoot: path.join(currentStorageRoot(), "no-bundled"),
+      profileRoots: { codex: nativeRoot }
+    });
+    const syncSpy = vi.spyOn(profileSync, "syncProfiles");
+    try {
+      const outcomes = await applyDecisions({
+        mode: "backup",
+        candidates: report.skills.filter((skill) => skill.name.startsWith("batch-")),
+        collisions: [],
+        profileRoots: { codex: nativeRoot }
+      });
+
+      expect(outcomes.filter((outcome) => outcome.action === "adopt" && outcome.ok)).toHaveLength(2);
+      expect(syncSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      syncSpy.mockRestore();
+    }
+  });
+
   it("backup mode adopts native skill into vault and renames original to <root>.bak/<name>", async () => {
     await ensureStorage();
 

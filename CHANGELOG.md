@@ -103,6 +103,9 @@ while it remains in pre-1.0 development.
   `skillOverrides` does not affect plugin skills (manage those via `/plugin`).
 
 ### Changed
+- Local write paths now sync generated profiles and discover known host roots by
+  default. `--no-sync-profiles` / `sync_profiles: false` and
+  `--no-discover` / `discover_profile_roots: false` remain explicit opt-outs.
 - `autovault sync-profiles` and skill deletion now discover existing host
   skill roots by default. Use `--no-discover` or
   `discover_profile_roots: false` for an explicit opt-out. MCP `delete_skill`

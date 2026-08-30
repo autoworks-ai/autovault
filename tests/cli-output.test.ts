@@ -245,6 +245,30 @@ All skills --------------------------------------------
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("reports remote profile sync as skipped without mutating a discovered root", async () => {
+    await ensureStorage();
+    await writeSkill("sync-remote-noop", catalogSkill("sync-remote-noop"));
+    const fakeHome = path.join(currentStorageRoot(), "sync-remote-home");
+    const codexRoot = path.join(fakeHome, ".codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+    await fs.writeFile(path.join(codexRoot, "sentinel.txt"), "unchanged\n", "utf-8");
+
+    const result = await runCli(["sync-profiles", "--json"], {
+      HOME: fakeHome,
+      AUTOVAULT_MODE: "remote",
+      AUTOVAULT_PUBLIC_URL: "https://autovault.test"
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ skipped: "remote_mode" });
+    await expect(fs.readFile(path.join(codexRoot, "sentinel.txt"), "utf-8")).resolves.toBe(
+      "unchanged\n"
+    );
+    await expect(fs.lstat(path.join(codexRoot, "sync-remote-noop"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
   it.each(["--help", "-h"])(
     "prints sync-profiles %s without mutating generated or consumer profiles",
     async (helpFlag) => {

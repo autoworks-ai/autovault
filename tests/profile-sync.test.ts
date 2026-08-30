@@ -28,6 +28,74 @@ ${options.tags ? `tags: [${options.tags.join(", ")}]\n` : ""}${options.agents ? 
 };
 
 describe("profile sync", () => {
+  it("discovers existing local host roots by default", async () => {
+    await ensureStorage();
+    await writeSkill("default-discovery", skill("default-discovery", ["codex"]));
+
+    const codexRoot = path.join(process.env.HOME!, ".codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+
+    const result = await syncProfiles();
+
+    expect(result.linkedRoots.codex).toBe(codexRoot);
+    await expect(fs.readlink(path.join(codexRoot, "default-discovery"))).resolves.toContain(
+      path.join("profiles", "codex", "default-discovery")
+    );
+  });
+
+  it("leaves existing local host roots untouched when discovery is disabled", async () => {
+    await ensureStorage();
+    await writeSkill("no-discovery", skill("no-discovery", ["codex"]));
+
+    const codexRoot = path.join(process.env.HOME!, ".codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+
+    const result = await syncProfiles({ discover: false });
+
+    expect(result.linkedRoots).toEqual({});
+    await expect(fs.lstat(path.join(codexRoot, "no-discovery"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
+  it("skips every profile mutation in remote mode", async () => {
+    await ensureStorage();
+    await writeSkill("remote-noop", skill("remote-noop", ["codex"]));
+
+    const codexRoot = path.join(currentStorageRoot(), "remote-codex", "skills");
+    await fs.mkdir(codexRoot, { recursive: true });
+    await fs.writeFile(path.join(codexRoot, "sentinel.txt"), "unchanged\n", "utf-8");
+    vi.stubEnv("AUTOVAULT_MODE", "remote");
+    vi.stubEnv("AUTOVAULT_PUBLIC_URL", "https://autovault.test");
+    resetConfigCache();
+    try {
+      const result = await syncProfiles({
+        discover: true,
+        profileRoots: { codex: codexRoot }
+      });
+
+      expect(result).toMatchObject({
+        skipped: "remote_mode",
+        profiles: {},
+        linkedRoots: {},
+        profileStatus: {},
+        warnings: []
+      });
+      await expect(fs.readFile(path.join(codexRoot, "sentinel.txt"), "utf-8")).resolves.toBe(
+        "unchanged\n"
+      );
+      await expect(fs.lstat(path.join(codexRoot, "remote-noop"))).rejects.toMatchObject({
+        code: "ENOENT"
+      });
+      await expect(
+        fs.lstat(path.join(currentStorageRoot(), "profiles", "codex", "remote-noop"))
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      vi.unstubAllEnvs();
+      resetConfigCache();
+    }
+  });
+
   it("generates per-agent symlinks and preserves unrelated external skills", async () => {
     await ensureStorage();
     await writeSkill("shared-skill", skill("shared-skill", ["claude-code", "codex"]));

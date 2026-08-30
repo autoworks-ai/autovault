@@ -159,7 +159,7 @@ export async function bulkImport(input: BulkImportInput): Promise<Record<string,
     try {
       result.sync = await syncProfiles({
         profileRoots: input.profile_roots,
-        discover: input.discover_profile_roots
+        discover: input.discover_profile_roots !== false
       });
       result.warnings.push(...result.sync.warnings);
     } catch (error) {

@@ -1,4 +1,5 @@
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
+import { loadConfig } from "../config.js";
 import { validateSkillInput } from "../validation/index.js";
 import { validateAgentName } from "../validation/schema.js";
 import {
@@ -291,7 +292,12 @@ export async function installSkill(
   const { data } = parseFrontmatter(normalizedSkillMd);
   const name = typeof data.name === "string" ? data.name : "unnamed-skill";
   const missingAgents = !hasAgentsFrontmatter(data);
-  if (missingAgents && (input.sync_profiles ?? true) && targetAgents.agents.length === 0) {
+  if (
+    missingAgents &&
+    loadConfig().mode !== "remote" &&
+    (input.sync_profiles ?? true) &&
+    targetAgents.agents.length === 0
+  ) {
     const identifier = fetched?.resolvedIdentifier ?? input.identifier;
     return {
       success: false,
@@ -372,7 +378,7 @@ export async function installSkill(
     try {
       sync = await syncProfiles({
         profileRoots: input.profile_roots,
-        discover: input.discover_profile_roots
+        discover: input.discover_profile_roots !== false
       });
       for (const w of sync.warnings) postInstallWarnings.push(w);
     } catch (error) {

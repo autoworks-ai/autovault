@@ -686,14 +686,14 @@ function profileRootsOrUndefined(profileRoots: Record<string, string>): Record<s
   return Object.keys(profileRoots).length > 0 ? profileRoots : undefined;
 }
 
-function defaultSyncProfiles(source: AddSource, explicit: boolean | undefined): boolean {
+function defaultSyncProfiles(_source: AddSource, explicit: boolean | undefined): boolean {
   if (explicit !== undefined) return explicit;
-  return source !== "local";
+  return true;
 }
 
-function defaultDiscoverProfiles(source: AddSource, sync: boolean, explicit: boolean | undefined): boolean {
+function defaultDiscoverProfiles(_source: AddSource, sync: boolean, explicit: boolean | undefined): boolean {
   if (explicit !== undefined) return explicit;
-  return source === "local" ? sync : false;
+  return sync;
 }
 
 function planSummaryFor(

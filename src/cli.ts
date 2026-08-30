@@ -32,7 +32,7 @@ function usageText(): string {
   return `Usage:
   autovault --version
   autovault add <source-or-path> [--source github|agentskills|url|local] [--provenance <value>] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
-  autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
+  autovault add-local <path> [--source <provenance>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault sync-profiles [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
   autovault profiles list [--json]
@@ -359,6 +359,9 @@ function formatRemoveResult(result: Record<string, unknown>): string {
 
 function formatSyncProfilesResult(result: SyncProfilesResult): string {
   const theme = makeTheme(process.stdout);
+  if (result.skipped === "remote_mode") {
+    return `\n${badge("sync", theme, "dim")} ${theme.style.bold("Profile sync skipped")}\n${theme.style.dim("Remote mode never changes native host skill directories.")}\n`;
+  }
   const compact = compactSyncResult(result);
   const profileEntries = Object.entries(compact.profiles).sort(([a], [b]) =>
     a.localeCompare(b),

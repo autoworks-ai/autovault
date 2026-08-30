@@ -1,6 +1,7 @@
 import type { SyncProfilesResult, SyncSkillStatus } from "../profiles/sync.js";
 
 export type CompactSyncResult = {
+  skipped?: "remote_mode";
   profiles: Record<string, number>;
   linkedRoots: Record<string, string>;
   statusCounts: Record<string, Partial<Record<SyncSkillStatus["status"], number>>>;
@@ -13,6 +14,7 @@ export type FormattedSyncResult<T extends Record<string, unknown>> = Omit<T, "sy
 
 export function compactSyncResult(sync: SyncProfilesResult): CompactSyncResult {
   return {
+    ...(sync.skipped ? { skipped: sync.skipped } : {}),
     profiles: Object.fromEntries(
       Object.entries(sync.profiles).map(([agent, names]) => [agent, names.length])
     ),

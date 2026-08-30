@@ -65,6 +65,26 @@ resources:
     expect(written).toBe("echo hi");
   });
 
+  it("lets callers opt out of profile sync", async () => {
+    const externalRoot = path.join(currentStorageRoot(), "proposal-no-sync-profile");
+    process.env.AUTOVAULT_PROFILE_LINKS = `codex=${externalRoot}`;
+    resetConfigCache();
+    try {
+      const result = await proposeSkill({
+        skill_md: baseSkill("proposal-no-sync"),
+        sync_profiles: false
+      });
+
+      expect(result.outcome).toBe("accepted");
+      await expect(fs.lstat(path.join(externalRoot, "proposal-no-sync"))).rejects.toMatchObject({
+        code: "ENOENT"
+      });
+    } finally {
+      delete process.env.AUTOVAULT_PROFILE_LINKS;
+      resetConfigCache();
+    }
+  });
+
   it("infers resources frontmatter when bundle files are supplied", async () => {
     const result = await proposeSkill({
       skill_md: `---
