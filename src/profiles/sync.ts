@@ -25,6 +25,7 @@ export type SyncProfilesInput = {
 };
 
 export type SyncProfilesResult = {
+  skipped?: "remote_mode";
   profiles: Record<string, string[]>;
   linkedRoots: Record<string, string>;
   profileStatus: Record<string, SyncSkillStatus[]>;
@@ -351,11 +352,21 @@ export async function syncProfiles(input: SyncProfilesInput = {}): Promise<SyncP
   // another writer currently holds the storage lock, recovery skips and our
   // snapshot queues on withStorageLock; once the writer commits there is by
   // definition no orphan bak to recover, so skipping is safe.
+  const config = loadConfig();
+  if (config.mode === "remote") {
+    return {
+      skipped: "remote_mode",
+      profiles: {},
+      linkedRoots: {},
+      profileStatus: {},
+      warnings: []
+    };
+  }
+
   return withProfileSyncLock(async () => {
-    const config = loadConfig();
     const profileRoot = path.join(config.storagePath, "profiles");
     const namedConfig = await loadNamedProfileConfig(config.profileConfigPath);
-    const discoveredProfileRoots = input.discover ? await discoverProfileRoots() : {};
+    const discoveredProfileRoots = input.discover !== false ? await discoverProfileRoots() : {};
     const profileRoots = {
       ...discoveredProfileRoots,
       ...config.profileRoots,
