@@ -514,7 +514,7 @@ metadata:
     expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 
-  it("doctor reports grouped plugin-shadowed warnings without changing plugin caches", async () => {
+  it("doctor reports advisory plugin cache collisions without changing plugin caches", async () => {
     const name = "plugin-shadow-target";
     const fakeHome = path.join(currentStorageRoot(), "plugin-home");
     const cursorRoot = path.join(fakeHome, ".cursor", "plugins", "cache");
@@ -552,10 +552,17 @@ metadata:
     expect(result.stderr).toBe("");
     const parsed = JSON.parse(result.stdout) as {
       summary: { plugin_shadowed: number; warnings: number; errors: number };
+      plugin_scan: {
+        scanned_skill_files: number;
+        incomplete: boolean;
+        truncation_reasons: string[];
+      };
       skills: Array<{
         status: string;
         plugin_shadows: Array<{
           category: string;
+          evidence: string;
+          advisory: boolean;
           host: string;
           plugin: string;
           skill_md_path: string;
@@ -564,29 +571,40 @@ metadata:
       }>;
     };
     expect(parsed.summary).toMatchObject({ plugin_shadowed: 1, warnings: 1, errors: 0 });
+    expect(parsed.plugin_scan).toMatchObject({
+      scanned_skill_files: 4,
+      incomplete: false,
+      truncation_reasons: []
+    });
     expect(parsed.skills[0]?.status).toBe("warning");
     expect(parsed.skills[0]?.plugin_shadows).toEqual([
       {
         category: "plugin-shadowed",
+        evidence: "cached_collision",
+        advisory: true,
         host: "claude-code",
         plugin: "cache/claude-plugins-official/superpowers/6.3.0",
         skill_md_path: claude
       },
       {
         category: "plugin-shadowed",
+        evidence: "cached_collision",
+        advisory: true,
         host: "cursor",
         plugin: "cursor-public/684/hash-one",
         skill_md_path: cursorAlias
       },
       {
         category: "plugin-shadowed",
+        evidence: "cached_collision",
+        advisory: true,
         host: "cursor",
         plugin: "cursor-public/superpowers/hash-one",
         skill_md_path: cursorNamed
       }
     ]);
     expect(parsed.skills[0]?.actions.join("\n")).toContain(
-      "skillOverrides cannot suppress plugin skills"
+      "Cached plugin copies can shadow vault skills"
     );
     await expect(fs.readFile(cursorNamed, "utf-8")).resolves.toBe(simpleSkill(name));
     await expect(fs.readFile(cursorAlias, "utf-8")).resolves.toBe(simpleSkill(name));
@@ -594,7 +612,7 @@ metadata:
 
     const human = await runCli(["doctor", name], { env: { HOME: fakeHome } });
     expect(human.exitCode).toBe(0);
-    expect(human.stdout).toContain("plugin shadowed");
+    expect(human.stdout).toContain("plugin cache collision");
     expect(human.stdout).toContain("claude-code");
     expect(human.stdout).toContain("cursor");
   });
@@ -624,6 +642,8 @@ metadata:
     };
     expect(parsed.skills[0]?.plugin_shadows).toEqual([{
       category: "plugin-shadowed",
+      evidence: "cached_collision",
+      advisory: true,
       host: "cursor",
       plugin: "vendor/plugin/1.0.0",
       skill_md_path: matching

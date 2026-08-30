@@ -255,7 +255,9 @@ ordinary skill integrity results:
   installed.
 - Every skill has `render.kind`: `ok`, `skipped`, or `error`.
 - Every skill has a `plugin_shadows` array. Each collision records category
-  `plugin-shadowed`, the host, plugin identifier, and cached `SKILL.md` path;
+  `plugin-shadowed`, evidence `cached_collision`, `advisory: true`, the host,
+  plugin identifier, and cached `SKILL.md` path; `plugin_scan` records whether
+  the bounded cache scan was incomplete and why.
   `summary.plugin_shadowed` counts affected vaulted skills.
 
 `skipped` means that skill has no machine-local render entry; it is not an
@@ -263,11 +265,12 @@ ordinary doctor error. Automation consumers that require an installed and
 verified rendered bundle must positively assert `render.kind == "ok"` rather
 than relying on the process exit code.
 
-Plugin shadows are warnings, not signature failures. AutoVault scans the
-Cursor and Claude Code plugin caches because host plugins can inject a skill
-with the same name even when the vaulted copy is healthy. `skillOverrides`
-does not apply to plugin skills; AutoVault reports these collisions but never
-uninstalls or changes host plugins.
+Plugin shadows are advisory warnings, not signature failures: a collision means
+a cached plugin copy exists, not that the host is actively injecting it. The
+Cursor and Claude Code cache scan is bounded by directory depth, `SKILL.md`
+count, and file size; an incomplete scan is reported explicitly and may
+under-report collisions. `skillOverrides` does not apply to plugin skills;
+AutoVault never uninstalls or changes host plugins.
 
 `autovault setup` is the first-run adoption wizard. It scans the vault, bundled
 skills, and discovered native roots such as `~/.claude/skills`,
