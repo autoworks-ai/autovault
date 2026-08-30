@@ -111,8 +111,9 @@ while it remains in pre-1.0 development.
 - `autovault sync-profiles --help` now exits successfully after printing usage
   without running a sync.
 - Doctor no longer recommends reinstalling a tampered local skill from its own
-  vault directory; it tells operators to copy the bundle out first while
-  retaining `doctor --repair` as the intentional recovery path.
+  vault directory, descendant, or symlink alias; it tells operators to copy
+  the bundle out first while retaining `doctor --repair` as the intentional
+  recovery path.
 
 ## [0.2.1] - 2026-05-09
 

@@ -132,41 +132,55 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-async function sameCanonicalPath(left: string, right: string): Promise<boolean> {
+function isSameOrChildPath(candidate: string, root: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+export async function sameFileIdentity(left: string, right: string): Promise<boolean> {
   try {
     const [leftStat, rightStat] = await Promise.all([fs.stat(left), fs.stat(right)]);
-    if (leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino) return true;
+    return leftStat.dev === rightStat.dev && leftStat.ino === rightStat.ino;
   } catch {
-    // A source may no longer exist. Resolve its nearest real ancestor below so
-    // a stale symlinked vault path still cannot be recommended as upstream.
+    return false;
   }
-  const canonical = async (value: string): Promise<string> => {
-    const unresolved: string[] = [];
-    let candidate = path.resolve(value);
-    while (true) {
-      try {
-        return path.join(await fs.realpath(candidate), ...unresolved);
-      } catch {
-        const parent = path.dirname(candidate);
-        if (parent === candidate) return path.resolve(value);
-        unresolved.unshift(path.basename(candidate));
-        candidate = parent;
-      }
+}
+
+async function canonicalPath(value: string): Promise<string> {
+  const unresolved: string[] = [];
+  let candidate = path.resolve(value);
+  while (true) {
+    try {
+      return path.join(await fs.realpath(candidate), ...unresolved);
+    } catch {
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return path.resolve(value);
+      unresolved.unshift(path.basename(candidate));
+      candidate = parent;
     }
-  };
-  const [canonicalLeft, canonicalRight] = await Promise.all([canonical(left), canonical(right)]);
-  return canonicalLeft === canonicalRight;
+  }
+}
+
+async function isSelfReferentialVaultSource(sourcePath: string, name: string): Promise<boolean> {
+  const vaultPath = skillDir(name);
+  if (await sameFileIdentity(sourcePath, vaultPath)) return true;
+
+  const [canonicalSourcePath, canonicalVaultPath] = await Promise.all([
+    canonicalPath(sourcePath),
+    canonicalPath(vaultPath)
+  ]);
+  return (
+    isSameOrChildPath(path.resolve(sourcePath), path.resolve(vaultPath)) ||
+    isSameOrChildPath(canonicalSourcePath, canonicalVaultPath)
+  );
 }
 
 async function signatureInvalidGuidance(name: string, source: SkillSourceStatus): Promise<string> {
   const sourcePath = localSourceIdentifier(source);
-  const sourceIsVault = sourcePath
-    ? await sameCanonicalPath(sourcePath, skillDir(name))
-    : false;
+  const sourceIsVault = sourcePath ? await isSelfReferentialVaultSource(sourcePath, name) : false;
   const sourceGuidance = sourcePath
     ? sourceIsVault
       ? [
-          "The recorded local source is the vault directory itself, so it is not an editable upstream.",
+          "The recorded local source is inside the vault, so it is not an editable upstream.",
           "To recover safely, copy the bundle to a working directory outside the vault, edit the copy, then run:",
           "  autovault add-local '<copied-bundle-path>' --sync-profiles"
         ].join("\n")

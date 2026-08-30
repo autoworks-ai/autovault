@@ -10,6 +10,7 @@ import {
 } from "../src/storage/index.js";
 import { bundleHash } from "../src/util/hash.js";
 import { MAX_SKILL_MD_BYTES } from "../src/util/limits.js";
+import { sameFileIdentity } from "../src/cli/doctor.js";
 import { currentStorageRoot } from "./setup.js";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -93,6 +94,15 @@ agents: [codex]
 `;
 
 describe("autovault skill CLI", () => {
+  it("recognizes two paths with the same file identity", async () => {
+    const original = path.join(currentStorageRoot(), "identity-original");
+    const alias = path.join(currentStorageRoot(), "identity-alias");
+    await fs.writeFile(original, "identity", "utf-8");
+    await fs.link(original, alias);
+
+    await expect(sameFileIdentity(original, alias)).resolves.toBe(true);
+  });
+
   it("prints usage when no subcommand is given", async () => {
     const result = await runCli(["skill"]);
     expect(result.exitCode).not.toBe(0);
@@ -640,6 +650,30 @@ metadata:
     expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
     expect(actions).toContain(`autovault doctor ${name} --repair`);
     expect(actions).not.toContain(`autovault add-local '${vaultDir}'`);
+  });
+
+  it("doctor treats a SKILL.md beneath the vault as a self-referential local source", async () => {
+    const name = "self-referential-local-skill-md";
+    const vaultDir = skillDir(name);
+    const identifier = path.join(vaultDir, "SKILL.md");
+    const skillMd = simpleSkill(name);
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    await fs.writeFile(identifier, `${skillMd}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as { skills: Array<{ actions: string[] }> };
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("copy the bundle to a working directory outside the vault");
+    expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
+    expect(actions).not.toContain(`autovault add-local '${identifier}'`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 
   it("doctor recognizes a self-referential vault source through a symlink", async () => {
