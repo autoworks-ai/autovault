@@ -69,10 +69,11 @@ while it remains in pre-1.0 development.
 ## [Unreleased]
 
 ### Added
-- `autovault doctor` now reports `plugin-shadowed` warnings when Cursor or
-  Claude Code plugin caches contain a `SKILL.md` name that collides with an
-  installed vault skill. JSON includes per-skill `plugin_shadows` records and
-  `summary.plugin_shadowed`; AutoVault never changes host plugins.
+- `autovault doctor` now reports advisory `plugin-shadowed` warnings when
+  Cursor or Claude Code plugin caches contain a `SKILL.md` name that collides
+  with an installed vault skill. JSON identifies these as advisory
+  `cached_collision` evidence and reports bounded-scan completeness metadata;
+  AutoVault never changes host plugins.
 - HTTPS catalog enrollment for AutoVault Cloud. `autovault init
   https://autovault.dev/v/<slug>` POSTs a device public key, stores it pending
   until the owner admits the device, then discovers and installs signed
