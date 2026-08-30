@@ -162,7 +162,13 @@ async function canonicalPath(value: string): Promise<string> {
 
 async function isSelfReferentialVaultSource(sourcePath: string, name: string): Promise<boolean> {
   const vaultPath = skillDir(name);
-  if (await sameFileIdentity(sourcePath, vaultPath)) return true;
+  const sourceSkillMdPath =
+    path.basename(sourcePath) === "SKILL.md" ? sourcePath : path.join(sourcePath, "SKILL.md");
+  const [sameVaultDirectory, sameVaultSkillMd] = await Promise.all([
+    sameFileIdentity(sourcePath, vaultPath),
+    sameFileIdentity(sourceSkillMdPath, path.join(vaultPath, "SKILL.md"))
+  ]);
+  if (sameVaultDirectory || sameVaultSkillMd) return true;
 
   const skillsRoot = path.dirname(vaultPath);
   const [canonicalSourcePath, canonicalVaultPath, canonicalSkillsRoot] = await Promise.all([

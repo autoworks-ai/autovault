@@ -701,6 +701,37 @@ metadata:
     expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 
+  it.each([
+    ["an external hard-linked SKILL.md", "file"],
+    ["an external directory containing a hard-linked SKILL.md", "directory"]
+  ] as const)("doctor treats %s as self-referential", async (_description, sourceKind) => {
+    const name = `hard-linked-vault-source-${sourceKind}`;
+    const externalDir = path.join(currentStorageRoot(), `external-hard-link-${sourceKind}`);
+    const externalSkillMd = path.join(externalDir, "SKILL.md");
+    const identifier = sourceKind === "file" ? externalSkillMd : externalDir;
+    const skillMd = simpleSkill(name);
+    await fs.mkdir(externalDir, { recursive: true });
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    const vaultedSkillMd = path.join(skillDir(name), "SKILL.md");
+    await fs.link(vaultedSkillMd, externalSkillMd);
+    await fs.writeFile(vaultedSkillMd, `${skillMd}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as { skills: Array<{ actions: string[] }> };
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("copy the bundle to a working directory outside the vault");
+    expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
+    expect(actions).not.toContain(`autovault add-local '${identifier}'`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
+  });
+
   it("doctor recognizes a self-referential vault source through a symlink", async () => {
     const name = "symlinked-self-referential-local-source";
     const vaultDir = skillDir(name);
