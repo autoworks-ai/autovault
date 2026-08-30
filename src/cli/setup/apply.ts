@@ -144,7 +144,8 @@ async function adoptOne(
   const result = await addLocalSkill({
     skillDir: bundleSource,
     source: `native:${native.agent ?? "unknown"}`,
-    inferredAgents: native.inferredAgents
+    inferredAgents: native.inferredAgents,
+    syncProfiles: false
   });
   if (!result.success) {
     const reason =
@@ -227,7 +228,8 @@ async function repairAdoptOne(
     const result = await addLocalSkill({
       skillDir: stagedRoot,
       source: `native:${native.agent ?? "unknown"}:repaired`,
-      inferredAgents: native.inferredAgents
+      inferredAgents: native.inferredAgents,
+      syncProfiles: false
     });
     if (!result.success) {
       const reason =
@@ -358,9 +360,8 @@ export async function applyDecisions(input: ApplyInput): Promise<ApplyOutcome[]>
   }
 
   // Final sync so newly adopted skills surface as managed symlinks under the
-  // selected native roots. addLocalSkill only syncs when sync_profiles is
-  // explicitly requested; we bundle one sync at the end to avoid N redundant
-  // walks.
+  // selected native roots. The batched addLocalSkill calls opt out above, so
+  // this is the only profile walk for the adoption run.
   try {
     const sync = await withSuppressedLogs(() =>
       syncProfiles({
