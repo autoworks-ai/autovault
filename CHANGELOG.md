@@ -6,6 +6,15 @@ The format is inspired by [Keep a Changelog](https://keepachangelog.com/en/1.1.0
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 while it remains in pre-1.0 development.
 
+## [0.5.1](https://github.com/autoworks-ai/autovault/compare/v0.5.0...v0.5.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **doctor:** avoid vault-backed source recovery guidance ([#137](https://github.com/autoworks-ai/autovault/issues/137)) ([d0aea27](https://github.com/autoworks-ai/autovault/commit/d0aea27d5c776b0515ce39e84d155ec799a2dceb))
+* **engine:** harden skill lifecycle ([#133](https://github.com/autoworks-ai/autovault/issues/133)) ([e3ad85f](https://github.com/autoworks-ai/autovault/commit/e3ad85f837b177b4e6b05989e4b0e667e2ec2749))
+* **profiles:** discover local host roots safely ([#136](https://github.com/autoworks-ai/autovault/issues/136)) ([f6b28b7](https://github.com/autoworks-ai/autovault/commit/f6b28b7ebdd0eb0246909282a56fae605b08d8db))
+
 ## [0.5.0](https://github.com/autoworks-ai/autovault/compare/v0.4.0...v0.5.0) (2026-08-26)
 
 
