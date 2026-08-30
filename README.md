@@ -153,7 +153,7 @@ The CLI is the local operator surface:
 
 ```text
 autovault add <source-or-path> [--source github|agentskills|url|local] [--provenance <value>] [--version <v>] [--agent <agent>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--dry-run] [--yes] [--quiet] [--verbose] [--json]
-autovault add-local <path> [--source <provenance>] [--sync-profiles] [--link agent=/path/to/skills] [--json]
+autovault add-local <path> [--source <provenance>] [--sync-profiles|--no-sync-profiles] [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault remove <skill-name> [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault sync-profiles [--discover|--no-discover] [--link agent=/path/to/skills] [--json]
 autovault profiles list [--json]
@@ -239,7 +239,8 @@ bundles, GitHub repositories, agentskills slugs, or HTTPS URLs. Existing
 installer scripts can keep using `add-local` as a compatibility alias for
 local bundles; there, `--source` still means local provenance. For new local
 adds, omit provenance and AutoVault records the normalized absolute bundle
-directory.
+directory. Local writes sync generated profiles and discover known host roots
+by default; use `--no-sync-profiles` or `--no-discover` for an explicit opt-out.
 If a remote skill omits AutoVault-specific `agents` frontmatter, pass
 `--agent codex` (repeatable) for profile sync, or `--no-sync-profiles` for a
 vault-only install.

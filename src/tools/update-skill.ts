@@ -111,7 +111,7 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
         source: input.identifier,
         syncProfiles: input.sync_profiles ?? true,
         profileRoots: input.profile_roots,
-        discoverProfileRoots: input.discover_profile_roots
+        discoverProfileRoots: input.discover_profile_roots !== false
       }),
       input.verbose
     );
@@ -138,7 +138,10 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
       version: input.version,
       skill_md: input.skill_md,
       resources,
-      expected_name: input.name
+      expected_name: input.name,
+      sync_profiles: input.sync_profiles,
+      profile_roots: input.profile_roots,
+      discover_profile_roots: input.discover_profile_roots
     }), input.verbose);
   }
 
@@ -155,7 +158,10 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
       source: input.source,
       identifier: input.identifier,
       version: input.version,
-      expected_name: input.name
+      expected_name: input.name,
+      sync_profiles: input.sync_profiles,
+      profile_roots: input.profile_roots,
+      discover_profile_roots: input.discover_profile_roots
     }), input.verbose);
   }
 
@@ -174,7 +180,10 @@ export async function updateSkill(input: UpdateSkillInput): Promise<Record<strin
       source: source.source,
       identifier: source.identifier,
       version: source.version,
-      expected_name: input.name
+      expected_name: input.name,
+      sync_profiles: input.sync_profiles,
+      profile_roots: input.profile_roots,
+      discover_profile_roots: input.discover_profile_roots
     }), input.verbose);
   }
 

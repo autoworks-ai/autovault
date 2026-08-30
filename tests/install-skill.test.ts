@@ -144,6 +144,34 @@ describe("installSkill", () => {
     expect(source?.targetAgents).toBeUndefined();
   });
 
+  it("allows agent-less installs in remote mode without an explicit sync opt-out", async () => {
+    const githubFetcher = vi.fn().mockResolvedValue({
+      skillMd: skillMdWithoutAgents,
+      sourceUrl: "https://raw.githubusercontent.com/o/r/HEAD/SKILL.md",
+      upstreamSha: "0123456789abcdef0123456789abcdef01234567"
+    });
+    const previousMode = process.env.AUTOVAULT_MODE;
+    const previousPublicUrl = process.env.AUTOVAULT_PUBLIC_URL;
+    process.env.AUTOVAULT_MODE = "remote";
+    process.env.AUTOVAULT_PUBLIC_URL = "https://autovault.example.test";
+    resetConfigCache();
+    try {
+      const result = await installSkill(
+        { source: "github", identifier: "owner/repo" },
+        { fetchers: { github: githubFetcher } }
+      );
+
+      expect(result).toMatchObject({ success: true, name: "fetched-skill" });
+      await expect(readSkill("fetched-skill")).resolves.not.toBeNull();
+    } finally {
+      if (previousMode === undefined) delete process.env.AUTOVAULT_MODE;
+      else process.env.AUTOVAULT_MODE = previousMode;
+      if (previousPublicUrl === undefined) delete process.env.AUTOVAULT_PUBLIC_URL;
+      else process.env.AUTOVAULT_PUBLIC_URL = previousPublicUrl;
+      resetConfigCache();
+    }
+  });
+
   it("does not write a remote skill missing agents when sync needs a target", async () => {
     const githubFetcher = vi.fn().mockResolvedValue({
       skillMd: skillMdWithoutAgents,

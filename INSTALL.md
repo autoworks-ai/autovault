@@ -247,8 +247,8 @@ Use `autovault add` for known skills from local bundles, GitHub repositories,
 agentskills slugs, or HTTPS URLs:
 
 ```bash
-autovault add ./path/to/your-skill --sync-profiles
-autovault add ./path/to/your-skill/SKILL.md --sync-profiles
+autovault add ./path/to/your-skill
+autovault add ./path/to/your-skill/SKILL.md
 autovault add https://github.com/org/repo/tree/main/skills/your-skill
 autovault add owner/repo:skills/your-skill/SKILL.md
 autovault add my-skill --source agentskills
@@ -261,7 +261,9 @@ path. If provenance is omitted, AutoVault records the normalized absolute
 bundle directory. Local add walks sibling resources in deterministic order,
 skips AutoVault metadata files, refuses symlinks, runs the same
 validation/signing pipeline as other install paths, and records honest
-`source: "local"` provenance. With `--sync-profiles`, legacy skills that omit
+`source: "local"` provenance. Local writes sync generated profiles and discover
+known host roots by default; use `--no-sync-profiles` or `--no-discover` to opt out.
+Legacy skills that omit
 `agents` can infer agents from explicit/discovered profile roots or
 `~/.claude/skills` / `~/.agents/skills`; explicit `agents: []` stays invalid.
 Local installs are reported as unchecked by `check_updates`; rerun the vendor
@@ -277,7 +279,7 @@ already have a local skill directory on disk. In that alias, `--source` still
 means the local provenance string:
 
 ```bash
-autovault add-local ./path/to/your-skill --sync-profiles
+autovault add-local ./path/to/your-skill
 autovault add-local ./path/to/your-skill \
   --source https://github.com/org/repo/tree/main/skills/your-skill
 ```

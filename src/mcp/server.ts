@@ -137,7 +137,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "add_skill",
-    "Add a known skill from a source. For GitHub, agentskills, and URL sources, pass `source` plus `identifier`; remote bytes are fetched and validated before storage. Remote skills without `agents` frontmatter need `target_agents` for profile sync, or `sync_profiles: false` for vault-only install. For local bundles, pass `source: \"local\"` and `skill_dir`; `identifier` can override local provenance like CLI add-local --source, otherwise the normalized bundle root is recorded. Caller-authored SKILL.md bytes should use `propose_skill`, not add_skill.",
+    "Add a known skill from a source. For GitHub, agentskills, and URL sources, pass `source` plus `identifier`; remote bytes are fetched and validated before storage. Local mode syncs and discovers known profile roots by default; pass `sync_profiles: false` or `discover_profile_roots: false` to opt out. Remote skills without `agents` frontmatter need `target_agents` for profile sync, or `sync_profiles: false` for vault-only install. For local bundles, pass `source: \"local\"` and `skill_dir`; `identifier` can override local provenance like CLI add-local --source, otherwise the normalized bundle root is recorded. Caller-authored SKILL.md bytes should use `propose_skill`, not add_skill.",
     {
       source: z.enum(["github", "agentskills", "url", "local"]),
       identifier: z.string().optional(),
@@ -154,13 +154,16 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "propose_skill",
-    "Submit a newly authored SKILL.md to AutoVault. Runs validation, security scan, capability cross-check, and three-tier deduplication (exact content hash → near-exact similarity → functional overlap). Use when the user asks to save a conversationally created skill, or after you've drafted one in response to a workflow the user wants reused. Always prefer this over writing skill files directly to disk.",
+    "Submit a newly authored SKILL.md to AutoVault. Runs validation, security scan, capability cross-check, and three-tier deduplication (exact content hash → near-exact similarity → functional overlap), then syncs and discovers local profile roots by default. Pass sync_profiles: false or discover_profile_roots: false to opt out. Use when the user asks to save a conversationally created skill, or after you've drafted one in response to a workflow the user wants reused. Always prefer this over writing skill files directly to disk.",
     {
       skill_md: z.string(),
       resources: z.array(z.object({ path: z.string(), content: z.string() })).optional(),
       source_session: z.string().optional(),
       allow_synthesized_frontmatter: z.boolean().optional(),
       check: z.boolean().optional(),
+      sync_profiles: z.boolean().optional(),
+      profile_roots: z.record(z.string(), z.string()).optional(),
+      discover_profile_roots: z.boolean().optional(),
       verbose: z.boolean().optional()
     },
     async (input, extra) => runTool("propose_skill", input, extra, () => proposeSkill(input), policy)
@@ -168,7 +171,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "bulk_import",
-    "Import every immediate child directory under `source_dir` that contains a SKILL.md. Each child is validated and deduped like `propose_skill`; `agents` fills missing agents frontmatter for migration bundles, resources can be inferred from bundled files, and profile sync runs once at the end. Returns compact sync counts by default; pass `verbose: true` for full per-profile sync detail.",
+    "Import every immediate child directory under `source_dir` that contains a SKILL.md. Each child is validated and deduped like `propose_skill`; `agents` fills missing agents frontmatter for migration bundles, resources can be inferred from bundled files, and profile sync/discovery runs once at the end by default. Pass `sync_profiles: false` or `discover_profile_roots: false` to opt out. Returns compact sync counts by default; pass `verbose: true` for full per-profile sync detail.",
     {
       source_dir: z.string(),
       agents: z.array(z.string()).optional(),
@@ -183,7 +186,7 @@ export function createServer(options: CreateServerOptions = {}): McpServer {
 
   server.tool(
     "update_skill",
-    "Update an installed skill. With only `name`, AutoVault refreshes the recorded GitHub/agentskills/URL source. To update from a new source, pass `source` and `identifier`; to update from a local bundle, pass `source: \"local\"`, `skill_dir`, and `identifier`; to explicitly replace from caller-held bytes, pass `source: \"inline\"` and `skill_md`. For SKILL.md-only inline edits, pass `reuse_existing_resources: true` to validate against the currently installed signed resources. Updates return compact sync counts by default; pass `verbose: true` for full sync detail. Updates refuse candidates whose frontmatter name does not match `name`.",
+    "Update an installed skill. With only `name`, AutoVault refreshes the recorded GitHub/agentskills/URL source. To update from a new source, pass `source` and `identifier`; to update from a local bundle, pass `source: \"local\"`, `skill_dir`, and `identifier`; to explicitly replace from caller-held bytes, pass `source: \"inline\"` and `skill_md`. For SKILL.md-only inline edits, pass `reuse_existing_resources: true` to validate against the currently installed signed resources. Local updates sync and discover profile roots by default; pass `sync_profiles: false` or `discover_profile_roots: false` to opt out. Updates return compact sync counts by default; pass `verbose: true` for full sync detail. Updates refuse candidates whose frontmatter name does not match `name`.",
     {
       name: z.string(),
       source: z.enum(["github", "agentskills", "url", "local", "inline"]).optional(),

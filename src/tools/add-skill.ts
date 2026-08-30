@@ -30,7 +30,7 @@ export async function addSkill(input: AddSkillInput): Promise<Record<string, unk
         source: input.identifier,
         syncProfiles: input.sync_profiles ?? true,
         profileRoots: input.profile_roots,
-        discoverProfileRoots: input.discover_profile_roots
+        discoverProfileRoots: input.discover_profile_roots !== false
       }),
       input.verbose
     );
