@@ -10,6 +10,7 @@ import {
 } from "../src/storage/index.js";
 import { bundleHash } from "../src/util/hash.js";
 import { MAX_SKILL_MD_BYTES } from "../src/util/limits.js";
+import { sameFileIdentity } from "../src/cli/doctor.js";
 import { currentStorageRoot } from "./setup.js";
 
 const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
@@ -93,6 +94,15 @@ agents: [codex]
 `;
 
 describe("autovault skill CLI", () => {
+  it("recognizes two paths with the same file identity", async () => {
+    const original = path.join(currentStorageRoot(), "identity-original");
+    const alias = path.join(currentStorageRoot(), "identity-alias");
+    await fs.writeFile(original, "identity", "utf-8");
+    await fs.link(original, alias);
+
+    await expect(sameFileIdentity(original, alias)).resolves.toBe(true);
+  });
+
   it("prints usage when no subcommand is given", async () => {
     const result = await runCli(["skill"]);
     expect(result.exitCode).not.toBe(0);
@@ -504,7 +514,7 @@ metadata:
     expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 
-  it("doctor reports grouped plugin-shadowed warnings without changing plugin caches", async () => {
+  it("doctor reports advisory plugin cache collisions without changing plugin caches", async () => {
     const name = "plugin-shadow-target";
     const fakeHome = path.join(currentStorageRoot(), "plugin-home");
     const cursorRoot = path.join(fakeHome, ".cursor", "plugins", "cache");
@@ -542,10 +552,17 @@ metadata:
     expect(result.stderr).toBe("");
     const parsed = JSON.parse(result.stdout) as {
       summary: { plugin_shadowed: number; warnings: number; errors: number };
+      plugin_scan: {
+        scanned_skill_files: number;
+        incomplete: boolean;
+        truncation_reasons: string[];
+      };
       skills: Array<{
         status: string;
         plugin_shadows: Array<{
           category: string;
+          evidence: string;
+          advisory: boolean;
           host: string;
           plugin: string;
           skill_md_path: string;
@@ -554,29 +571,40 @@ metadata:
       }>;
     };
     expect(parsed.summary).toMatchObject({ plugin_shadowed: 1, warnings: 1, errors: 0 });
+    expect(parsed.plugin_scan).toMatchObject({
+      scanned_skill_files: 4,
+      incomplete: false,
+      truncation_reasons: []
+    });
     expect(parsed.skills[0]?.status).toBe("warning");
     expect(parsed.skills[0]?.plugin_shadows).toEqual([
       {
         category: "plugin-shadowed",
+        evidence: "cached_collision",
+        advisory: true,
         host: "claude-code",
         plugin: "cache/claude-plugins-official/superpowers/6.3.0",
         skill_md_path: claude
       },
       {
         category: "plugin-shadowed",
+        evidence: "cached_collision",
+        advisory: true,
         host: "cursor",
         plugin: "cursor-public/684/hash-one",
         skill_md_path: cursorAlias
       },
       {
         category: "plugin-shadowed",
+        evidence: "cached_collision",
+        advisory: true,
         host: "cursor",
         plugin: "cursor-public/superpowers/hash-one",
         skill_md_path: cursorNamed
       }
     ]);
     expect(parsed.skills[0]?.actions.join("\n")).toContain(
-      "skillOverrides cannot suppress plugin skills"
+      "Cached plugin copies can shadow vault skills"
     );
     await expect(fs.readFile(cursorNamed, "utf-8")).resolves.toBe(simpleSkill(name));
     await expect(fs.readFile(cursorAlias, "utf-8")).resolves.toBe(simpleSkill(name));
@@ -584,9 +612,54 @@ metadata:
 
     const human = await runCli(["doctor", name], { env: { HOME: fakeHome } });
     expect(human.exitCode).toBe(0);
-    expect(human.stdout).toContain("plugin shadowed");
+    expect(human.stdout).toContain("plugin cache collision");
     expect(human.stdout).toContain("claude-code");
     expect(human.stdout).toContain("cursor");
+  });
+
+  it("doctor counts an incomplete plugin scan as a warning without a collision", async () => {
+    const name = "plugin-scan-incomplete";
+    const fakeHome = path.join(currentStorageRoot(), "plugin-scan-warning-home");
+    const cursorRoot = path.join(fakeHome, ".cursor", "plugins", "cache");
+    const skillMd = simpleSkill(name);
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier: "vendor/plugin-scan-incomplete",
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    await fs.mkdir(
+      path.join(
+        cursorRoot,
+        ...Array.from({ length: 17 }, (_, index) => `depth-${index}`)
+      ),
+      { recursive: true }
+    );
+
+    const result = await runCli(["doctor", name, "--json"], { env: { HOME: fakeHome } });
+
+    expect(result.exitCode).toBe(0);
+    const parsed = JSON.parse(result.stdout) as {
+      summary: {
+        warnings: number;
+        errors: number;
+        plugin_shadowed: number;
+        plugin_scan_incomplete: boolean;
+      };
+      plugin_scan: { incomplete: boolean; truncation_reasons: string[] };
+      skills: Array<{ status: string; plugin_shadows: unknown[] }>;
+    };
+    expect(parsed.summary).toMatchObject({
+      warnings: 1,
+      errors: 0,
+      plugin_shadowed: 0,
+      plugin_scan_incomplete: true
+    });
+    expect(parsed.plugin_scan).toMatchObject({
+      incomplete: true,
+      truncation_reasons: ["depth_limit"]
+    });
+    expect(parsed.skills[0]).toMatchObject({ status: "ok", plugin_shadows: [] });
   });
 
   it("doctor handles prototype-named and oversized plugin skills safely", async () => {
@@ -614,6 +687,8 @@ metadata:
     };
     expect(parsed.skills[0]?.plugin_shadows).toEqual([{
       category: "plugin-shadowed",
+      evidence: "cached_collision",
+      advisory: true,
       host: "cursor",
       plugin: "vendor/plugin/1.0.0",
       skill_md_path: matching
@@ -640,6 +715,86 @@ metadata:
     expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
     expect(actions).toContain(`autovault doctor ${name} --repair`);
     expect(actions).not.toContain(`autovault add-local '${vaultDir}'`);
+  });
+
+  it("doctor treats a SKILL.md beneath the vault as a self-referential local source", async () => {
+    const name = "self-referential-local-skill-md";
+    const vaultDir = skillDir(name);
+    const identifier = path.join(vaultDir, "SKILL.md");
+    const skillMd = simpleSkill(name);
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    await fs.writeFile(identifier, `${skillMd}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as { skills: Array<{ actions: string[] }> };
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("copy the bundle to a working directory outside the vault");
+    expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
+    expect(actions).not.toContain(`autovault add-local '${identifier}'`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
+  });
+
+  it("doctor treats a source under another installed skill as self-referential", async () => {
+    const name = "self-referential-sibling-source";
+    const siblingName = "self-referential-sibling-vault";
+    const siblingSource = skillDir(siblingName);
+    const skillMd = simpleSkill(name);
+    await writeSkill(siblingName, simpleSkill(siblingName));
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier: siblingSource,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    await fs.writeFile(path.join(skillDir(name), "SKILL.md"), `${skillMd}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as { skills: Array<{ actions: string[] }> };
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("copy the bundle to a working directory outside the vault");
+    expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
+    expect(actions).not.toContain(`autovault add-local '${siblingSource}'`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
+  });
+
+  it.each([
+    ["an external hard-linked SKILL.md", "file"],
+    ["an external directory containing a hard-linked SKILL.md", "directory"]
+  ] as const)("doctor treats %s as self-referential", async (_description, sourceKind) => {
+    const name = `hard-linked-vault-source-${sourceKind}`;
+    const externalDir = path.join(currentStorageRoot(), `external-hard-link-${sourceKind}`);
+    const externalSkillMd = path.join(externalDir, "SKILL.md");
+    const identifier = sourceKind === "file" ? externalSkillMd : externalDir;
+    const skillMd = simpleSkill(name);
+    await fs.mkdir(externalDir, { recursive: true });
+    await writeSkill(name, skillMd, [], {
+      source: "local",
+      identifier,
+      fetchedAt: new Date().toISOString(),
+      contentHash: bundleHash(skillMd, [])
+    });
+    const vaultedSkillMd = path.join(skillDir(name), "SKILL.md");
+    await fs.link(vaultedSkillMd, externalSkillMd);
+    await fs.writeFile(vaultedSkillMd, `${skillMd}\n# Tampered\n`, "utf-8");
+
+    const result = await runCli(["doctor", name, "--json"]);
+
+    expect(result.exitCode).not.toBe(0);
+    const parsed = JSON.parse(result.stdout) as { skills: Array<{ actions: string[] }> };
+    const actions = parsed.skills[0]?.actions.join("\n") ?? "";
+    expect(actions).toContain("copy the bundle to a working directory outside the vault");
+    expect(actions).toContain("autovault add-local '<copied-bundle-path>' --sync-profiles");
+    expect(actions).not.toContain(`autovault add-local '${identifier}'`);
+    expect(actions).toContain(`autovault doctor ${name} --repair`);
   });
 
   it("doctor recognizes a self-referential vault source through a symlink", async () => {

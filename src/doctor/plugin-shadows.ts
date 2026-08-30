@@ -9,6 +9,8 @@ export type PluginShadowHost = "claude-code" | "cursor";
 
 export type PluginShadow = {
   category: "plugin-shadowed";
+  evidence: "cached_collision";
+  advisory: true;
   host: PluginShadowHost;
   plugin: string;
   skill_md_path: string;
@@ -22,41 +24,134 @@ type PluginRoot = {
 export type ScanPluginShadowsInput = {
   home?: string;
   roots?: PluginRoot[];
+  limits?: Partial<PluginShadowScanLimits>;
+};
+
+export type PluginShadowScanLimits = {
+  maxDepth: number;
+  maxDirectories: number;
+  maxSkillFiles: number;
+  maxSkillBytes: number;
+};
+
+export type PluginShadowScan = {
+  shadows: Record<string, PluginShadow[]>;
+  scanned_skill_files: number;
+  incomplete: boolean;
+  truncation_reasons: PluginShadowScanTruncationReason[];
+};
+
+export type PluginShadowScanTruncationReason =
+  | "depth_limit"
+  | "directory_limit"
+  | "skill_file_limit"
+  | "skill_file_size_limit"
+  | "directory_read_error"
+  | "skill_file_read_error";
+
+export const DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS: PluginShadowScanLimits = {
+  maxDepth: 16,
+  maxDirectories: 10_000,
+  maxSkillFiles: 2_000,
+  maxSkillBytes: MAX_SKILL_MD_BYTES
+};
+
+type ScanState = {
+  limits: PluginShadowScanLimits;
+  files: string[];
+  truncationReasons: Set<PluginShadowScanTruncationReason>;
+  fileLimitReached: boolean;
+  directoryLimitReached: boolean;
+  directoriesVisited: number;
 };
 
 function defaultPluginRoots(home: string): PluginRoot[] {
   return [
-    {
-      host: "cursor",
-      root: path.join(home, ".cursor", "plugins", "cache")
-    },
-    {
-      host: "claude-code",
-      root: path.join(home, ".claude", "plugins")
-    }
+    { host: "cursor", root: path.join(home, ".cursor", "plugins", "cache") },
+    { host: "claude-code", root: path.join(home, ".claude", "plugins") }
   ];
 }
 
-async function findSkillFiles(root: string): Promise<string[]> {
+function resolveLimits(limits: Partial<PluginShadowScanLimits> | undefined): PluginShadowScanLimits {
+  const numericLimit = (value: number | undefined, fallback: number, minimum: number): number => {
+    if (value === undefined || !Number.isFinite(value)) return fallback;
+    return Math.max(minimum, Math.floor(value));
+  };
+  return {
+    maxDepth: numericLimit(limits?.maxDepth, DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxDepth, 0),
+    maxDirectories: numericLimit(
+      limits?.maxDirectories,
+      DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxDirectories,
+      1
+    ),
+    maxSkillFiles: numericLimit(limits?.maxSkillFiles, DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxSkillFiles, 1),
+    maxSkillBytes: numericLimit(limits?.maxSkillBytes, DEFAULT_PLUGIN_SHADOW_SCAN_LIMITS.maxSkillBytes, 1)
+  };
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "ENOENT"
+  );
+}
+
+async function findSkillFiles(root: string, state: ScanState, depth = 0): Promise<void> {
+  if (state.fileLimitReached || state.directoryLimitReached) return;
+  if (state.directoriesVisited >= state.limits.maxDirectories) {
+    state.directoryLimitReached = true;
+    state.truncationReasons.add("directory_limit");
+    return;
+  }
+  let rootStat: Awaited<ReturnType<typeof fs.lstat>>;
+  try {
+    rootStat = await fs.lstat(root);
+  } catch (error) {
+    if (!isMissingPathError(error)) state.truncationReasons.add("directory_read_error");
+    return;
+  }
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return;
+  state.directoriesVisited += 1;
+
   let entries: Dirent[];
   try {
     entries = await fs.readdir(root, { withFileTypes: true });
   } catch {
-    return [];
+    state.truncationReasons.add("directory_read_error");
+    return;
   }
 
-  const files: string[] = [];
   for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (state.fileLimitReached || state.directoryLimitReached) return;
     const entryPath = path.join(root, entry.name);
     if (entry.isDirectory()) {
-      files.push(...await findSkillFiles(entryPath));
+      if (depth >= state.limits.maxDepth) {
+        state.truncationReasons.add("depth_limit");
+        continue;
+      }
+      await findSkillFiles(entryPath, state, depth + 1);
       continue;
     }
-    // Plugin caches are untrusted host state. Ignore symlinks so a cache entry
-    // cannot make doctor escape the known roots or recurse through a loop.
-    if (entry.isFile() && entry.name === "SKILL.md") files.push(entryPath);
+    if (!entry.isFile() || entry.name !== "SKILL.md") continue;
+    if (state.files.length >= state.limits.maxSkillFiles) {
+      state.fileLimitReached = true;
+      state.truncationReasons.add("skill_file_limit");
+      return;
+    }
+    try {
+      const stat = await fs.stat(entryPath);
+      if (stat.size > state.limits.maxSkillBytes) {
+        state.truncationReasons.add("skill_file_size_limit");
+        continue;
+      }
+    } catch {
+      state.truncationReasons.add("skill_file_read_error");
+      continue;
+    }
+    state.files.push(entryPath);
   }
-  return files;
 }
 
 function pluginIdentifier(root: string, skillPath: string): string {
@@ -67,16 +162,18 @@ function pluginIdentifier(root: string, skillPath: string): string {
   return pluginParts.join("/") || "(unknown plugin)";
 }
 
-async function frontmatterName(skillPath: string): Promise<string | undefined> {
+async function frontmatterName(skillPath: string, state: ScanState): Promise<string | undefined> {
+  let raw: string;
   try {
-    const stat = await fs.stat(skillPath);
-    if (stat.size > MAX_SKILL_MD_BYTES) return undefined;
-    const raw = await fs.readFile(skillPath, "utf-8");
+    raw = await fs.readFile(skillPath, "utf-8");
+  } catch {
+    state.truncationReasons.add("skill_file_read_error");
+    return undefined;
+  }
+  try {
     const { data } = parseFrontmatter(raw);
     return typeof data.name === "string" && data.name.length > 0 ? data.name : undefined;
   } catch {
-    // A malformed or unreadable third-party cache entry is not a vault-health
-    // failure and cannot be matched reliably, so leave it out of the report.
     return undefined;
   }
 }
@@ -84,41 +181,57 @@ async function frontmatterName(skillPath: string): Promise<string | undefined> {
 export async function scanPluginShadows(
   installedNames: Iterable<string>,
   input: ScanPluginShadowsInput = {}
-): Promise<Record<string, PluginShadow[]>> {
+): Promise<PluginShadowScan> {
   const installed = new Set(installedNames);
-  if (installed.size === 0) return {};
+  if (installed.size === 0) {
+    return { shadows: {}, scanned_skill_files: 0, incomplete: false, truncation_reasons: [] };
+  }
 
   const roots = input.roots ?? defaultPluginRoots(input.home ?? os.homedir());
-  // Skill names may legally be Object.prototype keys (for example
-  // "constructor"). Keep the grouping map prototype-free so those names
-  // cannot be mistaken for inherited properties.
-  const shadows: Record<string, PluginShadow[]> = Object.create(null) as Record<
-    string,
-    PluginShadow[]
-  >;
+  const state: ScanState = {
+    limits: resolveLimits(input.limits),
+    files: [],
+    truncationReasons: new Set(),
+    fileLimitReached: false,
+    directoryLimitReached: false,
+    directoriesVisited: 0
+  };
   for (const pluginRoot of roots) {
-    for (const skillPath of await findSkillFiles(pluginRoot.root)) {
-      const name = await frontmatterName(skillPath);
-      if (!name || !installed.has(name)) continue;
-      const entries = shadows[name] ?? [];
-      entries.push({
-        category: "plugin-shadowed",
-        host: pluginRoot.host,
-        plugin: pluginIdentifier(pluginRoot.root, skillPath),
-        skill_md_path: skillPath
-      });
-      shadows[name] = entries;
-    }
+    await findSkillFiles(pluginRoot.root, state);
+  }
+
+  const shadows = Object.create(null) as Record<string, PluginShadow[]>;
+  for (const skillPath of state.files) {
+    const pluginRoot = roots.find(
+      (root) => skillPath === root.root || skillPath.startsWith(`${root.root}${path.sep}`)
+    );
+    if (!pluginRoot) continue;
+    const name = await frontmatterName(skillPath, state);
+    if (!name || !installed.has(name)) continue;
+    const entries = shadows[name] ?? [];
+    entries.push({
+      category: "plugin-shadowed",
+      evidence: "cached_collision",
+      advisory: true,
+      host: pluginRoot.host,
+      plugin: pluginIdentifier(pluginRoot.root, skillPath),
+      skill_md_path: skillPath
+    });
+    shadows[name] = entries;
   }
 
   for (const entries of Object.values(shadows)) {
-    entries.sort((left, right) => {
-      return (
+    entries.sort(
+      (left, right) =>
         left.host.localeCompare(right.host) ||
         left.plugin.localeCompare(right.plugin) ||
         left.skill_md_path.localeCompare(right.skill_md_path)
-      );
-    });
+    );
   }
-  return shadows;
+  return {
+    shadows,
+    scanned_skill_files: state.files.length,
+    incomplete: state.truncationReasons.size > 0,
+    truncation_reasons: [...state.truncationReasons].sort()
+  };
 }

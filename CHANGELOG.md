@@ -69,10 +69,11 @@ while it remains in pre-1.0 development.
 ## [Unreleased]
 
 ### Added
-- `autovault doctor` now reports `plugin-shadowed` warnings when Cursor or
-  Claude Code plugin caches contain a `SKILL.md` name that collides with an
-  installed vault skill. JSON includes per-skill `plugin_shadows` records and
-  `summary.plugin_shadowed`; AutoVault never changes host plugins.
+- `autovault doctor` now reports advisory `plugin-shadowed` warnings when
+  Cursor or Claude Code plugin caches contain a `SKILL.md` name that collides
+  with an installed vault skill. JSON identifies these as advisory
+  `cached_collision` evidence and reports bounded-scan completeness metadata;
+  AutoVault never changes host plugins.
 - HTTPS catalog enrollment for AutoVault Cloud. `autovault init
   https://autovault.dev/v/<slug>` POSTs a device public key, stores it pending
   until the owner admits the device, then discovers and installs signed
@@ -111,8 +112,9 @@ while it remains in pre-1.0 development.
 - `autovault sync-profiles --help` now exits successfully after printing usage
   without running a sync.
 - Doctor no longer recommends reinstalling a tampered local skill from its own
-  vault directory; it tells operators to copy the bundle out first while
-  retaining `doctor --repair` as the intentional recovery path.
+  vault directory, descendant, or symlink alias; it tells operators to copy
+  the bundle out first while retaining `doctor --repair` as the intentional
+  recovery path.
 
 ## [0.2.1] - 2026-05-09
 
