@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { resetConfigCache } from "../src/config.js";
 import { addSkill } from "../src/tools/add-skill.js";
 import { deleteSkill } from "../src/tools/delete-skill.js";
 import { getSkill } from "../src/tools/get-skill.js";
@@ -414,6 +415,54 @@ bin:
       await fs.unlink(consumerLink);
     } finally {
       vi.unstubAllEnvs();
+    }
+  });
+
+  it("preserves a dangling user-owned consumer link during delete", async () => {
+    const name = "delete-preserves-dangling-link";
+    const profileRoot = path.join(currentStorageRoot(), "dangling-link-profile");
+    await addSkill({
+      source: "local",
+      identifier: "vendor/repo",
+      skill_dir: await localBundle(name),
+      profile_roots: { codex: profileRoot }
+    });
+    const consumerLink = path.join(profileRoot, name);
+    await fs.unlink(consumerLink);
+    await fs.symlink(path.join(currentStorageRoot(), "missing-user-skill"), consumerLink, "dir");
+
+    await deleteSkill({ name, profile_roots: { codex: profileRoot } });
+
+    await expect(fs.readlink(consumerLink)).resolves.toBe(
+      path.join(currentStorageRoot(), "missing-user-skill")
+    );
+  });
+
+  it("preserves an inline update as vault-only when sync is disabled", async () => {
+    const name = "inline-update-no-sync";
+    const profileRoot = path.join(currentStorageRoot(), "inline-update-profile");
+    process.env.AUTOVAULT_PROFILE_LINKS = `codex=${profileRoot}`;
+    resetConfigCache();
+    try {
+      await addSkill({
+        source: "local",
+        identifier: "vendor/repo",
+        skill_dir: await localBundle(name),
+        sync_profiles: false
+      });
+
+      const result = await updateSkill({
+        name,
+        source: "inline",
+        skill_md: skillMd(name, "Updated"),
+        sync_profiles: false
+      });
+
+      expect(result).toMatchObject({ success: true, name });
+      await expect(fs.lstat(path.join(profileRoot, name))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      delete process.env.AUTOVAULT_PROFILE_LINKS;
+      resetConfigCache();
     }
   });
 });

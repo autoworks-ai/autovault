@@ -169,6 +169,9 @@ export type ProposeSkillInput = {
   source_session?: string;
   allow_synthesized_frontmatter?: boolean;
   check?: boolean;
+  sync_profiles?: boolean;
+  profile_roots?: Record<string, string>;
+  discover_profile_roots?: boolean;
   verbose?: boolean;
 };
 
@@ -431,13 +434,18 @@ export async function proposeSkill(input: ProposeSkillInput): Promise<Record<str
   // as a warning, log the detail, and return accepted.
   const postCommitWarnings: string[] = [];
   let sync: Awaited<ReturnType<typeof syncProfiles>> | undefined;
-  try {
-    sync = await syncProfiles();
-    for (const w of sync.warnings) postCommitWarnings.push(w);
-  } catch (error) {
-    const message = `Profile sync failed after propose (vault state is correct): ${String(error)}`;
-    log.warn("propose_skill.profile_sync_failed", { name: accepted.name, error: String(error) });
-    postCommitWarnings.push(message);
+  if (input.sync_profiles !== false) {
+    try {
+      sync = await syncProfiles({
+        profileRoots: input.profile_roots,
+        discover: input.discover_profile_roots !== false
+      });
+      for (const w of sync.warnings) postCommitWarnings.push(w);
+    } catch (error) {
+      const message = `Profile sync failed after propose (vault state is correct): ${String(error)}`;
+      log.warn("propose_skill.profile_sync_failed", { name: accepted.name, error: String(error) });
+      postCommitWarnings.push(message);
+    }
   }
 
   accepted.warnings.push(...postCommitWarnings);

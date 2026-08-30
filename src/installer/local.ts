@@ -329,7 +329,7 @@ async function agentInferenceCandidates(input: AddLocalSkillInput): Promise<Agen
     }
   };
 
-  if (input.discoverProfileRoots) {
+  if (input.discoverProfileRoots !== false) {
     addRoots(await discoverProfileRoots(), "discovered profile root", "discovered");
   }
   addRoots(config.profileRoots, "configured profile root", "configured");
@@ -521,7 +521,7 @@ async function inferAgentsForLocalBundle(
   skillMd: string,
   input: AddLocalSkillInput
 ): Promise<AgentInference | undefined> {
-  if (!input.syncProfiles) return undefined;
+  if (input.syncProfiles === false) return undefined;
   let data: Record<string, unknown>;
   try {
     data = parseFrontmatter(skillMd).data;
@@ -651,11 +651,11 @@ export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocal
 
   const warnings = [...validation.warnings];
   let sync: SyncProfilesResult | undefined;
-  if (input.syncProfiles) {
+  if (input.syncProfiles !== false) {
     try {
       sync = await syncProfiles({
         profileRoots: input.profileRoots,
-        discover: input.discoverProfileRoots
+        discover: input.discoverProfileRoots !== false
       });
       warnings.push(...sync.warnings);
     } catch (error) {

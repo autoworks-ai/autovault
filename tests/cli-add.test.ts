@@ -157,7 +157,7 @@ describe("canonical add CLI", () => {
       source: "github",
       identifier: "https://github.com/owner/repo",
       sync_profiles: true,
-      discover_profile_roots: false
+      discover_profile_roots: true
     } satisfies AddSkillInput);
     expect(io.stderrText()).toBe("");
     expect(JSON.parse(io.stdoutText())).toMatchObject({
@@ -189,7 +189,7 @@ describe("canonical add CLI", () => {
       source: "url",
       identifier: "https://example.com/SKILL.md",
       sync_profiles: true,
-      discover_profile_roots: false
+      discover_profile_roots: true
     } satisfies AddSkillInput);
     expect(JSON.parse(io.stdoutText())).toMatchObject({ success: true, name: "url-skill" });
   });
@@ -228,7 +228,7 @@ describe("canonical add CLI", () => {
       source: "url",
       identifier: "https://example.com/SKILL.md",
       sync_profiles: true,
-      discover_profile_roots: false,
+      discover_profile_roots: true,
       target_agents: ["codex", "claude-code"]
     } satisfies AddSkillInput);
     expect(JSON.parse(io.stdoutText())).toMatchObject({ success: true, name: "url-skill" });
@@ -252,7 +252,7 @@ describe("canonical add CLI", () => {
       source: "agentskills",
       identifier: "registry-skill",
       sync_profiles: true,
-      discover_profile_roots: false
+      discover_profile_roots: true
     } satisfies AddSkillInput);
     expect(JSON.parse(io.stdoutText())).toMatchObject({
       success: true,
@@ -448,7 +448,7 @@ describe("canonical add CLI", () => {
       source: "url",
       identifier: "https://example.com/SKILL.md",
       sync_profiles: true,
-      discover_profile_roots: false,
+      discover_profile_roots: true,
       verbose: true
     } satisfies AddSkillInput);
     expect(JSON.parse(io.stdoutText())).toMatchObject({

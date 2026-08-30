@@ -599,6 +599,25 @@ bin:
     );
   });
 
+  it("local bundle installs sync and discover native profile roots by default", async () => {
+    const fakeHome = path.join(currentStorageRoot(), "local-default-home");
+    const codexRoot = path.join(fakeHome, ".codex", "skills");
+    const sourceDir = path.join(currentStorageRoot(), "local-default-bundle");
+    await fs.mkdir(codexRoot, { recursive: true });
+    await writeLocalSkill(sourceDir, { name: "local-default-sync", agents: ["codex"] });
+    vi.stubEnv("HOME", fakeHome);
+    try {
+      const result = await addLocalSkill({ skillDir: sourceDir });
+
+      expect(result.success).toBe(true);
+      await expect(fs.readlink(path.join(codexRoot, "local-default-sync"))).resolves.toContain(
+        path.join("profiles", "codex", "local-default-sync")
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("remove deletes a vaulted skill and prunes managed profile links", async () => {
     const fakeHome = path.join(currentStorageRoot(), "remove-home");
     const codexRoot = path.join(fakeHome, ".codex", "skills");
@@ -970,6 +989,9 @@ Admission receipt --------------------------------------------
   + sign    terminal-local
   + storage <ROOT>/skills/terminal-local
   - source  vendor/repo
+
+[sync] profile sync
+  No external profile roots linked.
 
 --------------------------------------------------------------------
 + Skill vaulted
