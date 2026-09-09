@@ -25,10 +25,24 @@ import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { attemptRepair, parseFrontmatter } from "../validation/frontmatter.js";
 import { synthesizeSkillFrontmatter } from "../validation/frontmatter-synthesis.js";
 import { validateSkillInput } from "../validation/index.js";
+import {
+  encodeResourceContent,
+  type ResourceEncoding
+} from "../util/resource-encoding.js";
 
 export type LocalSkillResource = {
   path: string;
   content: string;
+  /**
+   * Set when `content` is base64 of the file's bytes rather than its text.
+   *
+   * A bundle may legitimately ship an image or other binary. Reading one as
+   * UTF-8 replaces every invalid sequence with U+FFFD, so a PNG's leading
+   * 0x89 becomes EF BF BD and the installed file is no longer an image.
+   * Carrying such files as base64 keeps them byte-exact through validation,
+   * signing, and the write, none of which need to read inside them.
+   */
+  encoding?: ResourceEncoding;
 };
 
 export type LocalSkillBundle = {
@@ -267,14 +281,16 @@ export async function collectLocalSkillBundle(
   const skillMd = await fs.readFile(skillMdPath, "utf-8");
   const resources: LocalSkillResource[] = [];
   for (const candidate of candidates) {
+    const bytes = await fs.readFile(candidate.absolute);
     resources.push({
       path: canonicalRelPath(candidate.path),
-      content: await fs.readFile(candidate.absolute, "utf-8")
+      ...encodeResourceContent(bytes)
     });
   }
 
   return { root, skillMd, resources };
 }
+
 
 type AgentInference = {
   agents: string[];
@@ -638,7 +654,8 @@ export async function addLocalSkill(input: AddLocalSkillInput): Promise<AddLocal
   const name = typeof data.name === "string" ? data.name : "unnamed-skill";
   const resources: WrittenResource[] = bundle.resources.map((resource) => ({
     path: resource.path,
-    content: resource.content
+    content: resource.content,
+    ...(resource.encoding ? { encoding: resource.encoding } : {})
   }));
   const source: SkillSource = {
     source: "local",

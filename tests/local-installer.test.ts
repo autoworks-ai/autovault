@@ -84,12 +84,20 @@ function escapeRegExp(value: string): string {
 
 async function writeLocalSkill(
   root: string,
-  input: { name: string; agents?: string[] | null; resources?: Record<string, string> }
+  input: {
+    name: string;
+    agents?: string[] | null;
+    resources?: Record<string, string>;
+    binaryResources?: Record<string, Buffer>;
+  }
 ): Promise<void> {
   await fs.mkdir(root, { recursive: true });
   const agents =
     input.agents === null ? "" : `agents: [${(input.agents ?? ["codex"]).join(", ")}]\n`;
-  const resourcePaths = Object.keys(input.resources ?? {});
+  const resourcePaths = [
+    ...Object.keys(input.resources ?? {}),
+    ...Object.keys(input.binaryResources ?? {})
+  ];
   const resources = resourcePaths.length > 0
     ? `resources:\n${resourcePaths.map((resource) => `  - path: ${resource}`).join("\n")}\n`
     : "";
@@ -111,6 +119,11 @@ ${resources}
     const absolute = path.join(root, resourcePath);
     await fs.mkdir(path.dirname(absolute), { recursive: true });
     await fs.writeFile(absolute, content, "utf-8");
+  }
+  for (const [resourcePath, bytes] of Object.entries(input.binaryResources ?? {})) {
+    const absolute = path.join(root, resourcePath);
+    await fs.mkdir(path.dirname(absolute), { recursive: true });
+    await fs.writeFile(absolute, bytes);
   }
 }
 
@@ -164,6 +177,51 @@ describe("local installer", () => {
     const source = await readSkillSource("local-bundle");
     expect(source?.source).toBe("local");
     expect(source?.identifier).toBe("vendor/repo");
+  });
+
+  it("installs binary resources byte for byte", async () => {
+    // A 1x1 PNG. The signature byte 0x89 is not valid UTF-8 on its own, so a
+    // read/write round trip through a JS string replaces it with U+FFFD and
+    // the file stops being an image.
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64"
+    );
+    const sourceDir = path.join(currentStorageRoot(), "binary-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "binary-bundle",
+      binaryResources: { "assets/logo.png": png }
+    });
+
+    const result = await addLocalSkill({
+      skillDir: sourceDir,
+      source: "vendor/repo"
+    });
+
+    expect(result.success).toBe(true);
+    const installed = await fs.readFile(
+      path.join(currentStorageRoot(), "skills", "binary-bundle", "assets/logo.png")
+    );
+    expect(installed.equals(png)).toBe(true);
+    expect(installed.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+  });
+
+  it("keeps binary resources verifiable against the signed manifest", async () => {
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64"
+    );
+    const sourceDir = path.join(currentStorageRoot(), "binary-manifest-bundle");
+    await writeLocalSkill(sourceDir, {
+      name: "binary-manifest-bundle",
+      binaryResources: { "assets/logo.png": png }
+    });
+
+    const result = await addLocalSkill({ skillDir: sourceDir, source: "vendor/repo" });
+
+    expect(result.success).toBe(true);
+    const manifest = await readSkillManifest("binary-manifest-bundle");
+    expect(manifest?.files["assets/logo.png"]).toBeDefined();
   });
 
   it("infers local source provenance from the bundle directory when --source is omitted", async () => {

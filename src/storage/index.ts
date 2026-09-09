@@ -16,6 +16,11 @@ import { canonicalRelPath } from "../util/path.js";
 import { isIgnoredArtifactPath } from "../util/ignored-artifacts.js";
 import { MAX_RESOURCE_BYTES, MAX_SKILL_MD_BYTES } from "../util/limits.js";
 import { safeSkillNamePathSegment } from "../util/skill-name.js";
+import {
+  decodeResourceContent,
+  encodeResourceContent,
+  type ResourceEncoding
+} from "../util/resource-encoding.js";
 import { tryWithStorageLock, withStorageLock } from "./lock.js";
 
 const SOURCE_FILE = ".autovault-source.json";
@@ -575,7 +580,13 @@ async function verifyIntegrityLocked(
       }
 
       try {
-        return { kind: "ok", content: await fs.readFile(target, "utf-8") };
+        // Re-derive exactly what was signed. Text files were signed as their
+        // text; binaries were signed as base64 of their bytes, because reading
+        // them as UTF-8 would substitute U+FFFD and change the content. The
+        // same round-trip test the installer used decides which this is, so
+        // signing and verification always agree without recording a flag.
+        const bytes = await fs.readFile(target);
+        return { kind: "ok", content: encodeResourceContent(bytes).content };
       } catch {
         return { kind: "mismatch", reason: "missing_on_disk" };
       }
@@ -915,7 +926,13 @@ export async function readSkillSummary(name: string): Promise<SkillSummary | nul
   };
 }
 
-export type WrittenResource = { path: string; content: string; mode?: number };
+export type WrittenResource = {
+  path: string;
+  content: string;
+  mode?: number;
+  /** `content` is base64 of the file bytes, not its text. See encodeResourceContent. */
+  encoding?: ResourceEncoding;
+};
 
 // Stage every byte of a write into a freshly-created sibling directory, then
 // rename live → backup, tmp → live, rm backup. Both renames live within
@@ -970,7 +987,10 @@ export async function writeSkill(
       const targetAbs = path.join(tmpDir, relCanonical);
       const mode = resource.mode ?? (binPaths.has(relCanonical) ? 0o755 : 0o644);
       await fs.mkdir(path.dirname(targetAbs), { recursive: true });
-      await fs.writeFile(targetAbs, resource.content, { encoding: "utf-8", mode });
+      // Decode base64-carried resources back to their exact bytes; writing
+      // them as UTF-8 would reintroduce the corruption the encoding avoids.
+      const body = decodeResourceContent(resource.content, resource.encoding);
+      await fs.writeFile(targetAbs, body, { mode });
       await fs.chmod(targetAbs, mode);
     }
 
