@@ -67,11 +67,11 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
-    "@vitest/coverage-v8": "^4.1.6",
+    "@vitest/coverage-v8": "^5.0.0",
     "tsx": "^4.19.1",
     "typescript": "^6.0.3",
     "vite": "^8.0.15",
-    "vitest": "^4.1.6"
+    "vitest": "^5.0.0"
   },
   "repository": {
     "type": "git",
