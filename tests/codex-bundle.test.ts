@@ -100,8 +100,12 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     );
     expect(automation).toContain(`local_environment_config_path = "${environmentPath}"`);
     expect(automation).toContain("npm run --silent autovault:audit");
-    expect(automation).toContain("$copilot-review");
-    expect(automation).not.toContain("COPILOT_REVIEW_SKILL");
+    // PR choreography lives in the installed skill so rendered automations
+    // inherit review/CI updates instead of retaining an obsolete provider gate.
+    expect(automation).toContain("$babysit");
+    expect(automation).toContain("~/.autovault/skills/babysit/SKILL.md");
+    expect(automation).toContain("PR creation, hosted review, CI, and merge-readiness");
+    expect(automation).not.toMatch(/copilot|wait 4-5 minutes/i);
     const createdAt = Number(automation.match(/^created_at = (\d+)$/m)?.[1]);
     const updatedAt = Number(automation.match(/^updated_at = (\d+)$/m)?.[1]);
     expect(createdAt).toBeGreaterThanOrEqual(beforeInstall - 999);

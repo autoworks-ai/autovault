@@ -31,9 +31,8 @@ If docs drift exists:
 2. Make the smallest documentation changes that resolve the drift.
 3. Run `npm run lint:workflows` and `node --test test/autovault-shim.test.js`. Run additional focused checks only when your edits warrant them.
 4. Commit with a conventional docs commit.
-5. Open a ready-for-review GitHub PR. Do not create a draft PR and do not merge.
-6. Wait 4-5 minutes for Copilot review threads. If unresolved Copilot comments appear, use `$copilot-review` to evaluate and address valid feedback, then push follow-up commits.
-7. Report the PR URL, checks run, and any unresolved risks.
+5. Use the installed `$babysit` skill at `~/.autovault/skills/babysit/SKILL.md` as the canonical procedure for PR creation, hosted review, CI, and merge-readiness.
+6. Report the PR URL, checks run, and any unresolved risks.
 
 Authority boundary:
 - PR-only. Never merge.
