@@ -29,10 +29,7 @@ The `bootstrap`/`smoke`/`probe`/`remote-smoke` scripts require `npm run build` f
 
 ## Pull request workflow
 
-- Open PRs ready for review by default, not draft, so CI and review automation run. Use draft only when explicitly requested.
-- After creating a PR from Codex, wait 4-5 minutes before finishing the handoff so GitHub Copilot has time to post review threads.
-- After the wait, check the PR for unresolved per-line Copilot review threads. If any exist, run the `copilot-review` skill/workflow against that PR: evaluate each comment, make valid fixes, reply, resolve handled threads, commit, and push the PR branch. Never merge unless Jack explicitly authorizes it.
-- If no unresolved Copilot review threads exist, report that there is nothing to do and include the current CI status when available.
+Use the installed `babysit` skill at `~/.autovault/skills/babysit/SKILL.md` as the canonical procedure for PR creation, hosted review, CI, and merge-readiness.
 
 ## Architecture
 
