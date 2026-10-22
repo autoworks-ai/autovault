@@ -104,6 +104,11 @@ describe("Codex docs drift bundle helper + autovault doctor render fidelity", ()
     // inherit review/CI updates instead of retaining an obsolete provider gate.
     expect(automation).toContain("$babysit");
     expect(automation).toContain("~/.autovault/skills/babysit/SKILL.md");
+    expect(automation).toContain("requires that separately installed skill");
+    expect(automation).toContain("stop and report the missing prerequisite before creating a branch or commit");
+    expect(automation.indexOf("Before changing the repository, load")).toBeLessThan(
+      automation.indexOf("If docs drift exists:")
+    );
     expect(automation).toContain("PR creation, hosted review, CI, and merge-readiness");
     expect(automation).not.toMatch(/copilot|wait 4-5 minutes/i);
     const createdAt = Number(automation.match(/^created_at = (\d+)$/m)?.[1]);

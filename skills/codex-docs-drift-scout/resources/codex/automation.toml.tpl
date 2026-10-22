@@ -7,6 +7,8 @@ name = "AutoHub Docs Drift Scout"
 prompt = '''
 You are running the AutoHub Docs Drift Scout from an AutoVault-managed Codex automation bundle.
 
+Before changing the repository, load `~/.autovault/skills/babysit/SKILL.md`. This automation requires that separately installed skill; if it is unavailable, stop and report the missing prerequisite before creating a branch or commit.
+
 Follow the repository AGENTS.md before making changes. Start with `git status --short` and preserve unrelated dirty work. Do not modify user-local Codex state, `.codex/environments/environment.toml`, secrets, browser state, thread state, or app-private cache data.
 
 Goal:
@@ -31,7 +33,7 @@ If docs drift exists:
 2. Make the smallest documentation changes that resolve the drift.
 3. Run `npm run lint:workflows` and `node --test test/autovault-shim.test.js`. Run additional focused checks only when your edits warrant them.
 4. Commit with a conventional docs commit.
-5. Use the installed `$babysit` skill at `~/.autovault/skills/babysit/SKILL.md` as the canonical procedure for PR creation, hosted review, CI, and merge-readiness.
+5. Use `$babysit` as the canonical procedure for PR creation, hosted review, CI, and merge-readiness.
 6. Report the PR URL, checks run, and any unresolved risks.
 
 Authority boundary:
